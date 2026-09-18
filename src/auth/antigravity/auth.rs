@@ -420,7 +420,7 @@ impl AntigravityAuthStore {
 
         let refreshed = self.refresh_call(&stored.refresh_token).await?;
         let updated = stored_from_refresh(&stored, refreshed);
-        self.write(&updated).await?;
+        let updated = self.persist_refresh(&stored, updated).await?;
 
         let project_id = self.project_id(&updated).await?;
         Ok(AntigravityCred {
@@ -452,7 +452,7 @@ impl AntigravityAuthStore {
 
         let refreshed = self.refresh_call(&stored.refresh_token).await?;
         let updated = stored_from_refresh(&stored, refreshed);
-        self.write(&updated).await?;
+        let updated = self.persist_refresh(&stored, updated).await?;
 
         let project_id = self.project_id(&updated).await?;
         Ok(AntigravityCred {
@@ -461,15 +461,101 @@ impl AntigravityAuthStore {
         })
     }
 
+    /// Persist a token-endpoint refresh under [`CREDENTIAL_FILE_LOCK`],
+    /// making the write a genuine compare-and-swap against `pre_refresh` — the
+    /// snapshot [`get_valid`](Self::get_valid) and
+    /// [`force_refresh_if_access_token`](Self::force_refresh_if_access_token)
+    /// read *before* the network round trip to Google's token endpoint. That
+    /// round trip can take up to `CREDENTIAL_REQUEST_TIMEOUT` each way, and a
+    /// `shunt login antigravity --name` landing in that window replaces the
+    /// file wholesale from a different process — `REFRESH_LOCK` is in-process
+    /// only and cannot see it. Writing `updated` (built from `pre_refresh`)
+    /// straight to disk would silently overwrite that fresh login. So this
+    /// re-reads the file under the lock and only writes when the on-disk
+    /// record is still the identity `pre_refresh` was read from, folding the
+    /// refreshed token fields onto *that* record's `email`/`project_id`
+    /// rather than `pre_refresh`'s, the same shape as [`project_id`]'s
+    /// writeback merge (and sharing its `between_merge_read_and_write` test
+    /// hook). On any mismatch, or a failed re-read, skips the write and
+    /// returns `updated` as-is — it is still a working, freshly minted
+    /// credential for this request, just not the one that should win on disk.
+    ///
+    /// [`project_id`]: Self::project_id
+    async fn persist_refresh(
+        &self,
+        pre_refresh: &StoredAuth,
+        updated: StoredAuth,
+    ) -> Result<StoredAuth, AdapterError> {
+        let guard = match self.lock_credential_file().await {
+            Ok(guard) => guard,
+            Err(error) => {
+                tracing::warn!(
+                    "skipped persisting Antigravity token refresh: {}",
+                    error.message
+                );
+                return Ok(updated);
+            }
+        };
+        match self.read().await {
+            Ok(fresh) => {
+                let same_identity = match (pre_refresh.email.as_deref(), fresh.email.as_deref()) {
+                    (Some(before), Some(after)) => before == after,
+                    _ => fresh.refresh_token == pre_refresh.refresh_token,
+                };
+                let already_refreshed = fresh.access_token != pre_refresh.access_token;
+                if !same_identity {
+                    tracing::warn!(
+                        "skipped persisting Antigravity token refresh: the credential file \
+                         no longer holds the account it was refreshed for"
+                    );
+                } else if already_refreshed {
+                    tracing::debug!(
+                        "Antigravity token already refreshed by a concurrent writer"
+                    );
+                } else {
+                    let merged = StoredAuth {
+                        access_token: updated.access_token,
+                        refresh_token: updated.refresh_token,
+                        expiry_date: updated.expiry_date,
+                        email: fresh.email,
+                        project_id: fresh.project_id,
+                    };
+                    // Same hook `project_id`'s writeback fires so a test can
+                    // pin the race between this re-read and the write below.
+                    #[cfg(test)]
+                    if let Some(hook) = self.between_merge_read_and_write.clone() {
+                        hook.run();
+                    }
+                    if let Err(error) = self.write_holding_lock(guard, &merged).await {
+                        tracing::warn!(
+                            "failed to persist Antigravity token refresh: {}",
+                            error.message
+                        );
+                    }
+                    return Ok(merged);
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    "skipped persisting Antigravity token refresh: {}",
+                    error.message
+                );
+            }
+        }
+        drop(guard);
+        Ok(updated)
+    }
+
     /// Read the credential file.
     ///
     /// Deliberately **unlocked**. Every writer replaces the file by atomic
     /// rename, so a reader always sees one complete record — never a torn one —
     /// and taking [`CREDENTIAL_FILE_LOCK`] here would add contention and a
-    /// timeout failure mode without adding any exclusion. The one place a read
-    /// *does* need the lock is the read half of the project-id compare-and-swap
-    /// in [`project_id`](Self::project_id), and that site takes the guard
-    /// itself and calls this method inside it.
+    /// timeout failure mode without adding any exclusion. The places a read
+    /// *does* need the lock are the read half of the compare-and-swap merges
+    /// in [`project_id`](Self::project_id) and
+    /// [`persist_refresh`](Self::persist_refresh), and those sites take the
+    /// guard themselves and call this method inside it.
     async fn read(&self) -> Result<StoredAuth, AdapterError> {
         let path = self.path.clone();
         let content = tokio::task::spawn_blocking(move || fs::read_to_string(&path))
@@ -517,18 +603,6 @@ impl AntigravityAuthStore {
                 self.path.display()
             ))
         })
-    }
-
-    /// Replace the credential file, taking [`CREDENTIAL_FILE_LOCK`] first.
-    ///
-    /// Every writer of this file goes through a locked path; a caller that is
-    /// already inside a critical section hands its own guard to
-    /// [`write_holding_lock`](Self::write_holding_lock) instead. It must never
-    /// call this one — `flock` on a second descriptor to the same file blocks
-    /// even within one process, so that would deadlock against itself.
-    async fn write(&self, stored: &StoredAuth) -> Result<(), AdapterError> {
-        let guard = self.lock_credential_file().await?;
-        self.write_holding_lock(guard, stored).await
     }
 
     /// The atomic write, **consuming** the caller's credential-file guard.
@@ -1987,6 +2061,107 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(&path_buf).unwrap()).unwrap();
         assert_eq!(written.access_token, "fresh-access");
         assert_eq!(written.refresh_token, "fresh-refresh");
+    }
+
+    /// Pins the fix for the race Greptile flagged on PR #604: a forced
+    /// refresh used to write straight from its pre-refresh snapshot with no
+    /// re-read, so a `shunt login antigravity --name` landing during the
+    /// token-endpoint round trip was silently clobbered. Same shape as
+    /// [`project_id_writeback_serializes_against_a_concurrent_relogin`], but
+    /// racing `force_refresh_if_access_token`'s write instead of
+    /// `project_id`'s.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn force_refresh_serializes_against_a_concurrent_relogin() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "fresh-access",
+                "refresh_token": "fresh-refresh",
+                "expires_in": 3600
+            })))
+            .mount(&server)
+            .await;
+
+        let path_buf = temp_auth_file("force_refresh_cas");
+        let snapshot = StoredAuth {
+            access_token: "rejected-access".to_string(),
+            refresh_token: "old-refresh".to_string(),
+            expiry_date: Some(future_millis(3600)),
+            email: Some("a@example.com".to_string()),
+            project_id: Some("proj-a".to_string()),
+        };
+        write(&path_buf, &snapshot);
+        let baseline = fs::read_to_string(&path_buf).unwrap();
+
+        // Released by the hook, so the login is guaranteed to land after the
+        // merge's re-read — otherwise it would just be the record the merge
+        // reads, a different (already-covered) case.
+        let go = Arc::new(AtomicBool::new(false));
+        let writer_go = go.clone();
+        let writer_path = path_buf.clone();
+        let writer = std::thread::spawn(move || {
+            while !writer_go.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            // A completed `shunt login antigravity`, from its own process in
+            // production. Same email as the snapshot, deliberately: a
+            // different one would be held back by `same_identity` and mask
+            // the race this test exists for.
+            write_stored(
+                &writer_path,
+                &StoredAuth {
+                    access_token: "relogin-access".to_string(),
+                    refresh_token: "relogin-refresh".to_string(),
+                    expiry_date: Some(future_millis(7200)),
+                    email: Some("a@example.com".to_string()),
+                    project_id: None,
+                },
+            )
+            .unwrap();
+        });
+
+        let hook_path = path_buf.clone();
+        let store = store_at(path_buf.clone(), &server).with_merge_hook(move || {
+            go.store(true, Ordering::SeqCst);
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                if crate::auth::shared::file_lock::waiters_blocked_on(&hook_path) > 0 {
+                    return;
+                }
+                if fs::read_to_string(&hook_path).unwrap() != baseline {
+                    return;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the competing writer neither parked on the credential lock nor wrote \
+                     within 10s, so this run cannot distinguish a working lock from an \
+                     absent one"
+                );
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        });
+
+        store
+            .force_refresh_if_access_token("rejected-access")
+            .await
+            .unwrap();
+        writer.join().expect("the competing writer thread");
+
+        let written: StoredAuth =
+            serde_json::from_str(&fs::read_to_string(&path_buf).unwrap()).unwrap();
+        assert_eq!(
+            written.refresh_token, "relogin-refresh",
+            "the re-login's rotated refresh token was lost, so the forced-refresh write is \
+             not a compare-and-swap"
+        );
+        assert_eq!(
+            written.access_token, "relogin-access",
+            "the re-login's access token was lost, so the forced-refresh write is not a \
+             compare-and-swap"
+        );
     }
 
     #[tokio::test]
