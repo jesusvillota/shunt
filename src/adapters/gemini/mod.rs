@@ -128,13 +128,136 @@ async fn forward(
     let provider = state
         .config
         .provider(&route.provider)
+        .ok_or_else(|| map_gemini_error(StatusCode::INTERNAL_SERVER_ERROR, "unknown provider"))?;
+    if provider.auth != AuthMode::AntigravityOauth {
+        let credential = resolve_credential(&state.config, &route, &state.http_client).await?;
+        return forward_single(&state, &route, body, credential, None).await;
+    }
+    let accounts = provider
+        .resolve_pool_accounts()
+        .await
+        .map_err(|error| map_gemini_error(StatusCode::SERVICE_UNAVAILABLE, &error))?;
+    if accounts.is_empty() {
+        let credential = resolve_credential(&state.config, &route, &state.http_client).await?;
+        return forward_single(&state, &route, body, credential, None).await;
+    }
+    if accounts.iter().all(|account| account.disabled) {
+        return Err(map_gemini_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &format!(
+                "provider '{}' has {} account(s) but all are `disabled = true`; none are selectable",
+                route.provider,
+                accounts.len()
+            ),
+        ));
+    }
+    let order = state.accounts.select_order(
+        &route.provider,
+        &accounts,
+        None,
+        Some(route.upstream_model.as_str()),
+        state.config.server.pool.as_ref(),
+    );
+    let candidates = order.len();
+    let mut last_error = None;
+    for (position, index) in order.into_iter().enumerate() {
+        let account = &accounts[index];
+        let Some(admission) = state.accounts.admit_candidate(
+            &route.provider,
+            account,
+            state.config.storm_ramp_initial(),
+            position,
+            candidates,
+        ) else {
+            continue;
+        };
+        let refresh_lock = state.accounts.refresh_lock(&route.provider, account);
+        let credential = {
+            let _guard = refresh_lock.lock().await;
+            match crate::auth::resolve_antigravity_account(
+                account,
+                &state.http_client,
+                &provider.base_url,
+            )
+            .await
+            {
+                Ok(credential) => credential,
+                Err(error) => {
+                    state.accounts.cooldown(
+                        &route.provider,
+                        account,
+                        std::time::Duration::from_secs(5 * 60),
+                        "auth",
+                    );
+                    tracing::warn!(
+                        provider = %route.provider,
+                        account = %account.name,
+                        error = %error.message,
+                        "failed to resolve Antigravity OAuth account"
+                    );
+                    continue;
+                }
+            }
+        };
+        match forward_single(&state, &route, body.clone(), credential, Some(account)).await {
+            Ok((status, mut response)) => {
+                state
+                    .accounts
+                    .mark_healthy(&route.provider, account, status.is_success());
+                if let Ok(value) = HeaderValue::from_str(&account.name) {
+                    response.headers_mut().insert("x-shunt-account", value);
+                }
+                return Ok((status, crate::adapters::with_admission(response, admission)));
+            }
+            Err(error) => {
+                let status = error.response.status();
+                match crate::accounts::classify_antigravity(status, &HeaderMap::new()) {
+                    crate::accounts::FailoverAction::Relay => return Err(error),
+                    crate::accounts::FailoverAction::Rotate
+                    | crate::accounts::FailoverAction::PauseSame
+                    | crate::accounts::FailoverAction::RefreshRetry => {
+                        state.accounts.cooldown(
+                            &route.provider,
+                            account,
+                            std::time::Duration::from_secs(
+                                if status == StatusCode::TOO_MANY_REQUESTS {
+                                    60
+                                } else {
+                                    30
+                                },
+                            ),
+                            crate::accounts::rotation_reason(status, &HeaderMap::new()),
+                        );
+                        last_error = Some(error);
+                    }
+                }
+            }
+        }
+    }
+    crate::metrics::record_pool_rotation(&route.provider, "exhausted");
+    Err(last_error.unwrap_or_else(|| {
+        map_gemini_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no Antigravity accounts are available",
+        )
+    }))
+}
+
+async fn forward_single(
+    state: &AppState,
+    route: &Route,
+    body: RequestBody,
+    credential: Credential,
+    account: Option<&crate::config::AccountConfig>,
+) -> Result<(StatusCode, Response<Body>), AdapterError> {
+    let provider = state
+        .config
+        .provider(&route.provider)
         .ok_or_else(|| AdapterError {
             message: format!("unknown provider {}", route.provider),
             response: Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response()),
             failure: None,
         })?;
-
-    let credential = resolve_credential(&state.config, &route, &state.http_client).await?;
 
     let (access_token, project_id) = match credential {
         Credential::GoogleOauth {
@@ -246,7 +369,11 @@ async fn forward(
         (endpoint, inner_req)
     };
 
-    let policy = provider.retry.policy();
+    let policy = if account.is_some() {
+        crate::retry::RetryPolicy::DISABLED
+    } else {
+        provider.retry.policy()
+    };
     let http_client = state.http_client.clone();
     let payload_clone = payload.clone();
     let endpoint_clone = endpoint.clone();
@@ -285,6 +412,14 @@ async fn forward(
     })
     .await
     .map_err(|error| {
+        if let Some(account) = account {
+            state.accounts.cooldown(
+                &route.provider,
+                account,
+                std::time::Duration::from_secs(30),
+                "transport",
+            );
+        }
         error.into_adapter_error(|error| AdapterError {
             message: format!("network error calling Gemini backend: {error}"),
             response: Box::new(StatusCode::BAD_GATEWAY.into_response()),

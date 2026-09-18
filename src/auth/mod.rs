@@ -150,6 +150,37 @@ pub async fn resolve_credential(
     }
 }
 
+pub async fn resolve_antigravity_account(
+    account: &crate::config::AccountConfig,
+    client: &reqwest::Client,
+    base_url: &str,
+) -> Result<Credential, AdapterError> {
+    if account.token_env.is_some() {
+        return Err(auth_error(
+            "Antigravity accounts require a credential file containing a project id",
+        ));
+    }
+    let path = match account.credentials.as_deref() {
+        Some(path) => std::path::PathBuf::from(path),
+        None => {
+            antigravity::store::validate_account_name(&account.name)
+                .map_err(|error| auth_error(error.to_string()))?;
+            antigravity::store::account_path(&account.name)
+        }
+    };
+    let store = antigravity::auth::AntigravityAuthStore::new(path, client.clone(), base_url);
+    with_credential_timeout(
+        ANTIGRAVITY_CREDENTIAL_TIMEOUT,
+        store.get_valid(),
+        "Antigravity credential resolution timed out",
+    )
+    .await
+    .map(|credential| Credential::AntigravityOauth {
+        access_token: credential.access_token,
+        project_id: credential.project_id,
+    })
+}
+
 /// A Claude account credential-resolution failure, plus the two facts the
 /// account pool needs that a bare [`AdapterError`] cannot carry: whether the
 /// provider *terminally* rejected the stored refresh grant, and the underlying
