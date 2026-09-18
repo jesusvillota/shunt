@@ -71,7 +71,7 @@ pub fn store_oauth_tokens(
         "project_id": project_id,
     });
     let path = account_path(name);
-    shared::write_account_file(&path, &value)?;
+    super::auth::write_named_account(&path, &value)?;
     Ok(path)
 }
 

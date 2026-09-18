@@ -767,6 +767,31 @@ pub(crate) fn create_private_dir(dir: &Path) -> io::Result<()> {
     builder.create(dir)
 }
 
+/// Like [`write_account_file`], but additionally takes `lock_kind`'s
+/// cross-process file lock before the atomic write. For a store whose
+/// singleton credential path can be refreshed or discovered by a concurrent
+/// process while this call writes a sibling named-account file — without the
+/// lock the two writes are not ordered against each other and a
+/// read-modify-write on one can silently clobber the other. `lock_kind`/
+/// `lock_timeout` are the caller's own [`file_lock::FileLockKind`]/
+/// `Duration`, so each store's contention message and hint stay accurate.
+pub(crate) fn write_account_file_locked(
+    path: &Path,
+    value: &Value,
+    lock_kind: &'static file_lock::FileLockKind,
+    lock_timeout: Duration,
+) -> anyhow::Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        create_private_dir(parent)?;
+    }
+    let _guard = file_lock::lock_file_blocking(path, lock_kind, lock_timeout)?;
+    write_auth_file_atomic(path, value)?;
+    Ok(())
+}
+
 pub(crate) fn format_iso8601(time: SystemTime) -> String {
     let seconds = time
         .duration_since(UNIX_EPOCH)

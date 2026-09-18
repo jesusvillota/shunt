@@ -55,6 +55,17 @@ pub(crate) const AUTH_URL: &str = "https://accounts.google.com/o/oauth2/v2/auth"
 pub(crate) const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 pub(crate) const USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v2/userinfo?alt=json";
 
+/// Resolve the Antigravity OAuth refresh endpoint from a raw
+/// `SHUNT_ANTIGRAVITY_TOKEN_URL` value. Mirrors `claude::auth`'s and
+/// `codex::auth`'s own `sanitize_token_url` wrappers: a non-loopback
+/// plaintext override would egress the long-lived `refresh_token` in the
+/// clear, so [`crate::auth::shared::sanitize_token_url`] rejects it in favor
+/// of the real endpoint. Exists so the refresh path can be pointed at a local
+/// mock in tests; production deployments leave the env var unset.
+fn sanitize_token_url(raw: Option<String>) -> String {
+    crate::auth::shared::sanitize_token_url(raw, TOKEN_URL)
+}
+
 /// Production Code Assist backend. This is *not* the Antigravity default —
 /// see [`DEFAULT_API_ENDPOINT`]. It is the value
 /// [`addresses_production_backend`] recognises, so an operator who pins their
@@ -178,6 +189,36 @@ pub struct AntigravityCred {
     pub project_id: String,
 }
 
+/// A credential-refresh failure, additionally reporting whether it is
+/// terminal — the provider will never accept this refresh token again, so
+/// retrying (now, or after any cooldown) cannot recover it. Mirrors
+/// `claude::auth`'s `TerminalRefresh`/`is_terminal_refresh_failure`, but as a
+/// field rather than a downcast marker: this path returns a plain
+/// `AdapterError`, not an `anyhow::Error`, so there is nothing to downcast.
+/// `get_valid` discards `terminal` via `?` (the `From` impl below);
+/// `force_refresh_if_access_token`'s callers act on it to decide whether to
+/// mark the account `needs_relogin`.
+#[derive(Debug)]
+pub(crate) struct AntigravityRefreshError {
+    pub error: AdapterError,
+    pub terminal: bool,
+}
+
+impl From<AntigravityRefreshError> for AdapterError {
+    fn from(error: AntigravityRefreshError) -> Self {
+        error.error
+    }
+}
+
+impl From<AdapterError> for AntigravityRefreshError {
+    fn from(error: AdapterError) -> Self {
+        Self {
+            error,
+            terminal: false,
+        }
+    }
+}
+
 /// The on-disk credential shape. `project_id` is resolved once at login (where
 /// the `onboardUser` poll can afford to block) and cached here so the request
 /// path never pays for discovery.
@@ -281,7 +322,7 @@ impl AntigravityAuthStore {
         Self {
             path,
             client,
-            token_url: TOKEN_URL.to_string(),
+            token_url: sanitize_token_url(std::env::var("SHUNT_ANTIGRAVITY_TOKEN_URL").ok()),
             api_endpoint,
             daily_api_endpoint,
             project_cache: Arc::new(RwLock::new(None)),
@@ -378,23 +419,39 @@ impl AntigravityAuthStore {
         }
 
         let refreshed = self.refresh_call(&stored.refresh_token).await?;
-        let expires_in = refreshed.expires_in.unwrap_or(3600);
-        let expiry_date = SystemTime::now()
-            .checked_add(Duration::from_secs(expires_in))
-            .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
-            .map(|since| since.as_millis() as u64);
-        let updated = StoredAuth {
-            access_token: refreshed.access_token,
-            // Google does not rotate the refresh token on every exchange; keep
-            // the existing one when the response omits it, or the next refresh
-            // would have nothing to present.
-            refresh_token: refreshed
-                .refresh_token
-                .unwrap_or_else(|| stored.refresh_token.clone()),
-            expiry_date,
-            email: stored.email.clone(),
-            project_id: stored.project_id.clone(),
-        };
+        let updated = stored_from_refresh(&stored, refreshed);
+        self.write(&updated).await?;
+
+        let project_id = self.project_id(&updated).await?;
+        Ok(AntigravityCred {
+            access_token: updated.access_token,
+            project_id,
+        })
+    }
+
+    /// Refresh and persist the stored credential if it still holds the
+    /// access token the upstream just rejected — mirrors
+    /// `ClaudeAuthStore::force_refresh_if_access_token`, so a 401 can retry
+    /// the same account instead of only rotating off a token whose local
+    /// expiry math still calls valid. If another request already refreshed
+    /// it (concurrently, under the same [`REFRESH_LOCK`]), returns that newer
+    /// credential without rotating the refresh token again.
+    pub(crate) async fn force_refresh_if_access_token(
+        &self,
+        rejected_access_token: &str,
+    ) -> Result<AntigravityCred, AntigravityRefreshError> {
+        let _guard = REFRESH_LOCK.lock().await;
+        let stored = self.read().await?;
+        if stored.access_token != rejected_access_token {
+            let project_id = self.project_id(&stored).await?;
+            return Ok(AntigravityCred {
+                access_token: stored.access_token,
+                project_id,
+            });
+        }
+
+        let refreshed = self.refresh_call(&stored.refresh_token).await?;
+        let updated = stored_from_refresh(&stored, refreshed);
         self.write(&updated).await?;
 
         let project_id = self.project_id(&updated).await?;
@@ -510,7 +567,10 @@ impl AntigravityAuthStore {
         })
     }
 
-    async fn refresh_call(&self, refresh_token: &str) -> Result<TokenResponse, AdapterError> {
+    async fn refresh_call(
+        &self,
+        refresh_token: &str,
+    ) -> Result<TokenResponse, AntigravityRefreshError> {
         let params = [
             ("grant_type", "refresh_token"),
             ("client_id", CLIENT_ID),
@@ -539,24 +599,46 @@ impl AntigravityAuthStore {
         if !response.status().is_success() {
             let status = response.status();
             let body = diagnostic_body(self.request_timeout, response).await;
+            // Google's token endpoint reports a refresh token it will never
+            // accept again as `{"error": "invalid_grant", ...}` — mirrors
+            // `claude::auth`'s `INVALID_GRANT`/`TerminalRefresh` check. Any
+            // other non-success (a transient 5xx, a malformed body) is not
+            // terminal: re-attempting the same grant later can still succeed.
+            let terminal = serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .is_some_and(|error| error == "invalid_grant");
             tracing::warn!(
                 status = %status,
                 body = %body,
+                terminal,
                 "Antigravity OAuth token refresh rejected"
             );
-            return Err(auth_error(
-                "Antigravity OAuth token expired or revoked. Run `shunt login antigravity` to re-authenticate.",
-            ));
+            return Err(AntigravityRefreshError {
+                error: auth_error(
+                    "Antigravity OAuth token expired or revoked. Run `shunt login antigravity` to re-authenticate.",
+                ),
+                terminal,
+            });
         }
 
-        tokio::time::timeout(self.request_timeout, response.json::<TokenResponse>())
-            .await
-            .map_err(|_| auth_error("Antigravity token refresh timed out reading the response"))?
-            .map_err(|error| {
-                auth_error(format!(
-                    "invalid JSON response from Google token endpoint: {error}"
-                ))
-            })
+        Ok(
+            tokio::time::timeout(self.request_timeout, response.json::<TokenResponse>())
+                .await
+                .map_err(|_| {
+                    auth_error("Antigravity token refresh timed out reading the response")
+                })?
+                .map_err(|error| {
+                    auth_error(format!(
+                        "invalid JSON response from Google token endpoint: {error}"
+                    ))
+                })?,
+        )
     }
 
     /// The Code Assist project id: the persisted one when login resolved it,
@@ -1203,6 +1285,28 @@ fn addresses_bare_backend(endpoint: &str, is_host: impl Fn(&str) -> bool) -> boo
 /// `expiry_date` alone. A credential without one is treated as stale rather
 /// than assumed live — the cost is one refresh, and the alternative is sending
 /// an expired bearer upstream.
+/// Build the `StoredAuth` to persist after a successful token-endpoint
+/// refresh, keeping every field the response didn't carry (Google does not
+/// rotate the refresh token on every exchange, and never returns the email
+/// or project id at all). Shared by [`AntigravityAuthStore::get_valid`] and
+/// [`AntigravityAuthStore::force_refresh_if_access_token`].
+fn stored_from_refresh(stored: &StoredAuth, refreshed: TokenResponse) -> StoredAuth {
+    let expires_in = refreshed.expires_in.unwrap_or(3600);
+    let expiry_date = SystemTime::now()
+        .checked_add(Duration::from_secs(expires_in))
+        .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
+        .map(|since| since.as_millis() as u64);
+    StoredAuth {
+        access_token: refreshed.access_token,
+        refresh_token: refreshed
+            .refresh_token
+            .unwrap_or_else(|| stored.refresh_token.clone()),
+        expiry_date,
+        email: stored.email.clone(),
+        project_id: stored.project_id.clone(),
+    }
+}
+
 fn is_stored_valid(stored: &StoredAuth, now: SystemTime) -> bool {
     if stored.access_token.is_empty() {
         return false;
@@ -1253,6 +1357,21 @@ pub(crate) fn write_stored(path: &Path, stored: &StoredAuth) -> io::Result<()> {
     let value = serde_json::to_value(stored)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     write_auth_file_atomic(path, &value)
+}
+
+/// Write a named account's credential file — the same flat schema
+/// [`write_stored`] writes for the singleton — under [`CREDENTIAL_FILE_LOCK`],
+/// so a concurrent gateway refresh or project-discovery writeback on the same
+/// file cannot land between this write and one of them. `store::store_oauth_tokens`
+/// is the only caller: it already built and validated the JSON value, so this
+/// takes it directly rather than a [`StoredAuth`].
+pub(crate) fn write_named_account(path: &Path, value: &Value) -> anyhow::Result<()> {
+    crate::auth::shared::write_account_file_locked(
+        path,
+        value,
+        &CREDENTIAL_FILE_LOCK,
+        CREDENTIAL_LOCK_TIMEOUT,
+    )
 }
 
 #[cfg(test)]
@@ -1755,7 +1874,7 @@ mod tests {
             .await
             .expect_err("a stalled token endpoint must time out rather than hang");
         use axum::body::to_bytes;
-        let bytes = to_bytes(error.response.into_body(), usize::MAX)
+        let bytes = to_bytes(error.error.response.into_body(), usize::MAX)
             .await
             .unwrap();
         let body = String::from_utf8_lossy(&bytes);
@@ -1786,13 +1905,156 @@ mod tests {
             .await
             .expect_err("a redirect to a plaintext off-host target must be refused");
         use axum::body::to_bytes;
-        let bytes = to_bytes(error.response.into_body(), usize::MAX)
+        let bytes = to_bytes(error.error.response.into_body(), usize::MAX)
             .await
             .unwrap();
         let body = String::from_utf8_lossy(&bytes);
         assert!(
             body.contains("network failure"),
             "expected the refused redirect to surface as a network failure, got: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn force_refresh_returns_the_newer_token_without_refreshing_again() {
+        // Another request already refreshed the file while this one was
+        // resolving the same 401 — the stored access token no longer matches
+        // what this caller had, so it must hand that newer one back rather
+        // than burn another refresh grant.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let path_buf = temp_auth_file("force_refresh_already_fresh");
+        write(
+            &path_buf,
+            &StoredAuth {
+                access_token: "already-refreshed".to_string(),
+                refresh_token: "refresh-token".to_string(),
+                expiry_date: Some(future_millis(3600)),
+                email: None,
+                project_id: Some("proj-a".to_string()),
+            },
+        );
+        let store = store_at(path_buf, &server);
+
+        let credential = store
+            .force_refresh_if_access_token("stale-rejected-token")
+            .await
+            .unwrap();
+        assert_eq!(credential.access_token, "already-refreshed");
+        assert_eq!(credential.project_id, "proj-a");
+    }
+
+    #[tokio::test]
+    async fn force_refresh_refreshes_and_persists_when_the_stored_token_matches() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "fresh-access",
+                "refresh_token": "fresh-refresh",
+                "expires_in": 3600
+            })))
+            .mount(&server)
+            .await;
+
+        let path_buf = temp_auth_file("force_refresh_matches");
+        write(
+            &path_buf,
+            &StoredAuth {
+                access_token: "rejected-access".to_string(),
+                refresh_token: "old-refresh".to_string(),
+                expiry_date: Some(future_millis(3600)),
+                email: None,
+                project_id: Some("proj-a".to_string()),
+            },
+        );
+        let store = store_at(path_buf.clone(), &server);
+
+        let credential = store
+            .force_refresh_if_access_token("rejected-access")
+            .await
+            .unwrap();
+        assert_eq!(credential.access_token, "fresh-access");
+        assert_eq!(credential.project_id, "proj-a");
+
+        let written: StoredAuth =
+            serde_json::from_str(&fs::read_to_string(&path_buf).unwrap()).unwrap();
+        assert_eq!(written.access_token, "fresh-access");
+        assert_eq!(written.refresh_token, "fresh-refresh");
+    }
+
+    #[tokio::test]
+    async fn force_refresh_reports_terminal_on_invalid_grant() {
+        // The provider will never accept this refresh token again — the
+        // caller needs `terminal` to decide whether to mark the account
+        // needs-relogin rather than cycle it through cooldown forever.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(
+                ResponseTemplate::new(400).set_body_json(json!({"error": "invalid_grant"})),
+            )
+            .mount(&server)
+            .await;
+
+        let path_buf = temp_auth_file("force_refresh_invalid_grant");
+        write(
+            &path_buf,
+            &StoredAuth {
+                access_token: "rejected-access".to_string(),
+                refresh_token: "dead-refresh".to_string(),
+                expiry_date: Some(future_millis(3600)),
+                email: None,
+                project_id: Some("proj-a".to_string()),
+            },
+        );
+        let store = store_at(path_buf, &server);
+
+        let error = store
+            .force_refresh_if_access_token("rejected-access")
+            .await
+            .expect_err("invalid_grant must not succeed");
+        assert!(error.terminal, "invalid_grant must be reported terminal");
+    }
+
+    #[tokio::test]
+    async fn force_refresh_reports_a_transient_failure_as_non_terminal() {
+        // A 5xx from the token endpoint is a momentary blip, not proof the
+        // refresh token is dead — marking the account needs-relogin here
+        // would report a healthy account as dead on a provider outage.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let path_buf = temp_auth_file("force_refresh_transient");
+        write(
+            &path_buf,
+            &StoredAuth {
+                access_token: "rejected-access".to_string(),
+                refresh_token: "refresh-token".to_string(),
+                expiry_date: Some(future_millis(3600)),
+                email: None,
+                project_id: Some("proj-a".to_string()),
+            },
+        );
+        let store = store_at(path_buf, &server);
+
+        let error = store
+            .force_refresh_if_access_token("rejected-access")
+            .await
+            .expect_err("a 5xx must not succeed");
+        assert!(
+            !error.terminal,
+            "a transient 5xx must not be reported terminal"
         );
     }
 
@@ -2324,6 +2586,125 @@ mod tests {
             written.access_token, "relogin-access",
             "the re-login's access token was lost, so the merge is not a compare-and-swap"
         );
+    }
+
+    /// Same race as
+    /// [`project_id_writeback_serializes_against_a_concurrent_relogin`], but
+    /// the competing writer is `store::store_oauth_tokens` — a *named*
+    /// account's login — instead of the singleton `write_stored`. Before
+    /// finding 4's fix, `store_oauth_tokens` wrote via the generic atomic
+    /// writer without taking `CREDENTIAL_FILE_LOCK`, so it was not
+    /// synchronized against this merge at all and could be silently
+    /// clobbered by it.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn named_account_login_serializes_against_a_concurrent_relogin() {
+        use crate::auth::antigravity::store;
+        use crate::auth::shared::EnvVarGuard;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let _guard = store::TEST_ENV_LOCK.lock().await;
+        let dir = std::env::temp_dir().join(format!(
+            "shunt_tests_agy_named_writeback_cas_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _env = EnvVarGuard::set("SHUNT_ANTIGRAVITY_ACCOUNTS_DIR", &dir);
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1internal:loadCodeAssist"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"cloudaicompanionProject": "proj-discovered"})),
+            )
+            .mount(&server)
+            .await;
+
+        store::store_oauth_tokens(
+            "primary",
+            "old-access",
+            "old-refresh",
+            Some(future_millis(3600)),
+            Some("a@example.com"),
+            None,
+        )
+        .unwrap();
+        let path_buf = store::account_path("primary");
+        let snapshot = StoredAuth {
+            access_token: "old-access".to_string(),
+            refresh_token: "old-refresh".to_string(),
+            expiry_date: Some(future_millis(3600)),
+            email: Some("a@example.com".to_string()),
+            project_id: None,
+        };
+        let baseline = fs::read_to_string(&path_buf).unwrap();
+
+        let go = Arc::new(AtomicBool::new(false));
+        let writer_go = go.clone();
+        let writer = std::thread::spawn(move || {
+            while !writer_go.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            // A completed `shunt login antigravity --name primary`, from its
+            // own process in production. Same email as the snapshot,
+            // deliberately: a different one would be held back by
+            // `same_identity` and mask the race this test exists for.
+            store::store_oauth_tokens(
+                "primary",
+                "relogin-access",
+                "relogin-refresh",
+                Some(future_millis(7200)),
+                Some("a@example.com"),
+                None,
+            )
+            .unwrap();
+        });
+
+        let hook_path = path_buf.clone();
+        let store = store_at(path_buf.clone(), &server).with_merge_hook(move || {
+            go.store(true, Ordering::SeqCst);
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                if crate::auth::shared::file_lock::waiters_blocked_on(&hook_path) > 0 {
+                    return;
+                }
+                if fs::read_to_string(&hook_path).unwrap() != baseline {
+                    return;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the competing writer neither parked on the credential lock nor wrote \
+                     within 10s, so this run cannot distinguish a working lock from an \
+                     absent one"
+                );
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        });
+
+        assert_eq!(
+            store.project_id(&snapshot).await.unwrap(),
+            "proj-discovered"
+        );
+        writer.join().expect("the competing writer thread");
+
+        let written: StoredAuth =
+            serde_json::from_str(&fs::read_to_string(&path_buf).unwrap()).unwrap();
+        assert_eq!(
+            written.refresh_token, "relogin-refresh",
+            "the named login's rotated refresh token was lost, so store_oauth_tokens is not \
+             serialized against the credential lock"
+        );
+        assert_eq!(
+            written.access_token, "relogin-access",
+            "the named login's access token was lost, so store_oauth_tokens is not serialized \
+             against the credential lock"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

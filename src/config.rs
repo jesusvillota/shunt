@@ -2240,6 +2240,8 @@ pub enum ConfigError {
     InvalidAccountName { provider: String, name: String },
     #[error("providers.{provider}.accounts account \"{name}\" sets both credentials and token_env; set at most one credential source")]
     AccountMultipleCredentialSources { provider: String, name: String },
+    #[error("providers.{provider}.accounts account \"{name}\" sets token_env, but Antigravity accounts require a credential file containing a project id; use `credentials`, or omit the account entirely to use the default account store")]
+    AntigravityAccountTokenEnv { provider: String, name: String },
     #[error("server.pool.{key} must be between 0.0 and 1.0, got {value}")]
     InvalidPoolThreshold { key: &'static str, value: f64 },
     #[error("[server.status].sources[{index}].provider must not be empty")]
@@ -3828,6 +3830,19 @@ impl Config {
                         name: account.name.clone(),
                     });
                 }
+                // `resolve_antigravity_account` (`src/auth/mod.rs`) always
+                // rejects a `token_env` Antigravity account at request time —
+                // a bearer alone carries no Code Assist project id — so a
+                // config admitting one here would only fail later, as a
+                // per-request 503 instead of a boot-time error. Kimi
+                // legitimately supports `token_env`, so this is scoped to
+                // Antigravity only.
+                if provider.auth == AuthMode::AntigravityOauth && account.token_env.is_some() {
+                    return Err(ConfigError::AntigravityAccountTokenEnv {
+                        provider: name.clone(),
+                        name: account.name.clone(),
+                    });
+                }
                 // Same boot-time range guard as [server.pool]: pool selection
                 // consumes these unchecked.
                 for (key, value) in [
@@ -5362,6 +5377,31 @@ mod tests {
             config.validate().unwrap_err(),
             ConfigError::AccountMultipleCredentialSources { .. }
         ));
+    }
+
+    #[test]
+    fn antigravity_oauth_rejects_token_env_accounts() {
+        // A bearer alone carries no Code Assist project id
+        // (`resolve_antigravity_account` in `src/auth/mod.rs` always rejects
+        // this at request time), so it must fail at boot rather than as a
+        // per-request 503. Exact config from the PR review that triggered
+        // this: `accounts = [{ name = "primary", token_env = "AGY_TOKEN" }]`.
+        let mut config = Config::default();
+        let mut configured = account("primary");
+        configured.token_env = Some("AGY_TOKEN".to_string());
+        config.providers.get_mut("antigravity").unwrap().accounts = vec![configured];
+        assert!(matches!(
+            config.validate().unwrap_err(),
+            ConfigError::AntigravityAccountTokenEnv { .. }
+        ));
+
+        // Kimi legitimately supports token_env; the rejection must not spill
+        // over onto it.
+        let mut config = kimi_oauth_config();
+        let mut configured = account("primary");
+        configured.token_env = Some("KIMI_TOKEN".to_string());
+        config.providers.get_mut("kimi").unwrap().accounts = vec![configured];
+        config.validate().unwrap();
     }
 
     #[test]
