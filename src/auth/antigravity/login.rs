@@ -57,7 +57,7 @@ const USERINFO_BODY_DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 /// flow and is left with no credential on disk. Timing out turns that into
 /// the failure `run` already degrades gracefully: the credential is written
 /// with `email: None`.
-const USERINFO_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+pub(crate) const USERINFO_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Bound on the token exchange request and on reading its response.
 ///
@@ -288,7 +288,7 @@ pub(crate) fn build_auth_url(challenge: &str, state: &str, redirect_uri: &str) -
     url.to_string()
 }
 
-async fn exchange_code(
+pub(crate) async fn exchange_code(
     // The injected client follows redirects freely; this POST carries the
     // PKCE verifier and receives the refresh_token, so it goes through the
     // redirect-hardened `token_refresh_client()` instead — a permitted token
@@ -331,7 +331,7 @@ async fn exchange_code(
         .context("invalid JSON in the Antigravity token response")
 }
 
-async fn fetch_email(
+pub(crate) async fn fetch_email(
     client: &reqwest::Client,
     userinfo_url: &str,
     access_token: &str,
@@ -368,7 +368,7 @@ async fn fetch_email(
         .filter(|email| !email.is_empty()))
 }
 
-fn expiry_millis(expires_in: u64) -> Option<u64> {
+pub(crate) fn expiry_millis(expires_in: u64) -> Option<u64> {
     std::time::SystemTime::now()
         .checked_add(Duration::from_secs(expires_in))
         .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())

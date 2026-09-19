@@ -44,6 +44,101 @@ pub fn scan_accounts() -> io::Result<Vec<AccountConfig>> {
 /// [`super::auth::StoredAuth`] schema the singleton file uses, so
 /// [`super::auth::AntigravityAuthStore`] reads a named account file exactly
 /// like the singleton one.
+/// The store account's runtime identity, or `None` when no account file
+/// exists for `name` at all. Antigravity accounts never carry a `uuid` (see
+/// [`scan_accounts`]), so — unlike the Claude/Codex stores — the identity is
+/// always the account's own name; this only distinguishes "present" from
+/// "no such account" for reprovision/removal cleanup.
+pub fn account_identity(name: &str) -> Option<String> {
+    account_path(name).exists().then(|| name.to_string())
+}
+
+fn read_stored(path: &std::path::Path) -> Result<super::auth::StoredAuth, ()> {
+    let bytes = std::fs::read(path).map_err(|_| ())?;
+    serde_json::from_slice(&bytes).map_err(|_| ())
+}
+
+/// Like [`scan_accounts`], but a per-file read/parse failure aborts the whole
+/// scan (`Err`) instead of silently treating that account as identity-less.
+/// Used by admin cleanup's fail-closed check — see
+/// [`shared::scan_account_dir_strict`].
+pub fn scan_accounts_strict() -> io::Result<Vec<AccountConfig>> {
+    shared::scan_account_dir_strict(&default_accounts_dir(), |path| {
+        read_stored(path).map(|_| None)
+    })
+}
+
+/// Token-free Antigravity account metadata exposed by the admin dashboard.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AntigravityAccountMeta {
+    pub name: String,
+    /// Stored `expiry_date`, already Unix epoch milliseconds — no JWT to parse.
+    pub expires_at: Option<i64>,
+    pub email: Option<String>,
+    pub project_id: Option<String>,
+}
+
+/// Read one store account's token-free metadata. `None` when the file is
+/// missing or cannot be parsed; failures are logged without exposing token
+/// material.
+pub fn account_meta(name: &str) -> Option<AntigravityAccountMeta> {
+    let path = account_path(name);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            tracing::warn!(account = %name, %error, "admin: failed to read Antigravity account file; omitting from dashboard");
+            return None;
+        }
+    };
+    let stored: super::auth::StoredAuth = match serde_json::from_slice(&bytes) {
+        Ok(stored) => stored,
+        Err(error) => {
+            tracing::warn!(account = %name, %error, "admin: Antigravity account file is not valid JSON; omitting from dashboard");
+            return None;
+        }
+    };
+    Some(AntigravityAccountMeta {
+        name: name.to_string(),
+        expires_at: stored
+            .expiry_date
+            .and_then(|millis| i64::try_from(millis).ok()),
+        email: stored.email,
+        project_id: stored.project_id,
+    })
+}
+
+/// List store-managed Antigravity accounts with token-free metadata in name order.
+pub fn list_account_meta() -> io::Result<Vec<AntigravityAccountMeta>> {
+    Ok(scan_accounts()?
+        .into_iter()
+        .filter_map(|account| account_meta(&account.name))
+        .collect())
+}
+
+/// Remove a store account file. Returns whether a file was actually removed
+/// (`false` when it did not exist). The name is validated so a caller-supplied
+/// value can never escape the accounts directory. This deletes an
+/// operator-owned import file only; it never touches upstream Antigravity state.
+pub fn remove_account(name: &str) -> anyhow::Result<bool> {
+    validate_account_name(name)?;
+    match std::fs::remove_file(account_path(name)) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// The stored access token for a named account, or `None` when missing/unreadable.
+/// Admin-only: feeds [`super::auth::AntigravityAuthStore::force_refresh_if_access_token`]
+/// so the refresh probe can tell whether the on-disk token is still the one
+/// being refreshed, without exposing it to the dashboard response.
+pub(crate) fn stored_access_token(name: &str) -> Option<String> {
+    read_stored(&account_path(name))
+        .ok()
+        .map(|stored| stored.access_token)
+}
+
 pub fn store_oauth_tokens(
     name: &str,
     access_token: &str,
