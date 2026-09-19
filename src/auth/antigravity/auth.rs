@@ -509,9 +509,7 @@ impl AntigravityAuthStore {
                          no longer holds the account it was refreshed for"
                     );
                 } else if already_refreshed {
-                    tracing::debug!(
-                        "Antigravity token already refreshed by a concurrent writer"
-                    );
+                    tracing::debug!("Antigravity token already refreshed by a concurrent writer");
                 } else {
                     let merged = StoredAuth {
                         access_token: updated.access_token,
