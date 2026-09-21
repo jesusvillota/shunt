@@ -153,7 +153,7 @@ static REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// never after, and this lock is never held across a network call — so the two
 /// cannot deadlock, and holding this one costs at most two file operations of
 /// contention.
-static CREDENTIAL_FILE_LOCK: crate::auth::shared::file_lock::FileLockKind =
+pub(super) static CREDENTIAL_FILE_LOCK: crate::auth::shared::file_lock::FileLockKind =
     crate::auth::shared::file_lock::FileLockKind {
         lock_name: "Antigravity credential lock",
         contention_hint: "Another shunt process is writing the credential file \
@@ -181,7 +181,7 @@ static CREDENTIAL_FILE_LOCK: crate::auth::shared::file_lock::FileLockKind =
 /// blocking pool and a slow filesystem while still failing fast against a
 /// genuinely wedged holder, well inside the 120s `ANTIGRAVITY_CREDENTIAL_TIMEOUT`
 /// that bounds request-path credential resolution (`src/auth/mod.rs`).
-const CREDENTIAL_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+pub(super) const CREDENTIAL_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AntigravityCred {
@@ -1444,6 +1444,30 @@ pub(crate) fn write_named_account(path: &Path, value: &Value) -> anyhow::Result<
         &CREDENTIAL_FILE_LOCK,
         CREDENTIAL_LOCK_TIMEOUT,
     )
+}
+
+/// Remove a named account's credential file under [`CREDENTIAL_FILE_LOCK`].
+/// A refresh writeback re-reads the file and then replaces it atomically while
+/// holding this lock; a delete that skipped the lock could land between those
+/// two steps and be undone by the write, recreating an account the admin
+/// endpoint had already reported as removed. Returns whether a file existed.
+pub(crate) fn remove_named_account(path: &Path) -> anyhow::Result<bool> {
+    let _guard = crate::auth::shared::file_lock::lock_file_blocking(
+        path,
+        &CREDENTIAL_FILE_LOCK,
+        CREDENTIAL_LOCK_TIMEOUT,
+    )
+    .map_err(|error| {
+        anyhow::anyhow!(
+            "failed to lock the Antigravity credential file {}: {error:#}",
+            path.display()
+        )
+    })?;
+    match fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 #[cfg(test)]

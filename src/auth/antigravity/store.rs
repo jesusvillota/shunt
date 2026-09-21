@@ -118,15 +118,14 @@ pub fn list_account_meta() -> io::Result<Vec<AntigravityAccountMeta>> {
 
 /// Remove a store account file. Returns whether a file was actually removed
 /// (`false` when it did not exist). The name is validated so a caller-supplied
-/// value can never escape the accounts directory. This deletes an
-/// operator-owned import file only; it never touches upstream Antigravity state.
+/// value can never escape the accounts directory. The delete is serialized
+/// with login and refresh writeback through the same credential-file lock, so
+/// a writeback in flight cannot recreate the file after this returns `true`.
+/// This deletes an operator-owned import file only; it never touches upstream
+/// Antigravity state.
 pub fn remove_account(name: &str) -> anyhow::Result<bool> {
     validate_account_name(name)?;
-    match std::fs::remove_file(account_path(name)) {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
-    }
+    super::auth::remove_named_account(&account_path(name))
 }
 
 /// The stored access token for a named account, or `None` when missing/unreadable.
@@ -319,5 +318,46 @@ mod tests {
         let dir = temp_dir("missing").join("does-not-exist");
         let _env = shared::EnvVarGuard::set("SHUNT_ANTIGRAVITY_ACCOUNTS_DIR", &dir);
         assert!(scan_accounts().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn remove_account_waits_for_the_credential_file_lock() {
+        use std::time::Duration;
+
+        let _guard = TEST_ENV_LOCK.lock().await;
+        let dir = temp_dir("remove-lock");
+        let _env = shared::EnvVarGuard::set("SHUNT_ANTIGRAVITY_ACCOUNTS_DIR", &dir);
+        let path =
+            store_oauth_tokens("primary", "access", "refresh", None, None, Some("proj")).unwrap();
+
+        // A refresh writeback holds the credential lock across its read and
+        // atomic replace. While it does, the delete must wait rather than
+        // slip in between the two and be undone by the write.
+        let writer = shared::file_lock::lock_file_blocking(
+            &path,
+            &super::super::auth::CREDENTIAL_FILE_LOCK,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        let removal = tokio::task::spawn_blocking(|| remove_account("primary"));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            !removal.is_finished(),
+            "removal must block while a writer holds the credential lock"
+        );
+        assert!(
+            path.exists(),
+            "the file must survive until the writer is done"
+        );
+
+        drop(writer);
+        let removed = tokio::time::timeout(Duration::from_secs(10), removal)
+            .await
+            .expect("removal must proceed once the lock is released")
+            .unwrap()
+            .unwrap();
+        assert!(removed);
+        assert!(!path.exists());
+        let _ = fs::remove_dir_all(dir);
     }
 }

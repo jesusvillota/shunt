@@ -133,7 +133,7 @@ async fn forward(
         .ok_or_else(|| map_gemini_error(StatusCode::INTERNAL_SERVER_ERROR, "unknown provider"))?;
     if provider.auth != AuthMode::AntigravityOauth {
         let credential = resolve_credential(&state.config, &route, &state.http_client).await?;
-        return forward_single(&state, &route, body, credential, None).await;
+        return forward_single(&state, &route, body, credential, None, response_byte_cap).await;
     }
     let accounts = provider
         .resolve_pool_accounts()
@@ -141,7 +141,7 @@ async fn forward(
         .map_err(|error| map_gemini_error(StatusCode::SERVICE_UNAVAILABLE, &error))?;
     if accounts.is_empty() {
         let credential = resolve_credential(&state.config, &route, &state.http_client).await?;
-        return forward_single(&state, &route, body, credential, None).await;
+        return forward_single(&state, &route, body, credential, None, response_byte_cap).await;
     }
     if accounts.iter().all(|account| account.disabled) {
         return Err(map_gemini_error(
@@ -220,7 +220,16 @@ async fn forward(
                 None
             }
         };
-        match forward_single(&state, &route, body.clone(), credential, Some(account)).await {
+        match forward_single(
+            &state,
+            &route,
+            body.clone(),
+            credential,
+            Some(account),
+            response_byte_cap,
+        )
+        .await
+        {
             Ok((status, mut response)) => {
                 state
                     .accounts
@@ -273,6 +282,7 @@ async fn forward(
                                     body.clone(),
                                     refreshed_credential,
                                     Some(account),
+                                    response_byte_cap,
                                 )
                                 .await
                                 {
@@ -421,6 +431,7 @@ async fn forward_single(
     body: RequestBody,
     credential: Credential,
     account: Option<&crate::config::AccountConfig>,
+    response_byte_cap: Option<usize>,
 ) -> Result<(StatusCode, Response<Body>), AdapterError> {
     let provider = state
         .config
