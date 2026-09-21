@@ -69,9 +69,10 @@ export function useDashboard(): Dashboard {
     // and neither may discard the observations themselves. `readJson` reports a
     // failure rather than throwing, which is what keeps that true through
     // `Promise.all`.
-    const [pool, accounts] = await Promise.all([
+    const [pool, accounts, codexAccounts] = await Promise.all([
       readJson<{ providers?: PoolProvider[] }>(`${API}/pool`, ''),
       readJson<{ accounts?: ClaudeStoreAccount[] }>(`${API}/accounts`, ''),
+      readJson<{ accounts?: CodexStoreAccount[] }>(`${API}/accounts/codex`, ''),
     ]);
 
     return {
@@ -80,6 +81,7 @@ export function useDashboard(): Dashboard {
         observed.data.accounts ?? [],
         pool.ok ? pool.data : null,
         accounts.ok ? accounts.data : null,
+        codexAccounts.ok ? codexAccounts.data : null,
       ),
     };
   }, []);

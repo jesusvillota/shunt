@@ -30,7 +30,13 @@ use serde_json::Value;
 
 pub use switchyard_libsy::ToolSignals;
 
-use crate::config::{Config, StageRouterConfig};
+/// The `messages` walk the driven `prefill_router` lane pays per request, for
+/// `benches/stage_router.rs`. Gated with the router it belongs to: without the
+/// feature there is no lane to measure and no `Message` type to name.
+#[cfg(feature = "prefill-router")]
+pub use crate::routing::prefill::messages_from_body;
+
+use crate::config::{Config, StageRouterConfig, ToolSemanticsConfig};
 use crate::error::ShuntError;
 use crate::routing::context::RouterContext;
 use crate::routing::stage::store::{
@@ -67,7 +73,14 @@ pub fn parse_request_body(raw: Vec<u8>) -> Result<Arc<Value>, serde_json::Error>
 /// a session's total extraction cost is quadratic in its turn count even though
 /// each individual call is linear.
 pub fn extract_signals(messages: &Value, recent_turn_window: usize) -> Option<ToolSignals> {
-    signals::extract(messages, recent_turn_window)
+    // The default (empty) semantics table, which is what an entry without
+    // `[models.router.tool_semantics]` passes: the benchmark measures the walk,
+    // not an operator's lookup list.
+    signals::extract(
+        messages,
+        recent_turn_window,
+        &ToolSemanticsConfig::default(),
+    )
 }
 
 /// Per-session tier pins, as they live on `AppState`.
@@ -141,10 +154,29 @@ pub fn resolve_chain(
         now,
         pending: Cell::new(None),
         decided: Cell::new(None),
+        consult: Cell::new(None),
+        prefill: None,
     };
     let (routes, _model) = routing::resolve_request_chain_value(config, request, Some(&stage))?;
-    stage.commit();
+    // The commit `proxy::failover` performs once the request is admitted: take
+    // the parked pin and write it. Spelled out here rather than hidden behind a
+    // helper because production spells it out too — the driven lane may rewrite
+    // the pin's tier between these two lines.
+    if let Some(pin) = stage.pending.take() {
+        store.0.commit(pin, now);
+    }
     Ok(routes)
+}
+
+/// Every route admission must consider for one requested id (ADR-0005 §3).
+///
+/// The driven lane's added cost on the admission path, measured against the
+/// routed arms above: a driven entry gates against this list instead of against
+/// the chain its router picked, so the extra work is one `resolve_model_chain`
+/// per target and judge. `dependency_envelope` is `pub(crate)`, which is why it
+/// needs a facade at all.
+pub fn dependency_envelope(config: &Config, model: &str) -> Vec<Route> {
+    routing::envelope::dependency_envelope(config, model)
 }
 
 /// Facade tests.
@@ -177,6 +209,16 @@ mod tests {
             min_dwell_turns: 3,
             deescalate_threshold: None,
             session_ttl_seconds: 3600,
+            capable_hold_turns: 0,
+            tool_semantics: Default::default(),
+            handoff_notes: None,
+            classifier: None,
+            judge_timeout_ms: crate::config::DEFAULT_JUDGE_TIMEOUT_MS,
+            judge_max_response_bytes: crate::config::DEFAULT_JUDGE_MAX_RESPONSE_BYTES,
+            gated_max_bytes: crate::config::DEFAULT_GATED_MAX_BYTES,
+            gated_idle_ms: crate::config::DEFAULT_GATED_IDLE_MS,
+            gated_max_duration_ms: crate::config::DEFAULT_GATED_MAX_DURATION_MS,
+            max_judge_calls: crate::config::DEFAULT_MAX_JUDGE_CALLS,
         }
     }
 
@@ -193,7 +235,11 @@ mod tests {
                 id: "router-model".to_string(),
                 display_name: None,
                 upstream_model: None,
-                stage_router: with_router.then(router),
+                router: with_router
+                    .then(router)
+                    .map(crate::config::RouterConfig::StageRouter),
+                stage_router: None,
+                subagents: None,
             }],
             routes: vec![
                 route("router-model"),
@@ -285,7 +331,7 @@ mod tests {
     }
 
     /// The unrouted half. Same id, same body, same store — only the
-    /// `[models.stage_router]` table is absent, and the id then resolves as
+    /// `[models.router]` table is absent, and the id then resolves as
     /// itself. Without this the benchmark's flat `resolve_chain_unrouted` row
     /// would prove nothing about the router.
     #[test]

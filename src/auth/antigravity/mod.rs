@@ -774,7 +774,9 @@ mod tests {
                         .into_iter()
                         .collect(),
                 ),
+                router: None,
                 stage_router: None,
+                subagents: None,
             }),
         }
         config
@@ -910,7 +912,9 @@ mod tests {
                     .into_iter()
                     .collect(),
             ),
+            router: None,
             stage_router: None,
+            subagents: None,
         });
         assert!(routes_to_antigravity(&config));
     }

@@ -1,5 +1,7 @@
 # shunt
 
+오프라인 자격 증명 가져오기: `shunt import opencodex --dry-run`으로 호환 API 키와 Cursor/Command Code 액세스 토큰을 미리 확인합니다. 기존 설정이나 갱신 토큰을 변경·복사하지 않고 새 비공개 스냅샷을 생성합니다. [가져오기 안내(영문)](docs/credential-import.md)를 참고하세요.
+
 [![CI](https://github.com/pleaseai/shunt/actions/workflows/ci.yml/badge.svg)](https://github.com/pleaseai/shunt/actions/workflows/ci.yml)
 [![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/pleaseai/shunt?utm_source=badge)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=pleaseai_shunt&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=pleaseai_shunt)
@@ -92,7 +94,7 @@ shunt add upstream https://provider.example/docs --print | claude
 
 ## 프로바이더
 
-프로바이더는 순서가 있는 `[[upstreams]]` 항목 또는 레거시 `[providers.<name>]` TOML 테이블입니다(YAML에서는 각각 해당 sequence 또는 mapping의 항목). 두 가지 어댑터 종류가 대부분의 업스트림을 커버합니다. `kind = "anthropic"`(업스트림이 Anthropic Messages를 사용하며, 필요하면 다른 키로 패스스루)와 `kind = "responses"`(업스트림이 OpenAI Responses API를 사용하며, shunt가 Anthropic Messages ⇄ Responses를 스트리밍 포함하여 변환)입니다. 세 번째 네이티브 종류인 `kind = "cursor"`는 Cursor의 ConnectRPC/protobuf AgentService를 브리지하여 Cursor 구독을 동일한 Anthropic-Messages 인터페이스로 사용할 수 있게 합니다.
+프로바이더는 순서가 있는 `[[upstreams]]` 항목 또는 레거시 `[providers.<name>]` TOML 테이블입니다(YAML에서는 각각 해당 sequence 또는 mapping의 항목). 두 가지 어댑터 종류가 대부분의 업스트림을 커버합니다. `kind = "anthropic"`(업스트림이 Anthropic Messages를 사용하며, 필요하면 다른 키로 패스스루)와 `kind = "responses"`(업스트림이 OpenAI Responses API를 사용하며, shunt가 Anthropic Messages ⇄ Responses를 스트리밍 포함하여 변환하고, Responses API에는 `stop` 파라미터가 없으므로 `stop_sequences`를 게이트웨이 측에서 에뮬레이션)입니다. 세 번째 네이티브 종류인 `kind = "cursor"`는 Cursor의 ConnectRPC/protobuf AgentService를 브리지하여 Cursor 구독을 동일한 Anthropic-Messages 인터페이스로 사용할 수 있게 합니다.
 
 순서가 있는 업스트림은 프로바이더 간 페일오버를 지원합니다. 선언 순서가 시도 순서이며, 모델의 `upstream_model` 맵은 참여할 항목을 선택하고 공개 id를 각 백엔드 id에 매핑합니다.
 
@@ -192,6 +194,7 @@ OpenAI의 Thibault Sottiaux는 다른 코딩 하네스를 통해 Codex를 실행
 | :-- | :-- | :-- |
 | Anthropic 멀티 계정 풀링 — 스티키 세션, 쿼터 인식 로테이션, 예측 회피 | 계정 2개 이상인 `auth = "claude_oauth"`; `[server.pool]`은 선택적 튜닝 | [가이드](https://shunt.sh/ko/guides/anthropic-multi-account/) |
 | Codex 멀티 계정 풀링 — `x-codex-*` 윈도우 추적, 슬로우 스타트 램프, 재프로브 | 계정 2개 이상인 `auth = "chatgpt_oauth"`; `[server.pool]`은 선택적 튜닝 | [가이드](https://shunt.sh/ko/guides/codex-multi-account/) |
+| 학습형 프리필 라우팅 (`type = "prefill_router"`) | 컴파일 타임 옵트인 — `cargo build --release --features prefill-router` (**기본 꺼짐** — 릴리스 바이너리와 Homebrew 포뮬러는 `--features ui`로 빌드되므로 들어 있지 않습니다). 여기에 `type = "prefill_router"`를 지정한 `[models.router]` 테이블, 디스크에 놓인 라우터 체크포인트, `torch`와 `transformers`가 설치된 Python 환경이 필요합니다 | [레퍼런스](https://shunt.sh/ko/reference/configuration/#type--prefill_router) |
 | 인바운드 Codex 엔드포인트 — **Codex CLI**를 shunt로 향하게 해 같은 풀에 태우고, 모델별 라우팅도 선택할 수 있음 | `[server.codex_endpoint]` | [가이드](https://shunt.sh/ko/guides/inbound-codex-endpoint/) |
 | Claude 앱 게이트웨이 로그인 — OAuth device flow, managed settings, 사용자별 정책 | `public_url`, 32바이트 이상 JWT 시크릿, 정적 사용자 또는 `[server.gateway.oidc]`를 갖춘 `[server.gateway]` | [가이드](https://shunt.sh/ko/guides/gateway-login/) |
 | 게이트웨이 텔레메트리 인제스트 — 관리 클라이언트의 OTLP를 그대로 릴레이 | 구성된 `[server.gateway]`와 `forward_to`가 비어 있지 않은 `[server.gateway.telemetry]` | [레퍼런스](https://shunt.sh/ko/reference/configuration/#servergatewaytelemetry-선택) |
@@ -224,7 +227,7 @@ Claude Code는 모든 턴을 Anthropic API로 보냅니다. `shunt`는 그 앞(`
 
 선택성은 **각 요청의 `model` id**로 결정되며, Claude Code는 이미 이를 컨텍스트별로 선택할 수 있게 해줍니다. 메인 세션은 `/model` 선택기, 서브에이전트 정의는 `model:` 프론트매터, 모든 서브에이전트는 `CLAUDE_CODE_SUBAGENT_MODEL`, 선택기에 커스텀 항목을 추가하려면 `ANTHROPIC_CUSTOM_MODEL_OPTION`을 사용합니다. 따라서 "이 에이전트만 / 이 세션만 우회"는 Claude Code에서 결정되고, shunt는 받은 model id만 그대로 존중합니다. 취약한 에이전트별 시스템 프롬프트 지문 인식은 없습니다. 전역 모델 교체 프록시와 달리, 메인 세션은 Claude에 그대로 두고 지정한 모델만 우회할 수 있습니다.
 
-model id 하나를 스스로 판단하게 만들 수도 있습니다. [`[models.stage_router]`](https://shunt.sh/ko/guides/stage-router/) 항목은 강한 티어와 효율 티어를 지정하고, 대화의 최근 **tool-result 메타데이터**(`tool_use.name`과 `tool_result.is_error`, 프롬프트 텍스트가 아닙니다)로 턴마다 둘 중 하나를 고릅니다. 라우터를 설정하지 않으면 동작은 그대로입니다.
+model id 하나를 스스로 판단하게 만들 수도 있습니다. [`[models.router]`](https://shunt.sh/ko/guides/stage-router/) 항목은 `type` 키로 라우팅 알고리즘을 지정합니다. `stage_router`는 강한 티어와 효율 티어를 지정하고 대화의 최근 **tool-result 메타데이터**(`tool_use.name`과 `tool_result.is_error`, 프롬프트 텍스트가 아닙니다)로 턴마다 둘 중 하나를 고르며, `auto`는 같은 라우터를 업스트림 프리셋으로 돌리고, `random`은 가중치를 둔 타깃들로 트래픽을 나누되 한 세션은 같은 갈래에 머무르게 하고, `noop`은 빈 메시지로 답해 연결 점검에 쓰고, `prefill_router`는 가장 최근 사용자 턴을 읽는 학습형 분류기로 기본 꺼짐인 `prefill-router` 카고 피처를 켜고 빌드한 바이너리에서만 쓸 수 있습니다. `stage_router`에는 판정 모델을 지정하는 [`[models.router.classifier]`](https://shunt.sh/ko/reference/configuration/#modelsrouterclassifier-선택) 테이블을 선택적으로 더할 수 있습니다. 이 판정 모델은 신호가 결론을 내지 못한 턴에서만 호출되고 클라이언트에게는 제공되지 않으며, `judge_*`/`gated_*`/`max_judge_calls` 여섯 개 키가 내부 호출마다 한도를 겁니다. 타깃은 모두 평범한 공개 model id라서 각자의 페일오버 체인과 풀, 어댑터를 그대로 유지합니다([Switchyard 통합](https://shunt.sh/ko/guides/switchyard/)). 또 어떤 항목이든 [`[models.subagents]`](https://shunt.sh/ko/reference/configuration/#modelssubagents-선택) 오버레이를 함께 실을 수 있습니다. 이 오버레이는 위임된 작업(`Task` 서브에이전트, 훅 에이전트, 워크플로 서브에이전트)을 다른 타깃으로 보내며, 원하면 에이전트 타입별로 갈라 보낼 수도 있습니다(`by_type = { Explore = "claude-haiku-4-5" }`). 부모 세션은 자기 목적지를 그대로 유지하고, `main`과 컴팩션, 보조 턴은 이 오버레이를 절대 타지 않습니다. 라우터도 subagents 오버레이도 설정하지 않으면 동작은 그대로입니다.
 
 ## Claude Code 통합(공식 표면)
 
@@ -236,6 +239,7 @@ Claude Code는 `ANTHROPIC_BASE_URL` 뒤에 **1급 게이트웨이 계약**을 �
 
 - [커스텀 모델 옵션 추가](https://code.claude.com/docs/en/model-config#add-a-custom-model-option) — `ANTHROPIC_CUSTOM_MODEL_OPTION`은 내장 별칭을 대체하지 않으면서 게이트웨이로 라우팅되는 항목을 `/model` 선택기에 추가합니다. ID는 검증을 거치지 않으므로 게이트웨이가 받아들이는 문자열이면 무엇이든 됩니다. 위의 디스커버리 제약 때문에 **Claude 계열이 아닌 모델을 고르는 주된 방법**입니다(예: `gpt-5.6-sol`).
 - **도구 검색**(`ENABLE_TOOL_SEARCH`) — Claude Code는 MCP/LSP 도구 스키마를 지연시켰다가 필요할 때 드러내어 컨텍스트를 회수합니다. shunt는 Anthropic 1급 호스트가 아니므로 직접 옵트인하지 않는 한 이 기능은 **꺼진 상태**입니다. 옵트인 후 지연이 유지되는지는 설정이 아니라 업스트림이 결정합니다. `claude*`와 `anthropic/*` id는 프로토콜을 바이트 단위로 유지하고, 그 외 id는 해당 호스트가 거부하므로 `defer_loading` 표식이 제거되며, Responses 경로에는 자체적인 3-상태 `tool_search` 설정이 있습니다. [도구 검색](https://shunt.sh/ko/guides/codex/#도구-검색)을 참고하세요.
+- **auto mode의 서버측 분류기**(`dangerous-tool-use-*`) — auto mode는 각 도구 사용의 분류를 무과금으로 API에 맡깁니다. Anthropic 라우트에서는 shunt가 요청과 판정을 그대로 중계합니다. 업스트림이 답할 수 없는 경우 — 번역 라우트이거나, 이 필드를 받아들이는 것으로 확인된 곳이 없는 Anthropic 프로토콜 서드파티인 경우 — shunt는 아무것도 돌려주지 않는 대신 동작마다 "평가 불가"로 답합니다. 그러면 클라이언트는 그 동작 하나만 로컬에서 분류하고 다음 턴에 다시 서버에 요청하므로, 세션 내내 이 기능을 포기하지 않습니다. [문제 해결](https://shunt.sh/ko/reference/troubleshooting/)을 참고하세요.
 
 **설계 원칙:** 스펙을 준수하는 Anthropic-Messages 게이트웨이가 되고(`/v1/messages`, `/v1/models`, 올바른 헤더·어트리뷰션 패스스루), 요청의 `model` id로 라우팅하며, 매핑된 모델에 대해 Anthropic Messages ⇄ OpenAI Responses API를 번역합니다. Claude Code 프롬프트가 바뀔 때마다 깨지는 프롬프트 형태 휴리스틱은 쓰지 않습니다.
 

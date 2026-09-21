@@ -36,8 +36,9 @@ impl Adapter for GeminiAdapter {
         uri: &'a Uri,
         headers: &'a HeaderMap,
         body: RequestBody,
+        response_byte_cap: Option<usize>,
     ) -> AdapterFuture<'a> {
-        Box::pin(async move { forward(state, route, uri, headers, body).await })
+        Box::pin(async move { forward(state, route, uri, headers, body, response_byte_cap).await })
     }
 }
 
@@ -124,6 +125,7 @@ async fn forward(
     _uri: &Uri,
     _headers: &HeaderMap,
     body: RequestBody,
+    response_byte_cap: Option<usize>,
 ) -> Result<(StatusCode, Response<Body>), AdapterError> {
     let provider = state
         .config
@@ -599,14 +601,23 @@ async fn forward_single(
 
     let status = response.status();
     if !status.is_success() {
-        // Captured before `.text()` consumes `response` — `map_gemini_error`
+        // Captured before the body read consumes `response` — `map_gemini_error`
         // builds a fresh outbound response and carries no headers, so this is
         // the only point past which the real upstream headers exist at all.
         let response_headers = response.headers().clone();
-        let body_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "failed to read error response".to_string());
+        // Under the same cap as a success body: an error body is no more
+        // trusted than a good one, and on a bounded internal call it is read
+        // into the same memory.
+        let body_text =
+            match crate::adapters::collect_upstream_body(response, response_byte_cap).await {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(crate::adapters::UpstreamBodyError::TooLarge(too_large)) => {
+                    return Err(crate::adapters::too_large_error(too_large))
+                }
+                Err(crate::adapters::UpstreamBodyError::Transport(_)) => {
+                    "failed to read error response".to_string()
+                }
+            };
         if let Some(account) = account {
             cooldown_for_antigravity_error(state, route, account, status, &response_headers);
         }
@@ -687,11 +698,23 @@ async fn forward_single(
 
         Ok((StatusCode::OK, response_res))
     } else {
-        let full_text = response.text().await.map_err(|error| AdapterError {
-            message: format!("failed to read response body: {error}"),
-            response: Box::new(StatusCode::BAD_GATEWAY.into_response()),
-            failure: None,
-        })?;
+        // Bounded for an internal call, `reqwest`'s own whole-body read for a
+        // client turn: this is the non-streaming branch, so the whole reply is
+        // materialised before it can be translated.
+        let full_text =
+            match crate::adapters::collect_upstream_body(response, response_byte_cap).await {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+                Err(crate::adapters::UpstreamBodyError::TooLarge(too_large)) => {
+                    return Err(crate::adapters::too_large_error(too_large))
+                }
+                Err(crate::adapters::UpstreamBodyError::Transport(error)) => {
+                    return Err(AdapterError {
+                        message: format!("failed to read response body: {error}"),
+                        response: Box::new(StatusCode::BAD_GATEWAY.into_response()),
+                        failure: None,
+                    })
+                }
+            };
 
         let parsed = serde_json::from_str::<Value>(&full_text).map_err(|error| AdapterError {
             message: format!("invalid JSON from Gemini backend: {error}"),
