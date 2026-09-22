@@ -52,4 +52,15 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
   -d '{"sort_by_reset": true}'
 ```
 
-런타임 토글은 해제되거나 프로세스가 재시작될 때까지 설정 파일의 값을 덮어쓰며, 그 이후에는 다시 설정 파일의 값이 적용됩니다. `GET /admin/api/pool`은 유효한 값(오버라이드 또는 설정값)을 최상위 `sort_by_reset` 불리언으로 보고합니다.
+런타임 토글은 해제되거나 프로세스가 재시작될 때까지 설정 파일의 값을 덮어쓰며, 그 이후에는 다시 설정 파일의 값이 적용됩니다. 재시작 없이 명시적으로 오버라이드를 해제하려면 `null`을 보내세요:
+
+```bash
+curl -X PATCH "$SHUNT_URL/admin/api/pool" \
+  -H "x-shunt-admin-token: $ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"sort_by_reset": null}'
+```
+
+필드를 아예 생략하면 아무 효과가 없습니다 — 현재 오버라이드(또는 그 부재)를 그대로 둡니다; 명시적인 `null`만이 해제합니다.
+
+`GET /admin/api/pool`은 유효한 값(오버라이드 또는 설정값)을 최상위 `sort_by_reset` 불리언으로 보고합니다. `[server.pool]` 자체가 없으면 이 설정은 전혀 효과가 없습니다 — 이 설정이 바꾸려는 레거시 선택 경로 자체가 실행되지 않기 때문입니다 — 따라서 `[server.pool]`이 존재하기 전까지는 런타임 토글과 `GET /admin/api/pool`이 보고하는 값 모두 아무 의미가 없습니다.

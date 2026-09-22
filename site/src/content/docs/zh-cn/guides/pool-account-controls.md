@@ -52,4 +52,15 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
   -d '{"sort_by_reset": true}'
 ```
 
-运行时切换会覆盖配置文件中的值,直到被清除或进程重启,此后又会恢复应用配置文件自身的值。`GET /admin/api/pool` 会以顶层的 `sort_by_reset` 布尔值报告当前生效的值(覆盖值或配置值)。
+运行时切换会覆盖配置文件中的值,直到被清除或进程重启,此后又会恢复应用配置文件自身的值。要在不重启的情况下显式清除覆盖值,发送 `null`:
+
+```bash
+curl -X PATCH "$SHUNT_URL/admin/api/pool" \
+  -H "x-shunt-admin-token: $ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"sort_by_reset": null}'
+```
+
+完全省略该字段不会有任何效果 —— 会保留当前的覆盖值(或其缺失状态)不变;只有显式的 `null` 才会清除它。
+
+`GET /admin/api/pool` 会以顶层的 `sort_by_reset` 布尔值报告当前生效的值(覆盖值或配置值)。若 `[server.pool]` 本身不存在,这个设置完全不起作用 —— 它原本要改变的旧版选择路径根本不会运行 —— 因此在 `[server.pool]` 存在之前,运行时切换和 `GET /admin/api/pool` 报告的值都没有意义。

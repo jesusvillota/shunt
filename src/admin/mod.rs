@@ -1264,14 +1264,35 @@ async fn pool(State(state): State<AppState>, headers: HeaderMap) -> Response {
 
 #[derive(serde::Deserialize)]
 struct PatchPoolSettingsBody {
-    #[serde(default)]
-    sort_by_reset: Option<bool>,
+    /// Double-`Option` so the field's three JSON shapes stay distinguishable:
+    /// omitted (`None`, outer) is a no-op, `null` (`Some(None)`) clears the
+    /// runtime override back to config-following, and `true`/`false`
+    /// (`Some(Some(bool))`) sets it. Collapsing `null` and omitted into one
+    /// `None` (a plain `Option<bool>`, as this used to be) would leave no way
+    /// to clear an override once set — `serde` gives both the same value by
+    /// default, so this needs the explicit `deserialize_some` shim below.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    sort_by_reset: Option<Option<bool>>,
+}
+
+/// Maps a present field (of any value, including `null`) to `Some`, so a
+/// `#[serde(default)]` outer `Option` can distinguish "field omitted" from
+/// "field present". Standard workaround for serde's lack of a built-in
+/// double-`Option` — see <https://github.com/serde-rs/serde/issues/984>.
+fn deserialize_some<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 /// `PATCH /admin/api/pool` — toggle the process-wide reset-priority sort at
 /// runtime, without editing `shunt.toml`. Mirrors account pause: memory-only,
 /// cleared on restart, and only takes effect where `[server.pool]` is
-/// configured (see `AccountPool::effective_sort_by_reset`).
+/// configured (see `AccountPool::effective_sort_by_reset`). `{"sort_by_reset":
+/// null}` clears a previously set override back to following the config file;
+/// omitting the field entirely leaves the current override untouched.
 async fn patch_pool_settings(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1288,10 +1309,11 @@ async fn patch_pool_settings(
         return response;
     }
     if let Some(sort_by_reset) = body.sort_by_reset {
-        state
-            .accounts
-            .set_sort_by_reset_override(Some(sort_by_reset));
-        tracing::info!(sort_by_reset, "admin: pool sort_by_reset override updated");
+        state.accounts.set_sort_by_reset_override(sort_by_reset);
+        tracing::info!(
+            sort_by_reset = ?sort_by_reset,
+            "admin: pool sort_by_reset override updated"
+        );
     }
     json_secure(json!({"ok": true}))
 }

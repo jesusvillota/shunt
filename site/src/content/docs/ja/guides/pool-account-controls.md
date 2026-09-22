@@ -52,4 +52,15 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
   -d '{"sort_by_reset": true}'
 ```
 
-ランタイムの切り替えは、解除されるかプロセスが再起動されるまで設定ファイルの値を上書きし、その後は再び設定ファイル自身の値が適用されます。`GET /admin/api/pool` は有効な値(オーバーライドまたは設定値)をトップレベルの `sort_by_reset` ブール値として報告します。
+ランタイムの切り替えは、解除されるかプロセスが再起動されるまで設定ファイルの値を上書きし、その後は再び設定ファイル自身の値が適用されます。再起動せずに明示的にオーバーライドを解除するには `null` を送信します:
+
+```bash
+curl -X PATCH "$SHUNT_URL/admin/api/pool" \
+  -H "x-shunt-admin-token: $ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"sort_by_reset": null}'
+```
+
+フィールドを完全に省略すると何もしません — 現在のオーバーライド(またはその不在)をそのまま残します。明示的な `null` だけが解除します。
+
+`GET /admin/api/pool` は有効な値(オーバーライドまたは設定値)をトップレベルの `sort_by_reset` ブール値として報告します。`[server.pool]` 自体が存在しない場合、この設定はまったく効果を持ちません — この設定が変更するはずのレガシー選択パス自体が実行されないためです — したがって `[server.pool]` が存在するまでは、ランタイムの切り替えも `GET /admin/api/pool` が報告する値も意味を持ちません。

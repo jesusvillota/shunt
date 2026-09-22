@@ -52,4 +52,15 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
   -d '{"sort_by_reset": true}'
 ```
 
-A runtime toggle overrides the config file's value until cleared or the process restarts, at which point the config file's own value applies again. `GET /admin/api/pool` reports the effective value (override or config) as a top-level `sort_by_reset` boolean.
+A runtime toggle overrides the config file's value until cleared or the process restarts, at which point the config file's own value applies again. To clear an override explicitly without restarting, send `null`:
+
+```bash
+curl -X PATCH "$SHUNT_URL/admin/api/pool" \
+  -H "x-shunt-admin-token: $ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"sort_by_reset": null}'
+```
+
+Omitting the field entirely is a no-op — it leaves the current override (or its absence) untouched; only an explicit `null` clears it.
+
+`GET /admin/api/pool` reports the effective value (override or config) as a top-level `sort_by_reset` boolean. This setting has no effect at all while `[server.pool]` itself is absent — the legacy selection path it would otherwise change never runs — so both the runtime toggle and `GET /admin/api/pool`'s reported value are inert until `[server.pool]` exists.

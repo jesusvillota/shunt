@@ -791,14 +791,14 @@ impl AccountPool {
                 // each account's QuotaState just to assess it after release.
                 let assessment = assess_quota(&health.quota, account, is_fable, pool, unix_now);
                 let weekly_reset = governing_weekly_reset(&health.quota, is_fable);
-                let min_reset = [
-                    health.quota.reset_5h,
-                    health.quota.reset_7d,
-                    health.quota.reset_7d_oi,
-                ]
-                .into_iter()
-                .flatten()
-                .min();
+                // Fable-only for a Fable request, shared weekly otherwise — the
+                // same window `weekly_reset` above already picked, so an
+                // account's irrelevant Fable reset (e.g. from earlier Fable
+                // traffic) cannot reorder an ordinary request's selection.
+                let min_reset = [health.quota.reset_5h, weekly_reset]
+                    .into_iter()
+                    .flatten()
+                    .min();
                 let cooldown_until = governing_cooldown(health, is_fable);
                 snapshots.push((cooldown_until, assessment, weekly_reset, min_reset));
             }
@@ -920,6 +920,7 @@ impl AccountPool {
         let sticky = ident_reps[start_slot];
         let (sticky_cooldown, ref sticky_quota, _, _) = snapshots[sticky];
         if !accounts[sticky].disabled
+            && !paused_set.contains(&sticky)
             && sticky_cooldown.is_none_or(|until| until <= now)
             && !sticky_quota.near
         {
@@ -1544,13 +1545,18 @@ impl AccountPool {
     }
 
     /// Effective `sort_by_reset`: the runtime override when set, else the
-    /// config file's own `[server.pool] sort_by_reset` (`false` when
-    /// `[server.pool]` is absent).
+    /// config file's own `[server.pool] sort_by_reset`. Always `false` when
+    /// `[server.pool]` is absent, whatever the override says — select_order_inner's
+    /// legacy (no-pool) branch never consults this, so reporting the override's
+    /// value there would claim an effect selection does not actually have.
     pub fn effective_sort_by_reset(&self, pool: Option<&PoolConfig>) -> bool {
+        let Some(pool) = pool else {
+            return false;
+        };
         self.sort_by_reset_override
             .lock()
             .expect("account health lock poisoned")
-            .unwrap_or_else(|| pool.is_some_and(|cfg| cfg.sort_by_reset))
+            .unwrap_or(pool.sort_by_reset)
     }
 
     pub fn set_needs_relogin_for_store_account(
@@ -9606,6 +9612,75 @@ mod tests {
     }
 
     #[test]
+    fn paused_sticky_still_ranks_the_remaining_accounts() {
+        // A session-sticky account that is otherwise healthy (no cooldown, not
+        // near quota) used to take the fast path regardless of `paused`: the
+        // paused account itself never appeared (it is filtered out of
+        // `rotation` earlier), but the *other* accounts came back in raw
+        // rotation order instead of properly ranked by headroom.
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b"), account("c"), account("d")];
+        let cfg = PoolConfig::default();
+        let session = "paused-sticky-ranks";
+        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let sticky = rotation[0];
+        let others: Vec<usize> = rotation[1..].to_vec();
+        let now = unix_now();
+        // Same pattern as `all_near_accounts_fall_back_to_headroom_order`:
+        // equal utilization, decreasing reset distance across `others` in
+        // rotation order, so the headroom order is exactly reversed.
+        for (offset, &index) in others.iter().enumerate() {
+            let reset_in = [16_200u64, 9_000, 3_600][offset];
+            pool.note_quota(
+                "anthropic",
+                &accounts[index],
+                &quota_headers(&[
+                    (
+                        "anthropic-ratelimit-unified-5h-utilization",
+                        "0.3".to_string(),
+                    ),
+                    (
+                        "anthropic-ratelimit-unified-5h-reset",
+                        (now + reset_in).to_string(),
+                    ),
+                ]),
+            );
+        }
+
+        // Sanity: while the sticky account is healthy and un-paused, it still
+        // takes the fast path, so `others` stay in raw rotation order.
+        let baseline = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(
+            baseline, rotation,
+            "a healthy sticky account takes the fast path"
+        );
+
+        pool.set_paused("anthropic", &accounts[sticky], true);
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert!(!order.contains(&sticky), "the paused account never appears");
+        let expected: Vec<usize> = others.iter().rev().copied().collect();
+        assert_eq!(
+            order, expected,
+            "pausing the sticky account must not skip ranking the remaining ones by headroom"
+        );
+    }
+
+    #[test]
+    fn effective_sort_by_reset_is_false_without_pool_config_even_if_overridden() {
+        // `[server.pool]` absent means the legacy branch of `select_order_inner`
+        // runs, which never consults `sort_by_reset` at all. Reporting the
+        // runtime override as active in that state (e.g. on `GET
+        // /admin/api/pool`) would claim an effect selection does not have.
+        let pool = AccountPool::new();
+        pool.set_sort_by_reset_override(Some(true));
+        assert!(!pool.effective_sort_by_reset(None));
+        assert!(pool.effective_sort_by_reset(Some(&PoolConfig {
+            sort_by_reset: true,
+            ..Default::default()
+        })));
+    }
+
+    #[test]
     fn sort_by_reset_ranks_soonest_reset_first() {
         // Mirrors `available_accounts_order_by_burn_rate_headroom`, but with
         // `sort_by_reset` on: ordering follows the nearest reset instead of
@@ -9664,6 +9739,79 @@ mod tests {
         assert_eq!(order[0], soonest, "soonest-resetting account sorts first");
         assert_eq!(order[1], latest, "later-resetting account sorts after");
         assert_eq!(order.last(), Some(&sticky), "near sticky sorts last");
+    }
+
+    #[test]
+    fn sort_by_reset_ignores_a_stale_fable_reset_on_a_non_fable_request() {
+        // An account that previously served Fable traffic can carry a stale,
+        // near `reset_7d_oi` alongside an unrelated (and later) shared weekly
+        // `reset_7d`. For an ordinary (non-Fable) request, `min_reset` must
+        // track the same governing window `assess_quota` does — shared
+        // weekly, not the Fable-only one — or the leftover Fable reset wins
+        // the sort on a window this request does not consume from.
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b"), account("c")];
+        let cfg = PoolConfig {
+            sort_by_reset: true,
+            ..Default::default()
+        };
+        let session = "sort-by-reset-fable-leak";
+        let now = unix_now();
+        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let sticky = rotation[0];
+        pool.note_quota(
+            "anthropic",
+            &accounts[sticky],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.99".to_string(),
+            )]),
+        );
+        let others: Vec<usize> = (0..accounts.len()).filter(|&i| i != sticky).collect();
+        let (nearer_weekly, leaky_fable) = (others[0], others[1]);
+        pool.note_quota(
+            "anthropic",
+            &accounts[nearer_weekly],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-7d-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-reset",
+                    (now + 3_600).to_string(),
+                ),
+            ]),
+        );
+        // A far shared-weekly reset, but a stale, very-soon Fable-only reset
+        // left over from earlier Fable traffic on this account.
+        pool.note_quota(
+            "anthropic",
+            &accounts[leaky_fable],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-7d-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-reset",
+                    (now + 16_200).to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d_oi-reset",
+                    (now + 100).to_string(),
+                ),
+            ]),
+        );
+        // `None` model: not Fable, so only the shared `7d` reset governs.
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(
+            order[0], nearer_weekly,
+            "the account with the nearer shared-weekly reset sorts first, \
+             regardless of the other account's stale, irrelevant Fable reset"
+        );
+        assert_eq!(order[1], leaky_fable);
+        assert_eq!(order.last(), Some(&sticky));
     }
 
     #[test]
