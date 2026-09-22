@@ -119,10 +119,12 @@ pub fn list_account_meta() -> io::Result<Vec<AntigravityAccountMeta>> {
 /// Remove a store account file. Returns whether a file was actually removed
 /// (`false` when it did not exist). The name is validated so a caller-supplied
 /// value can never escape the accounts directory. The delete is serialized
-/// with login and refresh writeback through the same credential-file lock, so
-/// a writeback in flight cannot recreate the file after this returns `true`.
-/// This deletes an operator-owned import file only; it never touches upstream
-/// Antigravity state.
+/// with refresh and project-id writeback through the same credential-file
+/// lock, so an in-flight writeback cannot recreate the file after this returns
+/// `true`. A login still in its OAuth exchange is not covered: it takes the
+/// lock only when it writes, and writes unconditionally. This deletes an
+/// operator-owned import file only; it never touches upstream Antigravity
+/// state.
 pub fn remove_account(name: &str) -> anyhow::Result<bool> {
     validate_account_name(name)?;
     super::auth::remove_named_account(&account_path(name))
@@ -320,6 +322,10 @@ mod tests {
         assert!(scan_accounts().unwrap().is_empty());
     }
 
+    // `lock_file_blocking` is a deliberate no-op where the platform has no
+    // advisory file lock, so the contention this test asserts only exists on
+    // Unix — the same guard the file-lock contention tests carry.
+    #[cfg(unix)]
     #[tokio::test]
     async fn remove_account_waits_for_the_credential_file_lock() {
         use std::time::Duration;
