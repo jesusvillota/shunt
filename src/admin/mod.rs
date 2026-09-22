@@ -2155,7 +2155,7 @@ mod tests {
             "anthropic",
             AuthMode::ClaudeOauth,
             vec![inline],
-            vec!["team-*".to_string()],
+            vec!["team-store".to_string()],
         );
         state
             .accounts
@@ -2191,7 +2191,7 @@ mod tests {
             "anthropic",
             AuthMode::ClaudeOauth,
             Vec::new(),
-            vec!["team-*".to_string()],
+            vec!["team-store".to_string()],
         );
         // Recorded before any entry exists, exactly as a probe on an account
         // the pool has never selected records it: the verdict lives only in the
