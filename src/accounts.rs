@@ -385,6 +385,10 @@ struct AccountHealth {
     /// state_path` persists quota alone, so a restart clears this and the
     /// account's next terminal failure re-establishes it.
     needs_relogin: Option<ReloginCause>,
+    /// Operator-set runtime pause: excludes this account from pool selection
+    /// without touching config or signing out. Cleared on process restart.
+    /// Set via PATCH /admin/api/pool/{provider}/accounts/{name}.
+    pub(crate) paused: bool,
 }
 
 /// Token-free, serializable view of one account's pool health for the admin
@@ -407,6 +411,9 @@ pub struct AccountSnapshot {
     pub priority: u32,
     /// Configured exclusion from pool selection.
     pub disabled: bool,
+    /// Whether the operator has manually paused this account. Unlike `disabled`,
+    /// this is a runtime flag that survives config reloads but not restarts.
+    pub paused: bool,
     /// Burn-rate headroom in seconds across the governing quota windows, when
     /// `[server.pool]` is configured and the projection is finite: positive
     /// means the account survives to its tightest reset at the current pace.
@@ -431,16 +438,17 @@ impl AccountSnapshot {
     /// records a terminal verdict by store name in the pool's side table, and
     /// such an account has no health entry to carry it (see
     /// [`AccountPool::store_relogin`]).
-    fn unseen(account: &AccountConfig, needs_relogin: bool) -> Self {
+    fn unseen(account: &AccountConfig, needs_relogin: bool, paused: bool) -> Self {
         Self {
             name: account.name.clone(),
             has_state: false,
-            available: !account.disabled,
+            available: !account.disabled && !paused,
             near_quota: false,
             cooldown_secs_remaining: None,
             cooldown_fable_secs_remaining: None,
             priority: account.priority,
             disabled: account.disabled,
+            paused,
             headroom_secs: None,
             utilization_5h: None,
             reset_5h: None,
@@ -497,6 +505,11 @@ pub struct AccountPool {
     /// only pattern needed; `forget_identity` takes this one alone, after it has
     /// released `entries`, which is still consistent with that order.
     store_relogin: Mutex<HashSet<StoreAccountRef>>,
+    /// Runtime override for `[server.pool] sort_by_reset`, set via
+    /// `PATCH /admin/api/pool`. `[server.pool]` is process-wide (there is one,
+    /// not one per provider), so this override is too. `None` defers to the
+    /// config file's own value; memory-only, cleared on restart.
+    sort_by_reset_override: Mutex<Option<bool>>,
 }
 
 #[derive(Debug)]
@@ -744,9 +757,19 @@ impl AccountPool {
         // and `rotation` need no lock, so both are computed before the entries
         // lock below — the opportunistic re-probe candidate (Change B) is
         // selected only from these final representatives.
+        // Check pause state before acquiring the entries lock.
+        let paused_set: std::collections::HashSet<usize> = (0..accounts.len())
+            .filter(|&i| {
+                let entries = self.entries.lock().expect("account health lock poisoned");
+                entries
+                    .get(&account_key(&provider, &accounts[i]))
+                    .is_some_and(|h| h.paused)
+            })
+            .collect();
+
         let rotation = (0..distinct)
             .map(|offset| ident_reps[(start_slot + offset) % distinct])
-            .filter(|&index| !accounts[index].disabled)
+            .filter(|&index| !accounts[index].disabled && !paused_set.contains(&index))
             .collect::<Vec<_>>();
 
         let now = Instant::now();
@@ -768,8 +791,16 @@ impl AccountPool {
                 // each account's QuotaState just to assess it after release.
                 let assessment = assess_quota(&health.quota, account, is_fable, pool, unix_now);
                 let weekly_reset = governing_weekly_reset(&health.quota, is_fable);
+                let min_reset = [
+                    health.quota.reset_5h,
+                    health.quota.reset_7d,
+                    health.quota.reset_7d_oi,
+                ]
+                .into_iter()
+                .flatten()
+                .min();
                 let cooldown_until = governing_cooldown(health, is_fable);
-                snapshots.push((cooldown_until, assessment, weekly_reset));
+                snapshots.push((cooldown_until, assessment, weekly_reset, min_reset));
             }
             // Opportunistic re-probe (Change B): among the final rotation
             // representatives, find the single stale near-quota ChatGPT-family
@@ -791,7 +822,7 @@ impl AccountPool {
                     if account.store_family != Some(StoreFamily::Chatgpt) {
                         continue;
                     }
-                    let (cooldown_until, ref assessment, _) = snapshots[index];
+                    let (cooldown_until, ref assessment, _, _) = snapshots[index];
                     if cooldown_until.is_some_and(|until| until > now) || !assessment.near {
                         continue;
                     }
@@ -887,7 +918,7 @@ impl AccountPool {
         };
 
         let sticky = ident_reps[start_slot];
-        let (sticky_cooldown, ref sticky_quota, _) = snapshots[sticky];
+        let (sticky_cooldown, ref sticky_quota, _, _) = snapshots[sticky];
         if !accounts[sticky].disabled
             && sticky_cooldown.is_none_or(|until| until <= now)
             && !sticky_quota.near
@@ -907,17 +938,32 @@ impl AccountPool {
         match pool {
             // Priority beats headroom; ties prefer the account projected to
             // keep the most margin before its tightest window resets.
-            Some(_) => available_under.sort_by(|&left, &right| {
-                accounts[left]
-                    .priority
-                    .cmp(&accounts[right].priority)
-                    .then_with(|| {
-                        snapshots[right]
-                            .1
-                            .headroom
-                            .total_cmp(&snapshots[left].1.headroom)
-                    })
-            }),
+            Some(pool_cfg) => {
+                let sort_by_reset = self.effective_sort_by_reset(Some(pool_cfg));
+                available_under.sort_by(|&left, &right| {
+                    accounts[left]
+                        .priority
+                        .cmp(&accounts[right].priority)
+                        .then_with(|| {
+                            if sort_by_reset {
+                                // Soonest reset first; None (unknown) sorts last.
+                                let l = snapshots[left].3;
+                                let r = snapshots[right].3;
+                                match (l, r) {
+                                    (Some(lt), Some(rt)) => lt.cmp(&rt),
+                                    (Some(_), None) => std::cmp::Ordering::Less,
+                                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                                    (None, None) => std::cmp::Ordering::Equal,
+                                }
+                            } else {
+                                snapshots[right]
+                                    .1
+                                    .headroom
+                                    .total_cmp(&snapshots[left].1.headroom)
+                            }
+                        })
+                })
+            }
             // Legacy: `Option` orders `None` before `Some`, so accounts with
             // an unknown weekly reset sort first.
             None => available_under.sort_by(|&left, &right| {
@@ -1469,6 +1515,44 @@ impl AccountPool {
     /// signs a different subscription in under the same store name changes the
     /// uuid, and an equality-removal would strand the old verdict on the fresh
     /// account. See [`purge_store_relogin_ref`].
+    /// Pause or resume an account in the pool. The flag persists in memory
+    /// until toggled again or the process restarts. Inserts a default health
+    /// entry if the account has not been selected yet, so a pause issued before
+    /// any traffic takes effect when traffic arrives.
+    pub fn set_paused(&self, provider: &str, account: &AccountConfig, paused: bool) {
+        let mut entries = self.entries.lock().expect("account health lock poisoned");
+        let key = account_key(provider, account);
+        entries.entry(key).or_default().paused = paused;
+    }
+
+    /// Whether an account is currently paused.
+    pub fn is_paused(&self, provider: &str, account: &AccountConfig) -> bool {
+        let entries = self.entries.lock().expect("account health lock poisoned");
+        entries
+            .get(&account_key(provider, account))
+            .is_some_and(|h| h.paused)
+    }
+
+    /// Set (or clear, with `None`) the runtime override of `sort_by_reset`.
+    /// `[server.pool]` is process-wide, so this override applies to every
+    /// provider using the pool tier.
+    pub fn set_sort_by_reset_override(&self, value: Option<bool>) {
+        *self
+            .sort_by_reset_override
+            .lock()
+            .expect("account health lock poisoned") = value;
+    }
+
+    /// Effective `sort_by_reset`: the runtime override when set, else the
+    /// config file's own `[server.pool] sort_by_reset` (`false` when
+    /// `[server.pool]` is absent).
+    pub fn effective_sort_by_reset(&self, pool: Option<&PoolConfig>) -> bool {
+        self.sort_by_reset_override
+            .lock()
+            .expect("account health lock poisoned")
+            .unwrap_or_else(|| pool.is_some_and(|cfg| cfg.sort_by_reset))
+    }
+
     pub fn set_needs_relogin_for_store_account(
         &self,
         store_family: StoreFamily,
@@ -1951,8 +2035,12 @@ impl AccountPool {
                         // with no entry at all, the side table's verdict. `has_state`
                         // stays `false`, which is still true and which both dashboard
                         // tables already read *after* `needs_relogin`, so the row
-                        // renders "needs re-login" rather than "unseen".
-                        return AccountSnapshot::unseen(account, store_condemned);
+                        // renders "needs re-login" rather than "unseen". `paused` is
+                        // read from any entry that exists regardless of `observed`, so
+                        // an operator's pause shows up immediately even before the
+                        // account is ever selected.
+                        let paused = entries.get(&key).is_some_and(|health| health.paused);
+                        return AccountSnapshot::unseen(account, store_condemned, paused);
                     };
                     quota_expired |= expire_stale_quota(&mut health.quota, unix_now);
                     let quota = assess_quota(&health.quota, account, is_fable, pool, unix_now);
@@ -1969,12 +2057,13 @@ impl AccountPool {
                     AccountSnapshot {
                         name: account.name.clone(),
                         has_state: true,
-                        available: !account.disabled && !cooling && !quota.near,
+                        available: !account.disabled && !health.paused && !cooling && !quota.near,
                         near_quota: quota.near,
                         cooldown_secs_remaining,
                         cooldown_fable_secs_remaining,
                         priority: account.priority,
                         disabled: account.disabled,
+                        paused: health.paused,
                         headroom_secs: (pool.is_some() && quota.headroom.is_finite())
                             .then_some(quota.headroom as i64),
                         utilization_5h: health.quota.utilization_5h,
@@ -9469,5 +9558,242 @@ mod tests {
             "the stale near candidate is promoted even over a healthy sticky account"
         );
         assert!(reservation.is_some());
+    }
+
+    #[test]
+    fn paused_account_is_excluded_from_select_order() {
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b")];
+        pool.set_paused("anthropic", &accounts[0], true);
+        for _ in 0..10 {
+            let order = pool.select_order("anthropic", &accounts, None, None, None);
+            assert!(
+                !order.contains(&0),
+                "paused account must not appear in selection"
+            );
+            assert_eq!(order, vec![1]);
+        }
+    }
+
+    #[test]
+    fn paused_account_shows_in_snapshot_as_paused_and_unavailable() {
+        // A pause issued before the account was ever selected must still be
+        // visible on the dashboard, not just enforced in `select_order`.
+        let pool = AccountPool::new();
+        let accounts = vec![account("a")];
+        pool.set_paused("anthropic", &accounts[0], true);
+        let snaps = pool.snapshot("anthropic", &accounts, None, None);
+        assert!(snaps[0].paused);
+        assert!(!snaps[0].available, "a paused account is not available");
+    }
+
+    #[test]
+    fn unpause_restores_selection() {
+        let pool = AccountPool::new();
+        let accounts = vec![account("a")];
+        pool.set_paused("anthropic", &accounts[0], true);
+        assert!(pool.is_paused("anthropic", &accounts[0]));
+        assert!(pool
+            .select_order("anthropic", &accounts, None, None, None)
+            .is_empty());
+
+        pool.set_paused("anthropic", &accounts[0], false);
+        assert!(!pool.is_paused("anthropic", &accounts[0]));
+        assert_eq!(
+            pool.select_order("anthropic", &accounts, None, None, None),
+            vec![0]
+        );
+    }
+
+    #[test]
+    fn sort_by_reset_ranks_soonest_reset_first() {
+        // Mirrors `available_accounts_order_by_burn_rate_headroom`, but with
+        // `sort_by_reset` on: ordering follows the nearest reset instead of
+        // burn-rate headroom, even though headroom here would rank the
+        // opposite way (the soonest-reset account also has the least margin).
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b"), account("c")];
+        let cfg = PoolConfig {
+            sort_by_reset: true,
+            ..Default::default()
+        };
+        let session = "sort-by-reset";
+        let now = unix_now();
+        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let sticky = rotation[0];
+        // Push the sticky account near quota so the available_under sort runs.
+        pool.note_quota(
+            "anthropic",
+            &accounts[sticky],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.99".to_string(),
+            )]),
+        );
+        let others: Vec<usize> = (0..accounts.len()).filter(|&i| i != sticky).collect();
+        let (soonest, latest) = (others[0], others[1]);
+        pool.note_quota(
+            "anthropic",
+            &accounts[soonest],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 3_600).to_string(),
+                ),
+            ]),
+        );
+        pool.note_quota(
+            "anthropic",
+            &accounts[latest],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 16_200).to_string(),
+                ),
+            ]),
+        );
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(order[0], soonest, "soonest-resetting account sorts first");
+        assert_eq!(order[1], latest, "later-resetting account sorts after");
+        assert_eq!(order.last(), Some(&sticky), "near sticky sorts last");
+    }
+
+    #[test]
+    fn sort_by_reset_pushes_unknown_reset_last() {
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b"), account("c")];
+        let cfg = PoolConfig {
+            sort_by_reset: true,
+            ..Default::default()
+        };
+        let session = "sort-by-reset-unknown";
+        let now = unix_now();
+        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let sticky = rotation[0];
+        pool.note_quota(
+            "anthropic",
+            &accounts[sticky],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.99".to_string(),
+            )]),
+        );
+        let others: Vec<usize> = (0..accounts.len()).filter(|&i| i != sticky).collect();
+        let (known, unknown) = (others[0], others[1]);
+        // `known` gets a reset timestamp; `unknown` stays under quota with no
+        // reset signal at all.
+        pool.note_quota(
+            "anthropic",
+            &accounts[known],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 3_600).to_string(),
+                ),
+            ]),
+        );
+        pool.note_quota(
+            "anthropic",
+            &accounts[unknown],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.3".to_string(),
+            )]),
+        );
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(
+            order[0], known,
+            "the account with a known reset sorts first"
+        );
+        assert_eq!(
+            order[1], unknown,
+            "the account with no reset signal sorts after a known one"
+        );
+        assert_eq!(order.last(), Some(&sticky), "near sticky sorts last");
+    }
+
+    #[test]
+    fn sort_by_reset_runtime_override_wins_over_config_and_is_reversible() {
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b"), account("c")];
+        let cfg = PoolConfig::default(); // sort_by_reset: false in the file.
+        let session = "sort-by-reset-override";
+        let now = unix_now();
+        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let sticky = rotation[0];
+        pool.note_quota(
+            "anthropic",
+            &accounts[sticky],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.99".to_string(),
+            )]),
+        );
+        let others: Vec<usize> = (0..accounts.len()).filter(|&i| i != sticky).collect();
+        let (soonest, latest) = (others[0], others[1]);
+        // Utilizations are deliberately unequal, and chosen so headroom order
+        // disagrees with reset order: `soonest`'s near reset and high
+        // utilization make its projected margin negative, while `latest`'s far
+        // reset and low utilization give it a large positive margin. A
+        // same-utilization fixture (as in the sibling reset-order tests) would
+        // have the two orders agree here and prove nothing about the override.
+        pool.note_quota(
+            "anthropic",
+            &accounts[soonest],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.9".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 3_600).to_string(),
+                ),
+            ]),
+        );
+        pool.note_quota(
+            "anthropic",
+            &accounts[latest],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.05".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 16_200).to_string(),
+                ),
+            ]),
+        );
+
+        // Config says headroom order; that is what an un-overridden pool uses.
+        assert!(!pool.effective_sort_by_reset(Some(&cfg)));
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(
+            order[0], latest,
+            "headroom order: larger margin sorts first"
+        );
+
+        // The runtime override flips it without touching the config file.
+        pool.set_sort_by_reset_override(Some(true));
+        assert!(pool.effective_sort_by_reset(Some(&cfg)));
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(order[0], soonest, "override: soonest reset sorts first");
+
+        // Clearing the override reverts to the config's own value.
+        pool.set_sort_by_reset_override(None);
+        assert!(!pool.effective_sort_by_reset(Some(&cfg)));
     }
 }

@@ -49,6 +49,7 @@ export interface PoolAccount {
   plan?: string | null;
   status?: string | null;
   disabled?: boolean;
+  paused?: boolean;
   needs_relogin?: boolean;
   has_state?: boolean;
   near_quota?: boolean;
@@ -67,6 +68,15 @@ export interface PoolProvider {
   /** The provider's configured auth kind, e.g. `claude_oauth`. */
   auth?: string | null;
   accounts?: PoolAccount[];
+}
+
+/**
+ * `sortByReset` is process-wide (`[server.pool]` is not per-provider), so it
+ * rides alongside the provider list rather than inside it.
+ */
+export interface PoolData {
+  providers: PoolProvider[];
+  sortByReset: boolean;
 }
 
 export interface ClaudeStoreAccount {

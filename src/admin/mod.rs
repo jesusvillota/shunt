@@ -39,7 +39,7 @@ use axum::{
     extract::{rejection::JsonRejection, Path, State},
     http::{header, HeaderMap, HeaderName, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Form, Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -264,7 +264,11 @@ pub fn admin_router() -> Router<AppState> {
         .route("/admin/api/session", get(session_bootstrap))
         .route("/admin/api/accounts", get(list_accounts))
         .route("/admin/api/observed", get(observed_accounts))
-        .route("/admin/api/pool", get(pool))
+        .route("/admin/api/pool", get(pool).patch(patch_pool_settings))
+        .route(
+            "/admin/api/pool/{provider}/accounts/{name}",
+            patch(patch_pool_account),
+        )
         .route("/admin/api/status", get(status))
         .route("/admin/api/routes", get(routes))
         .route("/admin/api/accounts/claude", post(add_account))
@@ -1247,7 +1251,49 @@ async fn pool(State(state): State<AppState>, headers: HeaderMap) -> Response {
         // named "claude".
         providers.push(json!({ "provider": name, "auth": provider.auth, "accounts": accounts }));
     }
-    json_secure(json!({ "providers": providers }))
+    json_secure(json!({
+        "providers": providers,
+        // `[server.pool]` is process-wide (one, not one per provider), so this
+        // reflects a runtime `PATCH /admin/api/pool` override when set, else
+        // the config file's own value.
+        "sort_by_reset": state
+            .accounts
+            .effective_sort_by_reset(state.config.server.pool.as_ref()),
+    }))
+}
+
+#[derive(serde::Deserialize)]
+struct PatchPoolSettingsBody {
+    #[serde(default)]
+    sort_by_reset: Option<bool>,
+}
+
+/// `PATCH /admin/api/pool` — toggle the process-wide reset-priority sort at
+/// runtime, without editing `shunt.toml`. Mirrors account pause: memory-only,
+/// cleared on restart, and only takes effect where `[server.pool]` is
+/// configured (see `AccountPool::effective_sort_by_reset`).
+async fn patch_pool_settings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<PatchPoolSettingsBody>,
+) -> Response {
+    let state = state.refreshed();
+    let Some(authok) = authenticate(&state, &headers) else {
+        return unauthorized();
+    };
+    if let Some(response) = require_write(&authok) {
+        return response;
+    }
+    if let Some(response) = check_csrf(&authok.kind, &headers) {
+        return response;
+    }
+    if let Some(sort_by_reset) = body.sort_by_reset {
+        state
+            .accounts
+            .set_sort_by_reset_override(Some(sort_by_reset));
+        tracing::info!(sort_by_reset, "admin: pool sort_by_reset override updated");
+    }
+    json_secure(json!({"ok": true}))
 }
 
 /// `GET /admin/api/routes` — the resolved routing table, for the dashboard.
@@ -1261,6 +1307,102 @@ async fn pool(State(state): State<AppState>, headers: HeaderMap) -> Response {
 /// ungated endpoint; authenticating the route itself is not an option either,
 /// since discovery clients rely on it being open.
 ///
+#[derive(serde::Deserialize)]
+struct PatchPoolAccountBody {
+    #[serde(default)]
+    paused: Option<bool>,
+}
+
+async fn patch_pool_account(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((provider, name)): Path<(String, String)>,
+    Json(body): Json<PatchPoolAccountBody>,
+) -> Response {
+    let state = state.refreshed();
+    let Some(authok) = authenticate(&state, &headers) else {
+        return unauthorized();
+    };
+    if let Some(response) = require_write(&authok) {
+        return response;
+    }
+    if let Some(response) = check_csrf(&authok.kind, &headers) {
+        return response;
+    }
+    // Look up the provider.
+    let Some(provider_cfg) = state.config.providers.get(&provider) else {
+        return not_found();
+    };
+    // Resolve pool accounts for this provider.
+    let resolved = match provider_cfg.auth {
+        AuthMode::ClaudeOauth => {
+            crate::auth::shared::resolve_pool_accounts(
+                "Claude",
+                &provider_cfg.accounts,
+                &provider_cfg.account_scope,
+                crate::accounts::StoreFamily::Claude,
+                crate::auth::claude::store::default_accounts_dir(),
+                crate::auth::claude::store::scan_accounts,
+            )
+            .await
+        }
+        AuthMode::ChatgptOauth => {
+            crate::auth::shared::resolve_pool_accounts(
+                "codex",
+                &provider_cfg.accounts,
+                &provider_cfg.account_scope,
+                crate::accounts::StoreFamily::Chatgpt,
+                crate::auth::codex::store::default_accounts_dir(),
+                crate::auth::codex::store::scan_accounts,
+            )
+            .await
+        }
+        AuthMode::KimiOauth => {
+            crate::auth::shared::resolve_pool_accounts(
+                "Kimi",
+                &provider_cfg.accounts,
+                &provider_cfg.account_scope,
+                crate::accounts::StoreFamily::Kimi,
+                crate::auth::kimi::store::default_accounts_dir(),
+                crate::auth::kimi::store::scan_accounts,
+            )
+            .await
+        }
+        AuthMode::AntigravityOauth => {
+            crate::auth::shared::resolve_pool_accounts(
+                "Antigravity",
+                &provider_cfg.accounts,
+                &provider_cfg.account_scope,
+                crate::accounts::StoreFamily::Antigravity,
+                crate::auth::antigravity::store::default_accounts_dir(),
+                crate::auth::antigravity::store::scan_accounts,
+            )
+            .await
+        }
+        _ => return bad_request("provider does not use a managed pool"),
+    };
+    let accounts = match resolved {
+        Ok(accounts) => accounts,
+        Err(error) => {
+            tracing::error!(provider = %provider, %error, "admin: failed to resolve pool accounts for patch");
+            return internal("failed to read pool state");
+        }
+    };
+    let Some(account) = accounts.iter().find(|a| a.name == name) else {
+        return not_found();
+    };
+    if let Some(paused) = body.paused {
+        state.accounts.set_paused(&provider, account, paused);
+        tracing::info!(
+            provider = %provider,
+            account = %name,
+            paused,
+            "admin: pool account pause flag updated",
+        );
+    }
+    json_secure(json!({"ok": true}))
+}
+
 /// Authenticating here costs nothing and means an operator who has deliberately
 /// left the proxy surface unauthenticated has not thereby widened what the admin
 /// credential gates.
