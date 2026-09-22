@@ -4135,9 +4135,17 @@ impl Config {
                 }
             }
             let mut account_names = HashSet::new();
+            // Bare `accounts = ["..."]` entries are matched by exact name
+            // against the scanned store, which accepts whatever file names it
+            // holds, and the Claude/Codex/Kimi resolvers never validate the
+            // name — so a scope entry of any shape is selectable there today.
+            // Only the Antigravity resolver validates the name at request
+            // time; checking it here moves that rejection to boot without
+            // narrowing what the other pools accept.
             for account_name in provider
                 .account_scope
                 .iter()
+                .filter(|_| provider.auth == AuthMode::AntigravityOauth)
                 .chain(provider.accounts.iter().map(|account| &account.name))
             {
                 if crate::auth::shared::validate_account_name(account_name).is_err() {
