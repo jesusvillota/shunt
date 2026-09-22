@@ -4138,7 +4138,6 @@ impl Config {
             for account_name in provider
                 .account_scope
                 .iter()
-                .filter(|_| provider.auth == AuthMode::AntigravityOauth)
                 .chain(provider.accounts.iter().map(|account| &account.name))
             {
                 if crate::auth::shared::validate_account_name(account_name).is_err() {

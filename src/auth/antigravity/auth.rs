@@ -676,14 +676,11 @@ impl AntigravityAuthStore {
             // `claude::auth`'s `INVALID_GRANT`/`TerminalRefresh` check. Any
             // other non-success (a transient 5xx, a malformed body) is not
             // terminal: re-attempting the same grant later can still succeed.
-            let terminal = serde_json::from_str::<Value>(&body)
-                .ok()
-                .and_then(|value| {
-                    value
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                })
+            let error_json = serde_json::from_str::<Value>(&body).ok();
+            let terminal = error_json
+                .as_ref()
+                .and_then(|value| value.get("error"))
+                .and_then(Value::as_str)
                 .is_some_and(|error| error == "invalid_grant");
             tracing::warn!(
                 status = %status,

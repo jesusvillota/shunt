@@ -254,7 +254,7 @@ async fn forward(
                 match crate::accounts::classify_antigravity(status, &HeaderMap::new()) {
                     crate::accounts::FailoverAction::Relay => return Err(error),
                     crate::accounts::FailoverAction::RefreshRetry => {
-                        let Some(rejected_access_token) = rejected_access_token.clone() else {
+                        let Some(rejected_access_token) = rejected_access_token else {
                             state.accounts.cooldown(
                                 &route.provider,
                                 account,
