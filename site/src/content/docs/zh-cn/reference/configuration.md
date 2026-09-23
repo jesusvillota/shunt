@@ -231,12 +231,12 @@ headers = { "x-api-key" = "..." }
 | `default_threshold_7d` | 未设置 | 共享周(`7d`)窗口的软默认值 |
 | `default_threshold_fable` | 未设置 | 仅 fable 的周(`7d_oi`)窗口的软默认值 |
 | `burn_rate_avoidance` | `false` | 同时避开按预测会在窗口重置之前耗尽其软阈值的账户 |
-| `usage_refresh_seconds` | 禁用(`0`/未设置) | Claude `GET /api/oauth/usage` 和 Codex `GET /wham/usage` 的轮询间隔(秒);低于 60 的正值会向上取到 60 秒下限 |
+| `usage_refresh_seconds` | 禁用(`0`/未设置) | Claude `GET /api/oauth/usage`、Codex `GET /wham/usage` 和 Antigravity `POST :retrieveUserQuota` 的轮询间隔(秒);低于 60 的正值会向上取到 60 秒下限 |
 | `state_path` | 未设置 | 用于持久化池中按账户配额状态的文件;重启时从最后观测到的使用率热启动,而非从空池开始。未设置则禁用持久化(默认) |
 | `ramp_initial_concurrency` | 禁用(`0`/未设置) | 风暴控制:对刚开始承接流量的账户身份的初始并发准入额度。`0` 或未设置则禁用准入门控 |
 | `reprobe_seconds` | 只要该表存在就是 `900`;`0` 则禁用 | 对陈旧的近配额 Codex/ChatGPT 账户进行机会性重新探测的间隔(秒);低于 60 的正值会向上取到 60 秒下限。`0` 禁用重新探测;若 `[server.pool]` 本身不存在,无论该值为何都禁用重新探测(#135 之前的行为)。非 WebSocket 的 outbound Responses 选择和可选的 inbound Codex HTTP 端点会保留重新探测;WebSocket 启用时的 outbound 选择会禁用重新探测 |
 
-对每个窗口 `X`,生效的软阈值按以下顺序解析:账户 `threshold_X` → 账户 `threshold` → `default_threshold_X` → `default_threshold` → `hard_threshold`,并以 `hard_threshold` 为上限。所有阈值都是 `[0.0, 1.0]` 范围内的使用率分数;超出范围会导致启动失败。阈值与 burn-rate 旋钮对两个池家族都生效:Anthropic 池取自其 `anthropic-ratelimit-unified-*` 头部,Codex/ChatGPT 池取自其 `x-codex-*` 5 小时/周窗口(Codex 没有 Fable 范围的 `7d_oi` 窗口,因此 `default_threshold_fable` 在那里不起作用)。`usage_refresh_seconds` 除了 `claude_oauth` 账户外,还会通过非官方的 `wham/usage` 端点轮询 Codex/ChatGPT 后端的 `chatgpt_oauth` 账户。
+对每个窗口 `X`,生效的软阈值按以下顺序解析:账户 `threshold_X` → 账户 `threshold` → `default_threshold_X` → `default_threshold` → `hard_threshold`,并以 `hard_threshold` 为上限。所有阈值都是 `[0.0, 1.0]` 范围内的使用率分数;超出范围会导致启动失败。阈值与 burn-rate 旋钮对两个池家族都生效:Anthropic 池取自其 `anthropic-ratelimit-unified-*` 头部,Codex/ChatGPT 池取自其 `x-codex-*` 5 小时/周窗口(Codex 没有 Fable 范围的 `7d_oi` 窗口,因此 `default_threshold_fable` 在那里不起作用)。`usage_refresh_seconds` 除了 `claude_oauth` 账户外,还会通过非官方的 `wham/usage` 端点轮询 Codex/ChatGPT 后端的 `chatgpt_oauth` 账户,并通过 Code Assist `retrieveUserQuota` RPC 轮询 imported `antigravity_oauth` 账户。Antigravity 响应不是账户级窗口,而是按模型的配额桶(每个模型各自的剩余比例与重置时间);它是该账户唯一的配额信号,仅在仪表盘上展示,不改变池选择。
 
 正的 `usage_refresh_seconds` 还会启动一个后台轮询器,针对每个家族各自的 usage API 对账户池的配额状态进行对账校正:`claude_oauth` 账户对接官方 Anthropic OAuth usage API,Codex/ChatGPT 后端的 `chatgpt_oauth` 账户对接非官方的 `wham/usage` 端点;未设置或为 `0` 时禁用(默认)。两个家族都只轮询 imported(可刷新)账户 —— 长期 `claude setup-token`,或任一家族的 `token_env` 账户,都会被跳过,因为 usage 端点会拒绝不可刷新的令牌。Claude 轮询器会更新每个报告窗口的用量、窗口自身的重置时刻和用量观测时间;只有按窗口及聚合 status 的新鲜度,以及观测 status 时捕获的重置边界仍由头部驱动,即使权威用量包含 shunt 之外同一账户的消耗。Codex 轮询器会更新用量和用量观测时间;重置时间来自响应(`x-codex-*` header 与 WebSocket 的 `codex.rate_limits` 事件),status 元数据仍由 header 驱动。对于已报告的窗口,未来的存储重置时间会保留;已经过期的存储重置时间会在写入新用量前被清除。wham 的 `reset_at` 不会被采用为实际重置元数据。非公开的 schema 采用宽松、fail-soft 的解析,间隔在启动时固定,配置重载不会启动、停止或重新调整轮询器。
 

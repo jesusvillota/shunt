@@ -242,6 +242,16 @@ one; a client error (4xx other than 401/429) is relayed without rotating. The re
 `x-shunt-account` naming the account that served it. If every account fails, the last upstream
 error is relayed, so the cause stays visible.
 
+## Usage reporting
+
+Setting [`usage_refresh_seconds`](/reference/configuration/#serverpool-optional) also polls every
+imported (refreshable) `antigravity_oauth` account against the Code Assist `retrieveUserQuota` RPC.
+The response is per-model quota buckets — each model with its own remaining fraction and reset
+time — rather than account-wide windows, so the dashboard's Usage column renders one bar per model
+instead of the 5h/weekly bars other families show. This is the account's only quota signal (there
+are no reactive quota headers for this family), and it is display-only: pool selection and
+rotation ignore it.
+
 ## Verify
 
 ```bash
