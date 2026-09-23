@@ -754,23 +754,14 @@ impl AccountPool {
         // adding or removing an alias cannot move an existing session. Disabled
         // aliases yield to an enabled representative; fully disabled identities
         // are then dropped from the rotation entirely. `collapse_representatives`
-        // and `rotation` need no lock, so both are computed before the entries
-        // lock below — the opportunistic re-probe candidate (Change B) is
-        // selected only from these final representatives.
-        // Check pause state before acquiring the entries lock.
-        let paused_set: std::collections::HashSet<usize> = (0..accounts.len())
-            .filter(|&i| {
-                let entries = self.entries.lock().expect("account health lock poisoned");
-                entries
-                    .get(&account_key(&provider, &accounts[i]))
-                    .is_some_and(|h| h.paused)
-            })
-            .collect();
-
-        let rotation = (0..distinct)
-            .map(|offset| ident_reps[(start_slot + offset) % distinct])
-            .filter(|&index| !accounts[index].disabled && !paused_set.contains(&index))
-            .collect::<Vec<_>>();
+        // needs no lock, so it is computed before the entries lock below.
+        // `rotation` also needs each account's `paused` bit, which only the
+        // lock guards; it is built just inside the lock, right after the
+        // per-account loop that already computes `account_key` and fetches
+        // `health` for every account, so its pause bit falls out for free —
+        // a separate pre-pass locking the mutex once per account
+        // (`account_pool_mixed_cycles` regressed ~13% when this first shipped
+        // that way) is what this avoids.
 
         let now = Instant::now();
         let unix_now = SystemTime::now()
@@ -779,13 +770,15 @@ impl AccountPool {
             .as_secs();
         let is_fable = is_fable_model(model);
         let reprobe = allow_reprobe.then(|| reprobe_interval(pool)).flatten();
-        let (snapshots, pending_reprobe, quota_expired) = {
+        let (snapshots, rotation, pending_reprobe, quota_expired) = {
             let mut entries = self.entries.lock().expect("account health lock poisoned");
             let mut snapshots = Vec::with_capacity(accounts.len());
+            let mut paused = vec![false; accounts.len()];
             let mut quota_expired = false;
-            for account in accounts {
+            for (index, account) in accounts.iter().enumerate() {
                 let health = entries.entry(account_key(&provider, account)).or_default();
                 health.enabled |= !account.disabled;
+                paused[index] = health.paused;
                 quota_expired |= expire_stale_quota(&mut health.quota, unix_now);
                 // Assessing under the lock is pure CPU work and avoids cloning
                 // each account's QuotaState just to assess it after release.
@@ -802,6 +795,10 @@ impl AccountPool {
                 let cooldown_until = governing_cooldown(health, is_fable);
                 snapshots.push((cooldown_until, assessment, weekly_reset, min_reset));
             }
+            let rotation = (0..distinct)
+                .map(|offset| ident_reps[(start_slot + offset) % distinct])
+                .filter(|&index| !accounts[index].disabled && !paused[index])
+                .collect::<Vec<_>>();
             // Opportunistic re-probe (Change B): among the final rotation
             // representatives, find the single stale near-quota ChatGPT-family
             // account and reserve it while still holding the entries lock.
@@ -892,7 +889,7 @@ impl AccountPool {
                 }
             });
 
-            (snapshots, pending_reprobe, quota_expired)
+            (snapshots, rotation, pending_reprobe, quota_expired)
         };
 
         if quota_expired {
@@ -919,8 +916,9 @@ impl AccountPool {
 
         let sticky = ident_reps[start_slot];
         let (sticky_cooldown, ref sticky_quota, _, _) = snapshots[sticky];
-        if !accounts[sticky].disabled
-            && !paused_set.contains(&sticky)
+        // `rotation` already excludes a disabled or paused sticky account, so
+        // membership in it covers both checks the fast path needs.
+        if rotation.contains(&sticky)
             && sticky_cooldown.is_none_or(|until| until <= now)
             && !sticky_quota.near
         {
