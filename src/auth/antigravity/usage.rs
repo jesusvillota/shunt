@@ -158,7 +158,9 @@ fn canonical_label(
     let window = window
         .unwrap_or_default()
         .to_ascii_lowercase()
-        .replace([' ', '-', '_'], "");
+        .chars()
+        .filter(|ch| !matches!(ch, ' ' | '-' | '_'))
+        .collect::<String>();
 
     let is_5h = window == "5h" || window.contains("fivehour");
     let is_weekly = window == "weekly" || window.contains("week");
