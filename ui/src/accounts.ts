@@ -110,8 +110,8 @@ function managedRow(provider: string, account: PoolAccount): AccountRow {
     reset_7d: account.reset_7d,
     utilization_7d_oi: account.utilization_7d_oi,
     reset_7d_oi: account.reset_7d_oi,
-    // Antigravity pool accounts carry per-model quota buckets from the pool's
-    // own `retrieveUserQuota` poll; they have no local-observation
+    // Antigravity pool accounts carry grouped Gemini / Claude+GPT quota windows
+    // from the pool's own `retrieveUserQuotaSummary` poll; they have no local-observation
     // counterpart, so there is nothing to fold in `foldObservation`.
     quota_buckets: account.quota_buckets,
   };
