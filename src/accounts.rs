@@ -412,7 +412,7 @@ pub struct AccountSnapshot {
     /// Whether the pool has recorded at least one upstream response for this
     /// account. When `false`, the quota/cooldown fields are all absent.
     pub has_state: bool,
-    /// Derived: not disabled, not cooling down, and not near quota.
+    /// Derived: not disabled or paused for this provider, not cooling down, and not near quota.
     pub available: bool,
     pub near_quota: bool,
     /// Seconds until the account-wide cooldown expires, when active.
@@ -423,8 +423,9 @@ pub struct AccountSnapshot {
     pub priority: u32,
     /// Configured exclusion from pool selection.
     pub disabled: bool,
-    /// Whether the operator has manually paused this account. Unlike `disabled`,
-    /// this is a runtime flag that survives config reloads but not restarts.
+    /// Whether the operator has manually paused this account for the provider
+    /// whose snapshot is being read. Runtime-only: survives config reloads but
+    /// not process restarts.
     pub paused: bool,
     /// Burn-rate headroom in seconds across the governing quota windows, when
     /// `[server.pool]` is configured and the projection is finite: positive
@@ -1519,10 +1520,10 @@ impl AccountPool {
         );
     }
 
-    /// Pause or resume an account in the pool. The flag persists in memory
-    /// until toggled again or the process restarts. Inserts a default health
-    /// entry if the account has not been selected yet, so a pause issued before
-    /// any traffic takes effect when traffic arrives.
+    /// Pause or resume one provider lane for an account. The pause persists in
+    /// memory until toggled again or the process restarts, without affecting a
+    /// different provider that resolves to the same physical identity. Inserts
+    /// a default health entry if the account has not been selected yet.
     pub fn set_paused(&self, provider: &str, account: &AccountConfig, paused: bool) {
         let mut entries = self.entries.lock().expect("account health lock poisoned");
         let key = account_key(provider, account);
@@ -2120,7 +2121,10 @@ impl AccountPool {
                     AccountSnapshot {
                         name: account.name.clone(),
                         has_state: true,
-                        available: !account.disabled && !health.paused_providers.contains(provider) && !cooling && !quota.near,
+                        available: !account.disabled
+                            && !health.paused_providers.contains(provider)
+                            && !cooling
+                            && !quota.near,
                         near_quota: quota.near,
                         cooldown_secs_remaining,
                         cooldown_fable_secs_remaining,
