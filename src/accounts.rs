@@ -7834,7 +7834,10 @@ mod tests {
         );
         let snaps = pool.snapshot(provider, std::slice::from_ref(&target), None, None);
         assert_eq!(snaps[0].quota_buckets.len(), 1);
-        assert_eq!(snaps[0].quota_buckets[0].label, "Claude + GPT Models · weekly");
+        assert_eq!(
+            snaps[0].quota_buckets[0].label,
+            "Claude + GPT Models · weekly"
+        );
     }
 
     #[test]
