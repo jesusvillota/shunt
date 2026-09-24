@@ -11,8 +11,10 @@ function poolState(account: PoolAccount): string {
   // credential is *also* cooling down, and reporting only "cooling" is what made
   // a permanently dead account indistinguishable from a quota pause.
   if (account.disabled) return 'disabled';
-  if (account.paused) return 'paused';
+  // A permanently dead credential remains the most actionable state even if
+  // the operator has also paused this provider lane.
   if (account.needs_relogin) return 'needs re-login';
+  if (account.paused) return 'paused';
   if (!account.has_state) return 'unseen';
   // The cooldown is checked before `near_quota`, matching `managedState` in
   // `accounts.ts` so the two tables cannot report the same account differently:
