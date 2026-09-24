@@ -1442,7 +1442,6 @@ async fn patch_pool_account(
     json_secure(json!({"ok": true}))
 }
 
-
 /// `GET /admin/api/routes` — the resolved routing table, for the dashboard.
 ///
 /// The same view the proxy's unauthenticated `GET /routes` serves, built by the
