@@ -1519,52 +1519,6 @@ impl AccountPool {
         );
     }
 
-    /// Set or clear the needs-re-login mark on every pool entry backed by one
-    /// store account, whatever provider table it is reachable through. Used by
-    /// the admin re-login and refresh-probe paths, which know an account by its
-    /// store name rather than by the provider entry that selected it.
-    ///
-    /// Takes the name *and* the uuid rather than one conflated identity string,
-    /// because the three [`AccountStateIdentity`] variants are keyed
-    /// differently and a store account can land in any of them:
-    ///
-    /// - `Verified` — the credential file carried a `shuntAccountUuid`; keyed
-    ///   by that uuid.
-    /// - `StoreEntry` — a scanned store account with no uuid; keyed by name.
-    /// - `UpstreamInline` — **the shape a name-only `[[providers.*.accounts]]`
-    ///   entry gets**, which is the documented way to activate one store
-    ///   account. `resolve_pool_accounts` leaves it `store_entry = false` with
-    ///   no uuid (`inline_identity_key` returns `None` without a `credentials`
-    ///   path or `token_env`), so it is keyed by `(upstream, name)`. Skipping
-    ///   this variant made the admin probe unable to mark, and a re-login
-    ///   unable to clear, exactly the accounts operators are told to configure.
-    ///
-    /// The two name-keyed variants are matched on the name alone, which is all
-    /// [`AccountKey`] carries. An inline account that names a *different*
-    /// credential (a `credentials` path whose file has no uuid) and happens to
-    /// share this store account's name would therefore also match. Both error
-    /// directions self-correct — a wrong set is cleared by that account's next
-    /// success, a wrong clear is re-established by its next terminal failure —
-    /// so this is preferred over leaving the ordinary configuration unreachable.
-    ///
-    /// The verdict is recorded in **two** places, because neither alone covers
-    /// the accounts an operator can click Refresh on. Every health entry the
-    /// pool already holds is updated, and the `(family, name, uuid)` ref itself
-    /// is recorded in [`Self::store_relogin`]. An account the pool has never
-    /// selected has no health entry at all, so the entry loop would update
-    /// nothing and the dashboard would keep reporting it `unseen` — the defect
-    /// in issue #439 — while inventing an entry here would mean synthesizing an
-    /// [`AccountKey`] the selection path never produced. The side table is also
-    /// the *durable* record even when entries did match: `forget_identity` and
-    /// `cleanup_reprovisioned_pool_health` drop entries, and every path that
-    /// clears the mark purges both, so keeping the ref costs nothing and
-    /// survives an entry that does not.
-    ///
-    /// The clear arm purges by `(family, name-or-uuid)` rather than by ref
-    /// equality, so it strips at least as much as this sets — a re-login that
-    /// signs a different subscription in under the same store name changes the
-    /// uuid, and an equality-removal would strand the old verdict on the fresh
-    /// account. See [`purge_store_relogin_ref`].
     /// Pause or resume an account in the pool. The flag persists in memory
     /// until toggled again or the process restarts. Inserts a default health
     /// entry if the account has not been selected yet, so a pause issued before
@@ -1613,6 +1567,53 @@ impl AccountPool {
             .unwrap_or(pool.sort_by_reset)
     }
 
+
+    /// Set or clear the needs-re-login mark on every pool entry backed by one
+    /// store account, whatever provider table it is reachable through. Used by
+    /// the admin re-login and refresh-probe paths, which know an account by its
+    /// store name rather than by the provider entry that selected it.
+    ///
+    /// Takes the name *and* the uuid rather than one conflated identity string,
+    /// because the three [`AccountStateIdentity`] variants are keyed
+    /// differently and a store account can land in any of them:
+    ///
+    /// - `Verified` — the credential file carried a `shuntAccountUuid`; keyed
+    ///   by that uuid.
+    /// - `StoreEntry` — a scanned store account with no uuid; keyed by name.
+    /// - `UpstreamInline` — **the shape a name-only `[[providers.*.accounts]]`
+    ///   entry gets**, which is the documented way to activate one store
+    ///   account. `resolve_pool_accounts` leaves it `store_entry = false` with
+    ///   no uuid (`inline_identity_key` returns `None` without a `credentials`
+    ///   path or `token_env`), so it is keyed by `(upstream, name)`. Skipping
+    ///   this variant made the admin probe unable to mark, and a re-login
+    ///   unable to clear, exactly the accounts operators are told to configure.
+    ///
+    /// The two name-keyed variants are matched on the name alone, which is all
+    /// [`AccountKey`] carries. An inline account that names a *different*
+    /// credential (a `credentials` path whose file has no uuid) and happens to
+    /// share this store account's name would therefore also match. Both error
+    /// directions self-correct — a wrong set is cleared by that account's next
+    /// success, a wrong clear is re-established by its next terminal failure —
+    /// so this is preferred over leaving the ordinary configuration unreachable.
+    ///
+    /// The verdict is recorded in **two** places, because neither alone covers
+    /// the accounts an operator can click Refresh on. Every health entry the
+    /// pool already holds is updated, and the `(family, name, uuid)` ref itself
+    /// is recorded in [`Self::store_relogin`]. An account the pool has never
+    /// selected has no health entry at all, so the entry loop would update
+    /// nothing and the dashboard would keep reporting it `unseen` — the defect
+    /// in issue #439 — while inventing an entry here would mean synthesizing an
+    /// [`AccountKey`] the selection path never produced. The side table is also
+    /// the *durable* record even when entries did match: `forget_identity` and
+    /// `cleanup_reprovisioned_pool_health` drop entries, and every path that
+    /// clears the mark purges both, so keeping the ref costs nothing and
+    /// survives an entry that does not.
+    ///
+    /// The clear arm purges by `(family, name-or-uuid)` rather than by ref
+    /// equality, so it strips at least as much as this sets — a re-login that
+    /// signs a different subscription in under the same store name changes the
+    /// uuid, and an equality-removal would strand the old verdict on the fresh
+    /// account. See [`purge_store_relogin_ref`].
     pub fn set_needs_relogin_for_store_account(
         &self,
         store_family: StoreFamily,
