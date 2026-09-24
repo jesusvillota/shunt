@@ -9883,7 +9883,8 @@ mod tests {
             "the stale near candidate is promoted even over a healthy sticky account"
         );
         assert!(reservation.is_some());
-    }    #[test]
+    }
+    #[test]
     fn paused_account_is_excluded_from_select_order() {
         let pool = AccountPool::new();
         let accounts = vec![account("a"), account("b")];
@@ -10290,11 +10291,13 @@ mod tests {
         let mut right = account("same");
         right.uuid = Some("right-id".to_string());
 
-        assert_ne!(account_ref("anthropic", &left), account_ref("anthropic", &right));
+        assert_ne!(
+            account_ref("anthropic", &left),
+            account_ref("anthropic", &right)
+        );
         assert_ne!(
             account_ref("anthropic", &left),
             account_ref("anthropic-alt", &left)
         );
     }
-
 }
