@@ -211,9 +211,13 @@ schema 未声明类型的数组,除非元素通过 `enum` 或 `properties` 暗�
 ## 用量报告
 
 设置 `usage_refresh_seconds` 后,会对每个 imported(可刷新)`antigravity_oauth` 账号轮询 Code Assist
-`retrieveUserQuota` RPC。响应不是账户级窗口,而是按模型的配额桶(每个模型各自的剩余比例与重置时间),
-因此仪表盘用量列会按模型绘制用量条,而非其他家族的 5 小时/每周用量条。该家族没有响应式配额头部,
-这是该账号唯一的配额信号,且仅用于展示:池选择与轮换会忽略它。
+的 `retrieveUserQuotaSummary` RPC。若配置使用生产 `cloudcode-pa.googleapis.com`,会像推理和模型目录
+流量一样规范化到 Antigravity 的 `daily-cloudcode-pa.googleapis.com` 控制平面。
+
+响应不是每个模型各自拥有独立配额,而是分成两个共享的模型家族配额池:**Gemini Models** 与
+**Claude + GPT Models**。当账号方案提供对应窗口时,每组都包含 5 小时和每周窗口,并携带各自的剩余比例
+与重置时间。仪表盘展示这些共享窗口,而不是为目录中的每个模型绘制一条。它们仅用于展示,池选择与轮换
+不会使用这些值。
 
 ## 校验
 
