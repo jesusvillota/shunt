@@ -1,11 +1,11 @@
 //! Background poller for OAuth usage APIs — Claude's official one, Codex's
-//! private `wham/usage` one, and Antigravity's Code Assist `retrieveUserQuota` one.
+//! private `wham/usage` one, and Antigravity's Code Assist `retrieveUserQuotaSummary` one.
 //!
 //! When `[server.pool] usage_refresh_seconds` is set, this spawns one task at
 //! boot that periodically polls, for every imported (refreshable) account:
 //! `GET /api/oauth/usage` across all `claude_oauth` providers, the private
 //! `GET /wham/usage` (see [`crate::auth::codex::usage`]) across all ChatGPT
-//! backend `chatgpt_oauth` providers, and `POST :retrieveUserQuota` (see
+//! backend `chatgpt_oauth` providers, and `POST :retrieveUserQuotaSummary` (see
 //! [`crate::auth::antigravity::usage`]) across all `antigravity_oauth`
 //! providers — applying the returned utilization to the account pool via
 //! [`AccountPool::note_usage`] for Claude, the Codex-only
@@ -389,7 +389,7 @@ async fn fetch_codex_usage(
     }
 }
 
-/// Fetch and parse one Antigravity account's per-model quota buckets without
+/// Fetch and parse one Antigravity account's grouped model-family quota windows without
 /// mutating pool state. Empty bucket lists and every failure stay uncached so a
 /// later alias can retry.
 async fn fetch_antigravity_usage(
@@ -414,7 +414,7 @@ async fn fetch_antigravity_usage(
     match antigravity::usage::fetch_usage(client, base_url, &access_token, &project_id).await {
         Ok(buckets) if !buckets.is_empty() => Some(buckets),
         Ok(_) => {
-            tracing::debug!(account = %account.name, "usage poller: antigravity usage reported no buckets, skipping");
+            tracing::debug!(account = %account.name, "usage poller: antigravity usage reported no grouped quota windows, skipping");
             None
         }
         Err(error) => {
@@ -489,7 +489,7 @@ async fn poll_codex_account(
 }
 
 /// Poll one Antigravity account: skip non-refreshable credentials, resolve a
-/// valid access token, fetch its per-model quota buckets, and apply them to
+/// valid access token, fetch its grouped model-family quota windows, and apply them to
 /// the pool. Mirrors [`poll_account`]. Every failure degrades quietly to a
 /// debug log — a missing bucket list just leaves the prior buckets in place
 /// until the next tick.
@@ -587,15 +587,15 @@ async fn antigravity_account_is_refreshable(account: &AccountConfig) -> bool {
 /// `expiry_date`/`email`/`project_id` all at the top level), unlike Claude's
 /// nested `claudeAiOauth.refreshToken`.
 fn antigravity_credential_file_has_refresh_token(path: &Path) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Credential {
+        refresh_token: Option<String>,
+    }
+
     std::fs::read(path)
         .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .and_then(|value| {
-            value
-                .get("refresh_token")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
+        .and_then(|bytes| serde_json::from_slice::<Credential>(&bytes).ok())
+        .and_then(|credential| credential.refresh_token)
         .is_some_and(|token| !token.is_empty())
 }
 
@@ -2911,7 +2911,7 @@ mod tests {
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/v1internal:retrieveUserQuota"))
+            .and(path("/v1internal:retrieveUserQuotaSummary"))
             // Regression guard for the live-tested finding: without the
             // Antigravity Hub User-Agent, Google 403s the same token/project.
             .and(header(
@@ -2919,15 +2919,23 @@ mod tests {
                 crate::auth::antigravity::version::user_agent(),
             ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "buckets": [
+                "groups": [
                     {
-                        "modelId": "gemini-3.5-flash",
-                        "remainingFraction": 0.7,
-                        "resetTime": "2026-09-24T00:00:00Z"
+                        "displayName": "Gemini Models",
+                        "buckets": [{
+                            "bucketId": "gemini-5h",
+                            "window": "5h",
+                            "remainingFraction": 0.7,
+                            "resetTime": "2026-09-24T00:00:00Z"
+                        }]
                     },
                     {
-                        "modelId": "claude-opus-4-6-thinking",
-                        "remainingFraction": 0.92
+                        "displayName": "Claude and GPT models",
+                        "buckets": [{
+                            "bucketId": "3p-5h",
+                            "window": "5h",
+                            "remainingFraction": 0.92
+                        }]
                     }
                 ]
             })))
@@ -2949,13 +2957,13 @@ mod tests {
         let snap = pool.snapshot("antigravity", std::slice::from_ref(&account), None, None);
         assert!(snap[0].has_state, "the poll must have recorded state");
         assert_eq!(snap[0].quota_buckets.len(), 2);
-        assert_eq!(snap[0].quota_buckets[0].label, "gemini-3.5-flash");
+        assert_eq!(snap[0].quota_buckets[0].label, "Gemini Models · 5h");
         assert_eq!(snap[0].quota_buckets[0].remaining, Some(0.7));
         assert_eq!(
             snap[0].quota_buckets[0].reset_time.as_deref(),
             Some("2026-09-24T00:00:00Z")
         );
-        assert_eq!(snap[0].quota_buckets[1].label, "claude-opus-4-6-thinking");
+        assert_eq!(snap[0].quota_buckets[1].label, "Claude + GPT Models · 5h");
         // Display-only: no 5h/7d utilization is synthesized from the buckets.
         assert_eq!(snap[0].utilization_5h, None);
         assert_eq!(snap[0].utilization_7d, None);
@@ -2973,7 +2981,7 @@ mod tests {
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/v1internal:retrieveUserQuota"))
+            .and(path("/v1internal:retrieveUserQuotaSummary"))
             .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
             .expect(1)
             .mount(&server)
@@ -3009,9 +3017,9 @@ mod tests {
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/v1internal:retrieveUserQuota"))
+            .and(path("/v1internal:retrieveUserQuotaSummary"))
             .respond_with(
-                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "buckets": [] })),
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "groups": [] })),
             )
             .expect(1)
             .mount(&server)
