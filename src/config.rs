@@ -234,7 +234,7 @@ pub struct PoolConfig {
     #[serde(default)]
     pub burn_rate_avoidance: bool,
     /// Poll Claude's `/api/oauth/usage`, Codex's `/wham/usage`, and
-    /// Antigravity's `retrieveUserQuota` every N seconds for refreshable
+    /// Antigravity's `retrieveUserQuotaSummary` every N seconds for refreshable
     /// accounts. Unset or `0` disables polling; positive values below 60 are
     /// clamped to 60 seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
