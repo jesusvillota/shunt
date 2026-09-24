@@ -438,7 +438,7 @@ pub struct AccountSnapshot {
     pub utilization_7d_oi: Option<f64>,
     pub reset_7d_oi: Option<u64>,
     pub status: Option<String>,
-    /// Per-model quota buckets from the Antigravity `retrieveUserQuotaSummary` poll,
+    /// Grouped model-family quota windows from the Antigravity `retrieveUserQuotaSummary` poll,
     /// when present. Omitted when empty. Unlike the 5h/7d utilization fields
     /// above, these carry no account-wide window — each bucket names its own
     /// model with its own remaining fraction and reset time.
