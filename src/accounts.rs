@@ -1568,7 +1568,6 @@ impl AccountPool {
             .unwrap_or(pool.sort_by_reset)
     }
 
-
     /// Set or clear the needs-re-login mark on every pool entry backed by one
     /// store account, whatever provider table it is reachable through. Used by
     /// the admin re-login and refresh-probe paths, which know an account by its
