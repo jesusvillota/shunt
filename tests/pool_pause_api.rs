@@ -146,7 +146,7 @@ async fn pool_account_ref(
     pool_accounts(client, gateway, provider)
         .await
         .into_iter()
-        .find(|account| account["name"] == name)
+        .find(|account| account["name"].as_str() == Some(name))
         .and_then(|account| account["account_ref"].as_str().map(str::to_string))
         .expect("account_ref present")
 }
@@ -291,7 +291,7 @@ async fn patch_pool_account_disambiguates_duplicate_display_names() {
     let before = pool_accounts(&client, &gateway, "anthropic").await;
     let same_name: Vec<_> = before
         .iter()
-        .filter(|account| account["name"] == "same-name")
+        .filter(|account| account["name"].as_str() == Some("same-name"))
         .collect();
     assert_eq!(same_name.len(), 2);
     let first_ref = same_name[0]["account_ref"].as_str().unwrap().to_string();
@@ -314,11 +314,11 @@ async fn patch_pool_account_disambiguates_duplicate_display_names() {
     let after = pool_accounts(&client, &gateway, "anthropic").await;
     let first = after
         .iter()
-        .find(|account| account["account_ref"] == first_ref)
+        .find(|account| account["account_ref"].as_str() == Some(first_ref.as_str()))
         .unwrap();
     let second = after
         .iter()
-        .find(|account| account["account_ref"] == second_ref)
+        .find(|account| account["account_ref"].as_str() == Some(second_ref.as_str()))
         .unwrap();
     assert_eq!(first["paused"], false);
     assert_eq!(second["paused"], true);
