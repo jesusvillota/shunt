@@ -1342,17 +1342,6 @@ async fn patch_pool_settings(
     json_secure(json!({"ok": true}))
 }
 
-/// `GET /admin/api/routes` — the resolved routing table, for the dashboard.
-///
-/// The same view the proxy's unauthenticated `GET /routes` serves, built by the
-/// same `crate::routes::snapshot` so the two cannot drift. It is registered here
-/// rather than pointed at so the admin namespace keeps its own authentication:
-/// this copy applies the admin credential independently of the proxy's
-/// discovery route, which is unauthenticated on purpose. Redirecting the
-/// dashboard at that route would make an admin-gated screen depend on an
-/// ungated endpoint; authenticating the route itself is not an option either,
-/// since discovery clients rely on it being open.
-///
 #[derive(serde::Deserialize)]
 struct PatchPoolAccountBody {
     #[serde(default)]
@@ -1453,6 +1442,18 @@ async fn patch_pool_account(
     json_secure(json!({"ok": true}))
 }
 
+
+/// `GET /admin/api/routes` — the resolved routing table, for the dashboard.
+///
+/// The same view the proxy's unauthenticated `GET /routes` serves, built by the
+/// same `crate::routes::snapshot` so the two cannot drift. It is registered here
+/// rather than pointed at so the admin namespace keeps its own authentication:
+/// this copy applies the admin credential independently of the proxy's
+/// discovery route, which is unauthenticated on purpose. Redirecting the
+/// dashboard at that route would make an admin-gated screen depend on an
+/// ungated endpoint; authenticating the route itself is not an option either,
+/// since discovery clients rely on it being open.
+///
 /// Authenticating here costs nothing and means an operator who has deliberately
 /// left the proxy surface unauthenticated has not thereby widened what the admin
 /// credential gates.
