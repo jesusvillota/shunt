@@ -143,10 +143,10 @@ export function PoolHealth({ pool, onMutated }: PoolHealthProps): ReactElement {
                 </td>
               </tr>
             ) : null}
-            {rows.map(({ provider, account }) => {
+            {rows.map(({ provider, account }, rowIndex) => {
               const state = poolState(account);
               return (
-                <tr key={`${provider}:${account.account_ref ?? account.name}`}>
+                <tr key={`${provider}:${account.account_ref ?? account.name}:${rowIndex}`}>
                   <td>{provider}</td>
                   <td>{account.name}</td>
                   <td>{titleCase(account.plan) || '—'}</td>
