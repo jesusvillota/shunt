@@ -235,10 +235,14 @@ Antigravity는 Claude 모델도 제공하지만, shunt는 아직 그 모델들�
 ## 사용량 보고
 
 `usage_refresh_seconds`를 설정하면 imported(갱신 가능) `antigravity_oauth` 계정마다 Code Assist
-`retrieveUserQuota` RPC를 폴링합니다. 응답은 계정 단위 윈도우가 아니라 모델별 쿼터 버킷 — 모델마다
-남은 비율과 리셋 시각이 다름 — 이므로, 대시보드 사용량 열은 다른 계열의 5시간/주간 막대 대신 모델별
-막대를 그립니다. 이 계열에는 반응형 쿼터 헤더가 없어 이것이 계정의 유일한 쿼터 신호이며, 표시 전용으로
-풀 선택과 로테이션은 이를 무시합니다.
+`retrieveUserQuotaSummary` RPC를 폴링합니다. 프로덕션 `cloudcode-pa.googleapis.com` 설정은 추론 및
+모델 카탈로그 트래픽과 동일하게 Antigravity의 `daily-cloudcode-pa.googleapis.com` 제어 플레인으로
+정규화됩니다.
+
+응답은 모델별 독립 쿼터가 아니라 **Gemini Models**와 **Claude + GPT Models**라는 두 개의 공유
+모델-패밀리 쿼터 풀로 그룹화됩니다. 계정 플랜에서 제공되는 경우 각 그룹은 5시간 및 주간 윈도우를
+가지며, 각 윈도우에는 남은 비율과 리셋 시각이 포함됩니다. 대시보드는 카탈로그 모델마다 막대를 만들지
+않고 이 공유 윈도우를 표시합니다. 이 값은 표시 전용이며 풀 선택과 로테이션에는 사용되지 않습니다.
 
 ## 검증
 
