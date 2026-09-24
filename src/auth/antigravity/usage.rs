@@ -111,7 +111,10 @@ fn parse_usage(summary: QuotaSummaryResponse) -> anyhow::Result<Vec<QuotaBucketS
             ) else {
                 continue;
             };
-            if out.iter().any(|existing: &QuotaBucketSnapshot| existing.label == label) {
+            if out
+                .iter()
+                .any(|existing: &QuotaBucketSnapshot| existing.label == label)
+            {
                 continue;
             }
             out.push(QuotaBucketSnapshot {
