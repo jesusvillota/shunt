@@ -278,7 +278,7 @@ pub struct UsageSnapshot {
     pub seven_day_oi: Option<UsageWindow>,
 }
 
-/// One per-model quota bucket from Google's Code Assist `retrieveUserQuota`
+/// One grouped model-family quota window from Google's Code Assist `retrieveUserQuotaSummary`
 /// RPC, as surfaced for an Antigravity pool account. The pool-side twin of
 /// `auth::observation::QuotaBucket` — kept separate since `accounts.rs` (pool)
 /// and `auth::observation` (local discovery) are intentionally independent
@@ -354,7 +354,7 @@ struct AccountHealth {
     cooldown_until: Option<Instant>,
     cooldown_until_fable: Option<Instant>,
     quota: QuotaState,
-    /// Latest per-model quota buckets from the Antigravity `retrieveUserQuota`
+    /// Latest grouped model-family quota windows from the Antigravity `retrieveUserQuotaSummary`
     /// poll. Memory-only, like `cooldown_until`: re-fetched every poll tick
     /// with no rotation logic depending on it, so it never enters `QuotaState`
     /// (which `state_persist.rs` round-trips through the on-disk format).
@@ -438,7 +438,7 @@ pub struct AccountSnapshot {
     pub utilization_7d_oi: Option<f64>,
     pub reset_7d_oi: Option<u64>,
     pub status: Option<String>,
-    /// Per-model quota buckets from the Antigravity `retrieveUserQuota` poll,
+    /// Per-model quota buckets from the Antigravity `retrieveUserQuotaSummary` poll,
     /// when present. Omitted when empty. Unlike the 5h/7d utilization fields
     /// above, these carry no account-wide window — each bucket names its own
     /// model with its own remaining fraction and reset time.
@@ -1298,7 +1298,7 @@ impl AccountPool {
         self.mark_dirty();
     }
 
-    /// Apply one successfully polled Antigravity `retrieveUserQuota` response.
+    /// Apply one successfully polled Antigravity `retrieveUserQuotaSummary` response.
     /// Google's response is a full authoritative snapshot on every call, so the
     /// buckets wholesale replace whatever the previous tick recorded — no
     /// partial-window reconciliation like Claude's per-window
@@ -7794,12 +7794,12 @@ mod tests {
             &target,
             vec![
                 QuotaBucketSnapshot {
-                    label: "gemini-3.5-flash".to_string(),
+                    label: "Gemini Models · 5h".to_string(),
                     remaining: Some(0.7),
                     reset_time: Some("2026-09-24T00:00:00Z".to_string()),
                 },
                 QuotaBucketSnapshot {
-                    label: "claude-opus-4-6-thinking".to_string(),
+                    label: "Claude + GPT Models · 5h".to_string(),
                     remaining: Some(0.92),
                     reset_time: None,
                 },
@@ -7810,7 +7810,7 @@ mod tests {
         let target_snap = snaps.iter().find(|s| s.name == target.name).unwrap();
         assert!(target_snap.has_state);
         assert_eq!(target_snap.quota_buckets.len(), 2);
-        assert_eq!(target_snap.quota_buckets[0].label, "gemini-3.5-flash");
+        assert_eq!(target_snap.quota_buckets[0].label, "Gemini Models · 5h");
         assert_eq!(target_snap.quota_buckets[0].remaining, Some(0.7));
         // Display-only: the aggregate quota state is untouched, so selection
         // behavior is unchanged.
@@ -7827,14 +7827,14 @@ mod tests {
             provider,
             &target,
             vec![QuotaBucketSnapshot {
-                label: "gpt-oss-120b-medium".to_string(),
+                label: "Claude + GPT Models · weekly".to_string(),
                 remaining: Some(0.5),
                 reset_time: None,
             }],
         );
         let snaps = pool.snapshot(provider, std::slice::from_ref(&target), None, None);
         assert_eq!(snaps[0].quota_buckets.len(), 1);
-        assert_eq!(snaps[0].quota_buckets[0].label, "gpt-oss-120b-medium");
+        assert_eq!(snaps[0].quota_buckets[0].label, "Claude + GPT Models · weekly");
     }
 
     #[test]
