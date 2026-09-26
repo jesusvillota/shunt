@@ -564,11 +564,19 @@ base_threshold = 0.5
 | `gated_max_bytes` | `8388608` | 被保留轮次的最大字节数:SSE 帧字节或 JSON 响应体 |
 | `gated_idle_ms` | `60000` | 被保留轮次中两个完整内容帧之间允许的最长间隔。SSE 保活帧(`event: ping` 帧和 `:` 注释帧)不会重置它；跨分块拆分的帧会先重组再分类 |
 | `gated_max_duration_ms` | `600000` | 被保留轮次的墙钟时间上限,同时覆盖响应头和响应体 |
-| `max_judge_calls` | `8` | 单个会话可以发起的裁判调用次数。被扣住的回合本身不是裁判调用,不计入 |
+| `max_judge_calls` | `8` | 单个会话可以发起的裁判调用次数。在调用发出时计数,且不退还。每个被委派的 agent id 有自己的预算,不带 agent id 的委派回合按会话共用另一份预算。不发起裁判调用的回合永远不会被拒绝。被扣住的回合本身不是裁判调用,不计入 |
 
 三个 `gated_*` 键约束的是 [`escalation`](#mode--escalation) 或 [`advisor`](#type--advisor)
 条目上**被扣住**的回合,也就是 shunt 在裁决出来之前扣住的回合。其他条目没有被扣住的回合,
 这三个键也就不约束任何东西。
+
+字节上限和空闲上限同样作用于适配器自行拼装非流式回复的地方,也就是 shunt 收集回复之前。
+字节上限计入的内容取决于该适配器收到的东西:Anthropic、Gemini 以及经 HTTP 的 Responses
+按到达时的响应体计;Codex WebSocket 按每个事件的类型与负载的紧凑 JSON 计;Antigravity 按
+CLI 的 stdout 计,含行终止符;Cursor 按保留的文本与工具调用字段计。空闲间隔在 WebSocket
+事件之间(包括等待第一个事件)以及带内容的 Antigravity 输出行之间计时,单独的工具步骤不会
+重置它。在这些调用中因缓存为空而触发的 Antigravity 模型目录拉取,也按同样的上限读取;被拒绝
+的目录会回退到没有目录时 shunt 推测的模型 id,下一次客户端回合会重新拉取。
 
 #### `type = "llm_classifier"`
 
@@ -664,12 +672,19 @@ policy = { type = "target_selector", selector = "/target" }
 而 shunt 每加载一次配置就构建一次该实例。热重载会重新构建它,所以重载之后会忘记每个会话
 当时持有的目标 —— 这和 `prefill_router` 的性质相同。`max_judge_calls` 则是 shunt 自己的,
 按 (会话, agent) 计数,因此被委派的子任务花的是自己的预算而不是父会话的;不带会话 id 的
-请求根本不被跟踪,对这类调用方该上限就是按请求生效。预算用尽的回合会跳过裁判、直接取
-fail-open 目标,裁判调用结果记为 `budget_exhausted`。
+请求根本不被跟踪,对这类调用方该上限就是按请求生效。预算在裁判调用发出时扣减,所以不需要
+裁判的回合 —— 重放已保留分配的 `new_session` 或 `user_turn` 回合 —— 在预算用完之后仍按该
+分配处理。裁判调用被拒绝的回合按裁判失败的方式收尾:取上面的默认目标,route source 为
+`classifier_fail_open`,裁判调用结果记为 `budget_exhausted`。classifier 形式的
+`[models.subagents]` 覆盖层行为相同。
 
-**探测无需裁判即可解析。** `count_tokens` 请求从不咨询裁判,直接由 fail-open 目标作答;
-没有请求体的那些面 —— `GET /routes`、`/v1/models` 发现、`shunt check` —— 同理,它们以路由
-来源 `classifier_default` 报告该目标。
+**探测无需裁判即可解析。** `count_tokens` 请求从不咨询裁判,不消耗 `max_judge_calls`
+预算,也不改变任何会话状态。在 `new_session` 或 `user_turn` 下,它由会话上一轮所用的目标
+作答 —— 在 `user_turn` 下,即使探测的最后一条消息是新的用户回合也是如此;其余情况由
+fail-open 目标作答:`every_request` 下、会话尚未被分类时,以及请求没有
+`x-claude-code-session-id` 或被委派的请求没有 agent id 时(`message_hash_fallback` 不适用
+于探测)。没有请求体的那些面 —— `GET /routes`、`/v1/models` 发现、`shunt check` —— 以路由
+来源 `classifier_default` 报告 fail-open 目标。
 
 每一个目标和每一个裁判都是普通的公开 model id,受与阶段路由器相同的一跳规则约束;裁判也
 不能解析到 **passthrough** 路由,理由与[上文](#modelsrouterclassifier可选)相同 —— 裁判
@@ -722,7 +737,9 @@ confirmations = 2
 
 与 `classifier_target` 不同,`weak_target` 可以是 **passthrough** 路由:弱目标回合就是客户端
 自己的回答,所以它和实时回合一样携带调用方的凭证。`count_tokens` 探测既不调用裁判也不发起
-被扣住的调用,直接由 `weak_target` 作答。裁判调用计入
+被扣住的调用:会话处于锁定状态时由 `strong_target` 作答,否则由 `weak_target` 作答。会话
+上一轮由锁定或已确认的升档提供时即为锁定;锁定由会话的被委派子任务共享,空闲一小时后
+失效。裁判调用计入
 `shunt.router.judge_calls{algorithm="llm_classifier"}`。
 
 被扣住的回合如何提供、每种结果下客户端看到什么、要付出什么代价,见[被扣住的回合](#被扣住的回合escalation-与-advisor)。
@@ -767,8 +784,11 @@ confidence_threshold = 0.5
 | `stage.tool_semantics` | — | 与 [`[models.router.tool_semantics]`](#modelsroutertool_semantics可选) 相同的四张列表,规则也相同 |
 
 六个[每次调用的上限](#每次调用的上限)放在 `[models.router]` 上,而不是放进两张子表里。
-裁判够不到的回合回落到 `stage.efficient_target`,这既是上游的规则,也是探测和没有请求体
-的那些面所报告的值。
+裁判够不到的回合回落到 `stage.efficient_target`,这既是上游的规则,也是没有请求体的那些面
+所报告的值。`count_tokens` 探测不给信号打分,也不调用裁判:会话有保留的档位就由该档位作答,
+否则由 `stage.efficient_target` 作答。裁判调用被 `max_judge_calls` 拒绝的回合,如果会话
+有上一次保留的档位就保持该档位,否则取 picker 的默认档位,因此档位不会在用户回合与其后的工具续接
+回合之间变动。不需要裁判调用的回合不会被拒绝。
 
 因为 stage 那一半就是 libsy 自己的 stage 路由,它定夺下来的回合仍然报告阶段路由器自己的
 路由来源,而不是报告成 classifier 的决策 —— 也就是说,composite 里由信号驱动的回合,读起来
@@ -826,7 +846,7 @@ max_reviews = 1
 追加进对话,然后重新运行执行模型;这次重跑是实时流式返回的。
 
 与 `advisor_target` 不同,`executor_target` 可以是 **passthrough** 路由,理由与 escalation 的
-弱目标相同。`count_tokens` 探测既不发起审阅也不发起被扣住的调用,直接由 `executor_target`
+弱目标相同。`count_tokens` 探测既不发起审阅也不发起被扣住的调用,始终由 `executor_target`
 作答。审阅计入 `shunt.router.judge_calls{algorithm="advisor"}`,`GET /routes` 把
 `advisor_target` 列在 `judges` 下。
 
@@ -1184,7 +1204,8 @@ policy = { type = "target_selector", selector = "/target" }
 相同的约束:一跳、不能是 passthrough 路由,并且调用方的凭证槽位一个都不会随行。由于被
 委派的回合可能去问裁判,这类回合的入站鉴权也会把覆盖层的目标和裁判一并纳入 —— 无法通过
 鉴权的被委派回合会被拒绝,且一次裁判调用都不会发出。`count_tokens` 探测同样不会发出裁判
-调用,直接由 `default_target` 分组的第一个模型作答。
+调用:该子任务有 (会话, agent) 分配时就由该分配作答,否则由 `default_target` 分组的第一个
+模型作答。
 
 ## `[sentry]`(可选)
 
