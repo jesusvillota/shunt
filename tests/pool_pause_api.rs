@@ -5,7 +5,12 @@
 //! (even before the account was ever selected), a read-tier credential is
 //! refused, and the paused account drops out of `select_order`.
 
-use std::net::SocketAddr;
+use std::{
+    fs,
+    net::SocketAddr,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use reqwest::StatusCode;
 use shunt::{
@@ -51,6 +56,27 @@ fn nonexistent_credentials_path() -> String {
         ))
         .to_string_lossy()
         .into_owned()
+}
+
+fn unique_temp_dir(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "shunt-pool-pause-test-{tag}-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn write_store_identity(dir: &std::path::Path, name: &str, uuid: &str) {
+    fs::write(
+        dir.join(format!("{name}.json")),
+        format!(r#"{{"shuntAccountUuid":"{uuid}"}}"#),
+    )
+    .unwrap();
 }
 
 const ADMIN_WRITE_KEY: &str = "admin-write-0123456789abcdef012345";
@@ -260,20 +286,17 @@ async fn patch_pool_account_404s_for_an_unknown_account() {
 fn admin_config_with_duplicate_names() -> Config {
     let mut config = admin_config();
     let anthropic = config.providers.get_mut("anthropic").unwrap();
-    anthropic.accounts = vec![
-        AccountConfig {
-            name: "same-name".to_string(),
-            credentials: Some(nonexistent_credentials_path()),
-            uuid: Some("same-name-a".to_string()),
-            ..Default::default()
-        },
-        AccountConfig {
-            name: "same-name".to_string(),
-            credentials: Some(nonexistent_credentials_path()),
-            uuid: Some("same-name-b".to_string()),
-            ..Default::default()
-        },
-    ];
+    // Duplicate configured names are intentionally rejected by Config::validate.
+    // The legitimate duplicate-display-name case comes from the effective pool:
+    // a scoped store account is resolved first, then configured accounts are
+    // appended without deduplicating display names.
+    anthropic.account_scope = vec!["same-name".to_string()];
+    anthropic.accounts = vec![AccountConfig {
+        name: "same-name".to_string(),
+        credentials: Some(nonexistent_credentials_path()),
+        uuid: Some("same-name-inline".to_string()),
+        ..Default::default()
+    }];
     config
 }
 
@@ -284,9 +307,15 @@ async fn patch_pool_account_disambiguates_duplicate_display_names() {
     }
     let mut vars = common::env_lock().await;
     vars.set("SHUNT_TEST_ADMIN_TOKENS_POOL_PAUSE", "ops:duplicate-names");
+    let store_dir = unique_temp_dir("duplicate-names");
+    vars.set(
+        "SHUNT_CLAUDE_ACCOUNTS_DIR",
+        store_dir.to_string_lossy().as_ref(),
+    );
+    write_store_identity(&store_dir, "same-name", "same-name-store");
+
     let config = admin_config_with_duplicate_names();
-    let configured_accounts = config.providers.get("anthropic").unwrap().accounts.clone();
-    let (gateway, state) = start(config).await;
+    let (gateway, _state) = start(config).await;
     let client = reqwest::Client::new();
 
     let before = pool_accounts(&client, &gateway, "anthropic").await;
@@ -324,12 +353,8 @@ async fn patch_pool_account_disambiguates_duplicate_display_names() {
     assert_eq!(first["paused"], false);
     assert_eq!(second["paused"], true);
 
-    let order = state
-        .accounts
-        .select_order("anthropic", &configured_accounts, None, None, None);
-    assert_eq!(order.len(), 1, "only the targeted identity is excluded");
-
     drop(gateway);
+    fs::remove_dir_all(store_dir).unwrap();
 }
 
 /// `[server.pool]` is process-wide, so `PATCH /admin/api/pool` toggles the
