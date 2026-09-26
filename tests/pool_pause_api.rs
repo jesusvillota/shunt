@@ -5,12 +5,7 @@
 //! (even before the account was ever selected), a read-tier credential is
 //! refused, and the paused account drops out of `select_order`.
 
-use std::{
-    fs,
-    net::SocketAddr,
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::net::SocketAddr;
 
 use reqwest::StatusCode;
 use shunt::{
@@ -56,27 +51,6 @@ fn nonexistent_credentials_path() -> String {
         ))
         .to_string_lossy()
         .into_owned()
-}
-
-fn unique_temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "shunt-pool-pause-test-{tag}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-fn write_store_identity(dir: &std::path::Path, name: &str, uuid: &str) {
-    fs::write(
-        dir.join(format!("{name}.json")),
-        format!(r#"{{"shuntAccountUuid":"{uuid}"}}"#),
-    )
-    .unwrap();
 }
 
 const ADMIN_WRITE_KEY: &str = "admin-write-0123456789abcdef012345";
@@ -283,49 +257,51 @@ async fn patch_pool_account_404s_for_an_unknown_account() {
     drop(gateway);
 }
 
-fn admin_config_with_duplicate_names() -> Config {
+fn admin_config_with_two_accounts() -> Config {
     let mut config = admin_config();
     let anthropic = config.providers.get_mut("anthropic").unwrap();
-    // Duplicate configured names are intentionally rejected by Config::validate.
-    // The legitimate duplicate-display-name case comes from the effective pool:
-    // a scoped store account is resolved first, then configured accounts are
-    // appended without deduplicating display names.
-    anthropic.account_scope = vec!["same-name".to_string()];
-    anthropic.accounts = vec![AccountConfig {
-        name: "same-name".to_string(),
-        credentials: Some(nonexistent_credentials_path()),
-        uuid: Some("same-name-inline".to_string()),
-        ..Default::default()
-    }];
+    anthropic.accounts = vec![
+        AccountConfig {
+            name: "first".to_string(),
+            credentials: Some(nonexistent_credentials_path()),
+            uuid: Some("first-identity".to_string()),
+            ..Default::default()
+        },
+        AccountConfig {
+            name: "second".to_string(),
+            credentials: Some(nonexistent_credentials_path()),
+            uuid: Some("second-identity".to_string()),
+            ..Default::default()
+        },
+    ];
     config
 }
 
 #[tokio::test]
-async fn patch_pool_account_disambiguates_duplicate_display_names() {
+async fn patch_pool_account_targets_selected_account_ref() {
     if !can_bind_loopback() {
         return;
     }
     let mut vars = common::env_lock().await;
-    vars.set("SHUNT_TEST_ADMIN_TOKENS_POOL_PAUSE", "ops:duplicate-names");
-    let store_dir = unique_temp_dir("duplicate-names");
-    vars.set(
-        "SHUNT_CLAUDE_ACCOUNTS_DIR",
-        store_dir.to_string_lossy().as_ref(),
-    );
-    write_store_identity(&store_dir, "same-name", "same-name-store");
-
-    let config = admin_config_with_duplicate_names();
-    let (gateway, _state) = start(config).await;
+    vars.set("SHUNT_TEST_ADMIN_TOKENS_POOL_PAUSE", "ops:account-ref");
+    let config = admin_config_with_two_accounts();
+    let configured_accounts = config.providers.get("anthropic").unwrap().accounts.clone();
+    let (gateway, state) = start(config).await;
     let client = reqwest::Client::new();
 
     let before = pool_accounts(&client, &gateway, "anthropic").await;
-    let same_name: Vec<_> = before
+    let first_ref = before
         .iter()
-        .filter(|account| account["name"].as_str() == Some("same-name"))
-        .collect();
-    assert_eq!(same_name.len(), 2);
-    let first_ref = same_name[0]["account_ref"].as_str().unwrap().to_string();
-    let second_ref = same_name[1]["account_ref"].as_str().unwrap().to_string();
+        .find(|account| account["name"].as_str() == Some("first"))
+        .and_then(|account| account["account_ref"].as_str())
+        .unwrap()
+        .to_string();
+    let second_ref = before
+        .iter()
+        .find(|account| account["name"].as_str() == Some("second"))
+        .and_then(|account| account["account_ref"].as_str())
+        .unwrap()
+        .to_string();
     assert_ne!(first_ref, second_ref);
 
     let response = client
@@ -353,8 +329,12 @@ async fn patch_pool_account_disambiguates_duplicate_display_names() {
     assert_eq!(first["paused"], false);
     assert_eq!(second["paused"], true);
 
+    let order = state
+        .accounts
+        .select_order("anthropic", &configured_accounts, None, None, None);
+    assert_eq!(order.len(), 1, "only the targeted identity is excluded");
+
     drop(gateway);
-    fs::remove_dir_all(store_dir).unwrap();
 }
 
 /// `[server.pool]` is process-wide, so `PATCH /admin/api/pool` toggles the
