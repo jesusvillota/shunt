@@ -258,6 +258,20 @@ fn has_uncommented_table(text: &str, dotted: &str) -> bool {
     })
 }
 
+/// The gateway's base URL (no `/admin` suffix) from the config file at
+/// `explicit` or the first one the loader would find, falling back to the
+/// documented default bind. For clients of a *running* gateway, like `shunt top`.
+pub fn gateway_base_url(explicit: Option<&Path>) -> String {
+    let path = explicit
+        .map(Path::to_path_buf)
+        .or_else(Config::find_config_file)
+        .unwrap_or_else(default_new_config_path);
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    dashboard_url(&text, &path)
+        .trim_end_matches("/admin")
+        .to_string()
+}
+
 /// The dashboard URL, using the configured bind when the file parses, else the
 /// documented default. A wildcard bind is shown as loopback since that is where
 /// a local browser reaches it.

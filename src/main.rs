@@ -64,6 +64,27 @@ enum Command {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// Live terminal monitor for the managed account pool: usage per account,
+    /// sorting, and pause/resume. Talks to a running gateway's admin API
+    /// (needs a write-tier admin token to pause). Requires a build with
+    /// `--features tui`.
+    Top {
+        /// Gateway base URL. Default: derived from `[server].bind` in the config.
+        #[arg(long)]
+        url: Option<String>,
+        /// Admin token. Default: `SHUNT_ADMIN_TOKEN`, then the first entry of
+        /// `SHUNT_ADMIN_TOKENS`, then `~/.shunt/admin-token`.
+        #[arg(long)]
+        token: Option<String>,
+        /// Header carrying the admin token (`[server.admin].header`).
+        #[arg(long, default_value = "x-shunt-admin-token")]
+        header: String,
+        /// Poll interval in milliseconds (minimum 500).
+        #[arg(long, default_value_t = 2000)]
+        interval_ms: u64,
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
     /// Print a Claude subscription OAuth token to stdout, for use as an
     /// `apiKeyHelper`. Static mode echoes `SHUNT_GATEWAY_TOKEN` /
     /// `CLAUDE_CODE_OAUTH_TOKEN`; otherwise auto-refresh mode reads and refreshes
@@ -192,6 +213,13 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Command::Run { config }) => run(config.or(cli.config)),
         Some(Command::Check { config }) => check(config.or(cli.config)),
+        Some(Command::Top {
+            url,
+            token,
+            header,
+            interval_ms,
+            config,
+        }) => top(url, token, header, interval_ms, config.or(cli.config)),
         Some(Command::Token) => runtime()?.block_on(token()),
         Some(Command::Init {
             upstream,
@@ -287,6 +315,34 @@ fn write_cli_output(mut writer: impl Write, output: &[u8]) -> std::io::Result<()
 
 /// `shunt dashboard <action>`. Setup is synchronous filesystem work — no async
 /// runtime needed.
+#[cfg(feature = "tui")]
+fn top(
+    url: Option<String>,
+    token: Option<String>,
+    header: String,
+    interval_ms: u64,
+    config: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    shunt::tui::run(shunt::tui::Options {
+        url,
+        token,
+        header,
+        interval_ms,
+        config,
+    })
+}
+
+#[cfg(not(feature = "tui"))]
+fn top(
+    _url: Option<String>,
+    _token: Option<String>,
+    _header: String,
+    _interval_ms: u64,
+    _config: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    anyhow::bail!("this build has no terminal monitor; rebuild with `cargo build --features tui`")
+}
+
 fn dashboard(action: DashboardAction, global_config: Option<PathBuf>) -> anyhow::Result<()> {
     match action {
         DashboardAction::Setup { config } => {

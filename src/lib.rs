@@ -42,6 +42,8 @@ pub mod state_persist;
 pub mod status_poll;
 pub mod stream_metrics;
 pub mod telemetry;
+#[cfg(feature = "tui")]
+pub mod tui;
 pub mod upstream_status;
 pub(crate) mod upstream_timeout;
 pub mod usage;
