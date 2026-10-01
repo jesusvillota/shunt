@@ -113,7 +113,7 @@ provider = "codex"
 
 ChatGPT アカウントのバックエンドは `gpt-*-codex` スラッグ（例 `gpt-5.2-codex`）を `400` で**拒否**します。アカウントが**ライブで entitle されている**スラッグのみを受け入れます。信頼できるカタログ（および各スラッグが受け入れる reasoning レベル）は openai/codex の
 [`models.json`](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json) です。現在のスラッグ: `gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6.1-sol`（最新）、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`（フロンティア）と
-`gpt-5.5` / `gpt-5.4` / `gpt-5.4-mini` / `gpt-5.2`。古いアカウントでは以前のものにしか entitle されていない場合があります（無料アカウントは `gpt-5.5` に解決されています）。shunt はバックエンド自身のエラー `detail` を表面化するため、間違ったスラッグは本当の理由を返します。
+`gpt-5.5` / `gpt-5.4`。古いアカウントでは以前のものにしか entitle されていない場合があります（無料アカウントは `gpt-5.5` に解決されています）。shunt はバックエンド自身のエラー `detail` を表面化するため、間違ったスラッグは本当の理由を返します。
 
 </Aside>
 
@@ -257,6 +257,39 @@ export CLAUDE_CODE_ALWAYS_ENABLE_EFFORT=1
 
 
 完全な優先順位とエフォートの表: [Effort & Context](/ja/guides/effort-and-context/#reasoning-エフォート)。
+
+## Fast モード
+
+Codex CLI の `/fast` トグルはモデルやエフォートの変更ではありません。Responses API のトップレベルフィールド
+`service_tier: "priority"` を送るもので、このティアは「Fast」（使用量が増える代わりに応答が速くなる）と呼ばれます。
+shunt は同じノブを設定キーとして公開しており、`effort` とまったく同様に、プロバイダーレベルとルートレベルの両方で設定できます。
+
+```toml
+[[routes]]
+model = "gpt-5.6-sol"
+provider = "codex"
+# service_tier = "priority"   # 任意: Codex の「Fast」モードを有効にする
+```
+
+受け入れる値は `fast`（レガシーエイリアスで、`priority` に正規化されます）、`priority`、`flex`、`default`
+（クライアント専用のセンチネルで、ワイヤーには決して送られません）です。デフォルトはオフで、明示的に設定した
+ときだけ送られます。`effort` と同じく、ルートレベルの値がプロバイダーレベルのデフォルトより優先されます。ルートを
+明示的に `default` に設定すると、プロバイダーレベルの `priority`/`flex` ティアを継承せず、そのルートだけを
+**除外**できます。すべてのキーについては [Configuration Reference](/ja/reference/configuration/#providersnameレガシー) を参照してください。
+
+Codex CLI 自体は `gpt-6-sol` と `gpt-6-luna` のデフォルトを Fast（`priority`）にしています。これらの
+`models.json` エントリが `default_service_tier` を設定しているためです。これはバックエンドが適用しない
+クライアント側のデフォルトなので、このガイドで設定する Claude Code のルートでは、`service_tier = "fast"` を
+設定しない限りこれらのモデルは標準ティアで動作します。[shunt に接続した Codex CLI](/ja/guides/connect-codex-cli/)
+は異なります。そのエンドポイントはリクエストをそのまま転送するため、CLI が自身で送るティアが保たれます。
+
+実際にワイヤーに載ったティアは、Codex CLI の `x-codex-routing-hint` ヘッダーでもバックエンドへ伝えられます。
+形式は `model=<upstream model>;tier=<tier>` です（ティアを送らない場合は `model=<upstream model>` のみ）。shunt は
+Codex CLI と同じく、ChatGPT OAuth パスでのみこのヘッダーを送ります。HTTP リクエストではリクエストヘッダーとして、
+WebSocket トランスポートではハンドシェイクヘッダーとして送ります。プレフィックスルートや `default_provider`
+経由では upstream モデルがクライアント自身の `model` 文字列になるため、ヘッダーは防御的に組み立てられます。
+妥当なスラッグ（空でなく、128 バイト以下で、ASCII の英数字と `-` `_` `.` `:` `/` `+` のみを含む）の場合だけ
+送り、それ以外はヘッダーだけを落としてリクエストはそのまま送ります。
 
 ## 6. コンテキストウィンドウ
 
