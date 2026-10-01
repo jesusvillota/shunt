@@ -278,6 +278,21 @@ pub struct UsageSnapshot {
     pub seven_day_oi: Option<UsageWindow>,
 }
 
+/// One grouped model-family quota window from Google's Code Assist `retrieveUserQuotaSummary`
+/// RPC, as surfaced for an Antigravity pool account. The pool-side twin of
+/// `auth::observation::QuotaBucket` — kept separate since `accounts.rs` (pool)
+/// and `auth::observation` (local discovery) are intentionally independent
+/// modules with no existing coupling. The wire/JSON shape mirrors it so the
+/// frontend's existing bar-rendering code needs only a data-source change.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct QuotaBucketSnapshot {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_time: Option<String>,
+}
+
 impl UsageSnapshot {
     /// True when the fetch succeeded but reported no window at all. A usage
     /// poller must not call [`AccountPool::note_usage`] on an empty snapshot:
@@ -339,6 +354,11 @@ struct AccountHealth {
     cooldown_until: Option<Instant>,
     cooldown_until_fable: Option<Instant>,
     quota: QuotaState,
+    /// Latest grouped model-family quota windows from the Antigravity `retrieveUserQuotaSummary`
+    /// poll. Memory-only, like `cooldown_until`: re-fetched every poll tick
+    /// with no rotation logic depending on it, so it never enters `QuotaState`
+    /// (which `state_persist.rs` round-trips through the on-disk format).
+    quota_buckets: Vec<QuotaBucketSnapshot>,
     /// Latest configured selection state. Quota gauges exclude disabled accounts.
     enabled: bool,
     /// Whether the pool has processed at least one upstream response for this
@@ -438,6 +458,12 @@ pub struct AccountSnapshot {
     pub utilization_7d_oi: Option<f64>,
     pub reset_7d_oi: Option<u64>,
     pub status: Option<String>,
+    /// Grouped model-family quota windows from the Antigravity `retrieveUserQuotaSummary` poll,
+    /// when present. Omitted when empty. Unlike the 5h/7d utilization fields
+    /// above, these carry no account-wide window — each bucket names its own
+    /// model with its own remaining fraction and reset time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quota_buckets: Vec<QuotaBucketSnapshot>,
     /// The credential is dead and needs an operator re-login (see
     /// [`AccountHealth::needs_relogin`]). Reported alongside — not folded
     /// into — `available` and the cooldown fields, so the dashboard can tell
@@ -470,6 +496,7 @@ impl AccountSnapshot {
             utilization_7d_oi: None,
             reset_7d_oi: None,
             status: None,
+            quota_buckets: Vec::new(),
             needs_relogin,
         }
     }
@@ -1332,6 +1359,29 @@ impl AccountPool {
         self.mark_dirty();
     }
 
+    /// Apply one successfully polled Antigravity `retrieveUserQuotaSummary` response.
+    /// Google's response is a full authoritative snapshot on every call, so the
+    /// buckets wholesale replace whatever the previous tick recorded — no
+    /// partial-window reconciliation like Claude's per-window
+    /// overwrite-if-present or Codex's clear-flags dance.
+    ///
+    /// Display-only on purpose: this leaves `health.quota` (5h/7d/aggregate
+    /// status) untouched and records no utilization metric, so Antigravity
+    /// pool selection/rotation behavior is unchanged (it already ignores quota
+    /// for this family) — matching the `/admin/observed` display-only
+    /// precedent.
+    pub fn note_antigravity_usage(
+        &self,
+        provider: &str,
+        account: &AccountConfig,
+        buckets: Vec<QuotaBucketSnapshot>,
+    ) {
+        let mut entries = self.entries.lock().expect("account health lock poisoned");
+        let health = entries.entry(account_key(provider, account)).or_default();
+        health.observed = true;
+        health.quota_buckets = buckets;
+    }
+
     fn note_usage_inner(
         &self,
         provider: &str,
@@ -2139,6 +2189,7 @@ impl AccountPool {
                         utilization_7d_oi: health.quota.utilization_7d_oi,
                         reset_7d_oi: health.quota.reset_7d_oi,
                         status: health.quota.status.clone(),
+                        quota_buckets: health.quota_buckets.clone(),
                         // The entry's own mark *or* the side table's, because
                         // the set cannot always reach the entry: a verdict
                         // recorded with no uuid — the credential file carried no
@@ -3406,22 +3457,51 @@ pub fn classify_antigravity(status: StatusCode, headers: &HeaderMap) -> Failover
     classify(status, headers)
 }
 
+/// Parse a `Retry-After` header. The value is returned unclamped: every caller
+/// bounds it for its own purpose (account cooldowns clamp, retry policy compares
+/// it against its budget), and a clamp here would hide an over-budget deadline.
 pub fn retry_after(headers: &HeaderMap) -> Option<Duration> {
     let value = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
-    // RFC 7231 allows two forms: delta-seconds or an HTTP-date. Try the cheap
-    // numeric form first, then fall back to the date form — a server that sends
-    // `Retry-After: <HTTP-date>` would otherwise be silently ignored.
-    if let Ok(seconds) = value.trim().parse::<u64>() {
-        return Some(Duration::from_secs(seconds));
+    retry_after_value(value)
+}
+
+/// Parse one bounded `Retry-After` value. Delta-seconds are rounded upward
+/// to whole seconds so a fractional value can never cause an early retry, and
+/// saturate at `u64::MAX` seconds; dates in the past retain their zero-delay
+/// policy meaning.
+fn retry_after_value(value: &str) -> Option<Duration> {
+    if value.len() > 128 {
+        return None;
     }
-    let deadline = httpdate::parse_http_date(value.trim()).ok()?;
-    // Honor the wait until that instant; a deadline already in the past means
-    // "retry now" (zero wait) rather than falling through to computed backoff.
-    Some(
-        deadline
-            .duration_since(SystemTime::now())
-            .unwrap_or(Duration::ZERO),
-    )
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    // RFC delta-seconds are decimal digits; accepting only this grammar avoids
+    // f64's exponent and sign forms while still supporting provider decimals.
+    if value
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || byte == b'.')
+        && value.bytes().filter(|&byte| byte == b'.').count() <= 1
+        && !value.starts_with('.')
+        && !value.ends_with('.')
+    {
+        let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+        // `whole` is a non-empty digit run, so the only parse failure is
+        // overflow — saturate instead of discarding a valid, very long delay.
+        let seconds = whole.parse::<u64>().unwrap_or(u64::MAX);
+        let has_fraction = fraction.bytes().any(|byte| byte != b'0');
+        return Some(Duration::from_secs(
+            seconds.saturating_add(u64::from(has_fraction)),
+        ));
+    }
+
+    let deadline = httpdate::parse_http_date(value).ok()?;
+    let wait = deadline
+        .duration_since(SystemTime::now())
+        .unwrap_or(Duration::ZERO);
+    Some(wait)
 }
 
 #[cfg(test)]
@@ -8144,6 +8224,65 @@ mod tests {
     }
 
     #[test]
+    fn note_antigravity_usage_applies_buckets_and_replaces_wholesale() {
+        let pool = AccountPool::new();
+        let provider = "antigravity-usage-buckets";
+        let target = account("agy-target");
+        let sibling = account("agy-sibling");
+        pool.sync_enabled_accounts(provider, &[target.clone(), sibling.clone()]);
+
+        pool.note_antigravity_usage(
+            provider,
+            &target,
+            vec![
+                QuotaBucketSnapshot {
+                    label: "Gemini Models · 5h".to_string(),
+                    remaining: Some(0.7),
+                    reset_time: Some("2026-09-24T00:00:00Z".to_string()),
+                },
+                QuotaBucketSnapshot {
+                    label: "Claude + GPT Models · 5h".to_string(),
+                    remaining: Some(0.92),
+                    reset_time: None,
+                },
+            ],
+        );
+
+        let snaps = pool.snapshot(provider, &[target.clone(), sibling.clone()], None, None);
+        let target_snap = snaps.iter().find(|s| s.name == target.name).unwrap();
+        assert!(target_snap.has_state);
+        assert_eq!(target_snap.quota_buckets.len(), 2);
+        assert_eq!(target_snap.quota_buckets[0].label, "Gemini Models · 5h");
+        assert_eq!(target_snap.quota_buckets[0].remaining, Some(0.7));
+        // Display-only: the aggregate quota state is untouched, so selection
+        // behavior is unchanged.
+        assert_eq!(target_snap.utilization_5h, None);
+        assert_eq!(target_snap.utilization_7d, None);
+        assert!(!target_snap.near_quota);
+        let sibling_snap = snaps.iter().find(|s| s.name == sibling.name).unwrap();
+        assert!(!sibling_snap.has_state);
+        assert!(sibling_snap.quota_buckets.is_empty());
+
+        // A second poll fully replaces the first bucket list — Google's
+        // response is authoritative each call, so nothing merges.
+        pool.note_antigravity_usage(
+            provider,
+            &target,
+            vec![QuotaBucketSnapshot {
+                label: "Claude + GPT Models · weekly".to_string(),
+                remaining: Some(0.5),
+                reset_time: None,
+            }],
+        );
+        let snaps = pool.snapshot(provider, std::slice::from_ref(&target), None, None);
+        assert_eq!(snaps[0].quota_buckets.len(), 1);
+        assert_eq!(
+            snaps[0].quota_buckets[0].label,
+            "Claude + GPT Models · weekly"
+        );
+    }
+
+    #[test]
     fn codex_usage_drops_elapsed_resets_before_fresh_utilization() {
         let pool = AccountPool::new();
         let provider = "codex-usage-expired-reset-regression";
@@ -8545,6 +8684,60 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(RETRY_AFTER, HeaderValue::from_static("42"));
         assert_eq!(retry_after(&headers), Some(Duration::from_secs(42)));
+    }
+
+    #[test]
+    fn parses_decimal_retry_after_with_upward_rounding() {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static(" 1.01 "));
+        assert_eq!(retry_after(&headers), Some(Duration::from_secs(2)));
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("0"));
+        assert_eq!(retry_after(&headers), Some(Duration::ZERO));
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("0.0"));
+        assert_eq!(retry_after(&headers), Some(Duration::ZERO));
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("0.5"));
+        assert_eq!(retry_after(&headers), Some(Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn preserves_extreme_retry_after_unclamped_and_saturates() {
+        // Callers bound the value themselves; the parser must hand back the
+        // requested deadline so retry policy can see it exceeds its budget.
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("7200"));
+        assert_eq!(retry_after(&headers), Some(Duration::from_secs(7200)));
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("999999999999"));
+        assert_eq!(
+            retry_after(&headers),
+            Some(Duration::from_secs(999_999_999_999))
+        );
+
+        // Past u64 seconds (with or without a fraction, and past u128 too),
+        // a valid delta saturates rather than being discarded.
+        for value in [
+            "18446744073709551615.5",
+            "18446744073709551616",
+            "1234567890123456789012345678901234567890",
+        ] {
+            headers.insert(RETRY_AFTER, HeaderValue::from_static(value));
+            assert_eq!(
+                retry_after(&headers),
+                Some(Duration::from_secs(u64::MAX)),
+                "{value} must saturate"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_and_overlong_retry_after() {
+        let mut headers = HeaderMap::new();
+        for value in ["1e3", ".5", "1.", "-1", "nan", ""] {
+            headers.insert(RETRY_AFTER, HeaderValue::from_static(value));
+            assert_eq!(retry_after(&headers), None, "{value} must be rejected");
+        }
+        let long = "1".repeat(129);
+        headers.insert(RETRY_AFTER, HeaderValue::from_str(&long).unwrap());
+        assert_eq!(retry_after(&headers), None);
     }
 
     #[test]
