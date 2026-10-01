@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use ratatui::{backend::TestBackend, style::Modifier, Terminal};
 
 use super::*;
