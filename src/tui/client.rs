@@ -75,12 +75,42 @@ impl Client {
         ok_empty(response).await
     }
 
-    pub async fn set_sort_by_reset(&self, value: bool) -> anyhow::Result<()> {
+    /// Begin browser provisioning of a new account (`kind` is the admin API's
+    /// account family: `claude`, `codex` or `antigravity`). Returns the URL the
+    /// operator authorizes at.
+    pub async fn start_account(&self, kind: &str, name: &str) -> anyhow::Result<String> {
+        // Full OAuth: refreshable, the same default the dashboard preselects.
+        // Codex and Antigravity ignore the extra field.
+        let body = if kind == "claude" {
+            json!({ "name": name, "mode": "oauth" })
+        } else {
+            json!({ "name": name })
+        };
         let response = self
             .http
-            .patch(self.url("/pool"))
+            .post(self.url(&format!("/accounts/{kind}")))
             .header(&self.header, &self.token)
-            .json(&json!({ "sort_by_reset": value }))
+            .json(&body)
+            .send()
+            .await
+            .context("gateway unreachable")?;
+        let started: serde_json::Value = ok_json(response).await?;
+        started["authorize_url"]
+            .as_str()
+            .map(str::to_string)
+            .context("the gateway did not return an authorize URL")
+    }
+
+    /// Finish provisioning with the code (or callback URL) the operator pasted.
+    /// The completion exchanges the code upstream, so it gets a longer timeout
+    /// than the polling calls.
+    pub async fn complete_account(&self, kind: &str, name: &str, code: &str) -> anyhow::Result<()> {
+        let response = self
+            .http
+            .post(self.url(&format!("/accounts/{kind}/{name}/complete")))
+            .header(&self.header, &self.token)
+            .timeout(Duration::from_secs(60))
+            .json(&json!({ "code": code.trim() }))
             .send()
             .await
             .context("gateway unreachable")?;
@@ -112,8 +142,21 @@ async fn check(response: reqwest::Response) -> anyhow::Result<reqwest::Response>
         }
         _ => {
             let text = response.text().await.unwrap_or_default();
-            let text = text.chars().take(160).collect::<String>();
-            bail!("gateway answered {status}: {text}")
+            bail!("gateway answered {status}: {}", server_message(&text))
         }
     }
+}
+
+/// The admin API's `{"error": …}` text when the body has one, else the body.
+fn server_message(body: &str) -> String {
+    let parsed: Option<serde_json::Value> = serde_json::from_str(body).ok();
+    let message = parsed
+        .as_ref()
+        .and_then(|v| {
+            v["error"]["message"]
+                .as_str()
+                .or_else(|| v["error"].as_str())
+        })
+        .unwrap_or(body);
+    message.chars().take(160).collect()
 }
