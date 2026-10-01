@@ -233,6 +233,12 @@ pub struct PoolConfig {
     /// Avoid an account projected to exhaust a soft threshold before reset.
     #[serde(default)]
     pub burn_rate_avoidance: bool,
+    /// When true, available accounts in the pool tier sort by their earliest
+    /// known rate-limit reset timestamp (ascending — soonest-reset first) rather
+    /// than by burn-rate headroom. Accounts with no reset signal sort last
+    /// within their priority tier. Off by default.
+    #[serde(default)]
+    pub sort_by_reset: bool,
     /// Poll Claude's `/api/oauth/usage`, Codex's `/wham/usage`, and
     /// Antigravity's `retrieveUserQuotaSummary` every N seconds for refreshable
     /// accounts. Unset or `0` disables polling; positive values below 60 are
@@ -286,6 +292,7 @@ impl Default for PoolConfig {
             default_threshold_7d: None,
             default_threshold_fable: None,
             burn_rate_avoidance: false,
+            sort_by_reset: false,
             usage_refresh_seconds: None,
             state_path: None,
             ramp_initial_concurrency: None,
