@@ -3,8 +3,8 @@ use serde_json::{json, Value};
 use shunt::{
     config::{Config, ResponsesFlavor},
     model::responses::{
-        anthropic_error_type, client_facing_status, map_error_value, parse_sse_events,
-        translate_request, translate_request_value, AnthropicSseMachine,
+        anthropic_error_type, backend_error_status, client_facing_status, map_error_value,
+        parse_sse_events, translate_request, translate_request_value, AnthropicSseMachine,
     },
     routing::{AdapterKind, Route},
 };
@@ -35,6 +35,7 @@ fn translate_with_session(input: Value, session_id: Option<&str>) -> Value {
         ResponsesFlavor::OpenAi,
         false,
         session_id,
+        true,
     )
     .unwrap()
 }
@@ -57,8 +58,8 @@ fn parsed_value_entry_point_matches_byte_wrapper_across_flavors() {
 
     for flavor in [ResponsesFlavor::OpenAi, ResponsesFlavor::Chatgpt] {
         assert_eq!(
-            translate_request_value(&request, &route, flavor, false, None),
-            translate_request(&body, &route, flavor, false, None).unwrap(),
+            translate_request_value(&request, &route, flavor, false, None, true),
+            translate_request(&body, &route, flavor, false, None, true).unwrap(),
             "parsed and byte entry points diverged for {flavor:?}"
         );
     }
@@ -143,6 +144,7 @@ fn omits_max_output_tokens_for_chatgpt_backend() {
         ResponsesFlavor::Chatgpt,
         false,
         None,
+        true,
     )
     .unwrap();
 
@@ -569,7 +571,7 @@ fn translates_tools_and_tool_choice_variants() {
 
 fn translate_with_flavor(input: Value, flavor: ResponsesFlavor) -> Value {
     let body = serde_json::to_vec(&input).unwrap();
-    translate_request(&body, &route("gpt-5.2-codex"), flavor, false, None).unwrap()
+    translate_request(&body, &route("gpt-5.2-codex"), flavor, false, None, true).unwrap()
 }
 
 #[test]
@@ -893,7 +895,7 @@ fn maps_thinking_and_route_override_to_effort() {
     route.effort = Some("xhigh".to_string());
     let body = serde_json::to_vec(&json!({"model": "gpt-5.2-codex-low", "messages": []})).unwrap();
     let override_effort =
-        translate_request(&body, &route, ResponsesFlavor::OpenAi, false, None).unwrap();
+        translate_request(&body, &route, ResponsesFlavor::OpenAi, false, None, true).unwrap();
     assert_eq!(override_effort["reasoning"]["effort"], "xhigh");
 }
 
@@ -915,7 +917,7 @@ fn emits_configured_service_tier_on_the_wire() {
     let mut route = route("gpt-5.6-sol");
     route.service_tier = Some("priority".to_string());
     let body = serde_json::to_vec(&json!({"model": "gpt-5.6-sol", "messages": []})).unwrap();
-    let out = translate_request(&body, &route, ResponsesFlavor::OpenAi, false, None).unwrap();
+    let out = translate_request(&body, &route, ResponsesFlavor::OpenAi, false, None, true).unwrap();
     assert_eq!(out["service_tier"], json!("priority"));
 }
 
@@ -926,7 +928,8 @@ fn emits_configured_service_tier_on_chatgpt_flavor() {
     let mut route = route("gpt-5.6-sol");
     route.service_tier = Some("flex".to_string());
     let body = serde_json::to_vec(&json!({"model": "gpt-5.6-sol", "messages": []})).unwrap();
-    let out = translate_request(&body, &route, ResponsesFlavor::Chatgpt, false, None).unwrap();
+    let out =
+        translate_request(&body, &route, ResponsesFlavor::Chatgpt, false, None, true).unwrap();
     assert_eq!(out["service_tier"], json!("flex"));
 }
 
@@ -939,7 +942,7 @@ fn emits_both_effort_and_service_tier_when_both_are_configured() {
     route.effort = Some("xhigh".to_string());
     route.service_tier = Some("priority".to_string());
     let body = serde_json::to_vec(&json!({"model": "gpt-5.6-sol", "messages": []})).unwrap();
-    let out = translate_request(&body, &route, ResponsesFlavor::OpenAi, false, None).unwrap();
+    let out = translate_request(&body, &route, ResponsesFlavor::OpenAi, false, None, true).unwrap();
     assert_eq!(out["reasoning"]["effort"], json!("xhigh"));
     assert_eq!(out["service_tier"], json!("priority"));
 }
@@ -956,7 +959,7 @@ fn route_service_tier_default_sentinel_never_reaches_the_wire() {
     let mut route = route("gpt-5.6-sol");
     route.service_tier = Some("default".to_string());
     let body = serde_json::to_vec(&json!({"model": "gpt-5.6-sol", "messages": []})).unwrap();
-    let out = translate_request(&body, &route, ResponsesFlavor::OpenAi, false, None).unwrap();
+    let out = translate_request(&body, &route, ResponsesFlavor::OpenAi, false, None, true).unwrap();
     assert!(out.get("service_tier").is_none());
 }
 
@@ -989,6 +992,7 @@ fn xai_omits_reasoning_and_text_without_configured_effort() {
         ResponsesFlavor::Xai,
         false,
         None,
+        true,
     )
     .unwrap();
 
@@ -1019,7 +1023,7 @@ fn xai_never_emits_service_tier_even_when_configured() {
     }))
     .unwrap();
 
-    let actual = translate_request(&body, &route, ResponsesFlavor::Xai, false, None).unwrap();
+    let actual = translate_request(&body, &route, ResponsesFlavor::Xai, false, None, true).unwrap();
 
     assert!(actual.get("service_tier").is_none());
 }
@@ -1038,7 +1042,8 @@ fn grok_never_emits_service_tier_even_when_configured() {
     }))
     .unwrap();
 
-    let actual = translate_request(&body, &route, ResponsesFlavor::Grok, false, None).unwrap();
+    let actual =
+        translate_request(&body, &route, ResponsesFlavor::Grok, false, None, true).unwrap();
 
     assert!(actual.get("service_tier").is_none());
 }
@@ -1060,6 +1065,7 @@ fn xai_honors_explicit_client_effort_without_route_config() {
         ResponsesFlavor::Xai,
         false,
         None,
+        true,
     )
     .unwrap();
 
@@ -1079,6 +1085,7 @@ fn xai_honors_explicit_client_effort_without_route_config() {
         ResponsesFlavor::Xai,
         false,
         None,
+        true,
     )
     .unwrap();
     assert!(actual.get("reasoning").is_none());
@@ -1092,13 +1099,13 @@ fn xai_sends_reasoning_without_summary_when_effort_configured() {
     route.effort = Some("high".to_string());
     let body = serde_json::to_vec(&json!({"model": "grok-4.5", "messages": []})).unwrap();
 
-    let actual = translate_request(&body, &route, ResponsesFlavor::Xai, false, None).unwrap();
+    let actual = translate_request(&body, &route, ResponsesFlavor::Xai, false, None, true).unwrap();
 
     assert_eq!(actual["reasoning"], json!({"effort": "high"}));
 }
 
 #[test]
-fn xai_includes_encrypted_reasoning_when_thinking_enabled() {
+fn xai_includes_encrypted_reasoning_only_when_thinking_enabled() {
     let body = serde_json::to_vec(&json!({
         "thinking": {"type": "enabled"},
         "messages": [{"role": "user", "content": "hi"}]
@@ -1111,10 +1118,27 @@ fn xai_includes_encrypted_reasoning_when_thinking_enabled() {
         ResponsesFlavor::Xai,
         false,
         None,
+        true,
     )
     .unwrap();
 
     assert_eq!(actual["include"], json!(["reasoning.encrypted_content"]));
+
+    // The always-on include is chatgpt-only: xAI keeps it gated on thinking.
+    let without = serde_json::to_vec(&json!({
+        "messages": [{"role": "user", "content": "hi"}]
+    }))
+    .unwrap();
+    let actual = translate_request(
+        &without,
+        &xai_route("grok-4.5"),
+        ResponsesFlavor::Xai,
+        false,
+        None,
+        true,
+    )
+    .unwrap();
+    assert!(actual.get("include").is_none());
 }
 
 #[test]
@@ -1739,12 +1763,14 @@ fn classifies_rate_limit_from_every_error_payload_shape() {
 
 #[test]
 fn backend_error_event_without_rate_limit_code_stays_gateway_error() {
-    // Only `rate_limit_exceeded` is a throttle; every other in-stream failure
-    // (content policy, server-side) keeps the 502 `api_error` gateway shape.
+    // Codes outside the throttle / overload / terminal-policy classes (the
+    // misalignment policy, server-side failures, quota exhaustion, unknown codes)
+    // keep the 502 `api_error` gateway shape.
     for code in [
         "server_error",
         "misalignment_policy_violation",
         "unknown_error",
+        "insufficient_quota",
     ] {
         let fixture = format!(
             "event: response.failed\ndata: {}\n\n",
@@ -1757,6 +1783,155 @@ fn backend_error_event_without_rate_limit_code_stays_gateway_error() {
         let (status, backend_error) = machine.take_backend_error().expect("recorded");
         assert_eq!(status, StatusCode::BAD_GATEWAY, "{code}");
         assert_eq!(backend_error["error"]["type"], "api_error", "{code}");
+    }
+}
+
+#[test]
+fn classifies_slow_down_overload_and_policy_codes() {
+    // Mirrors openai/codex rust-v0.156.0's SSE error classification: `slow_down`
+    // is a throttle (429), `server_is_overloaded` the overload (529),
+    // and `invalid_prompt` / `bio_policy` / `cyber_policy` terminal refusals
+    // (400). The streaming path must emit the same `error.type` inline.
+    let overloaded = StatusCode::from_u16(529).unwrap();
+    let cases = [
+        (
+            "slow_down",
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limit_error",
+        ),
+        ("server_is_overloaded", overloaded, "overloaded_error"),
+        (
+            "invalid_prompt",
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+        ),
+        (
+            "bio_policy",
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+        ),
+        (
+            "cyber_policy",
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+        ),
+    ];
+    for (code, expected_status, expected_type) in cases {
+        let fixture = format!(
+            "event: response.failed\ndata: {}\n\n",
+            json!({"type": "response.failed", "response": {"error": {"code": code, "message": "nope"}}})
+        );
+        let mut machine = AnthropicSseMachine::new("gpt-5.2-codex", false, false);
+        let emitted = parse_sse_events(&fixture)
+            .into_iter()
+            .flat_map(|event| machine.apply(event))
+            .collect::<String>();
+        let (status, backend_error) = machine.take_backend_error().expect("recorded");
+        assert_eq!(status, expected_status, "{code}");
+        assert_eq!(backend_error["error"]["type"], expected_type, "{code}");
+        assert_eq!(backend_error["error"]["message"], "nope", "{code}");
+        assert!(emitted.contains("event: error"), "{code}");
+        assert!(
+            emitted.contains(&format!("\"type\":\"{expected_type}\"")),
+            "{code}: {emitted}"
+        );
+    }
+
+    // `slow_down` classifies from the plain `error` event and a bare top-level
+    // `code` as well, not only the nested `response.failed` shape.
+    for data in [
+        json!({"type": "error", "error": {"code": "slow_down", "message": "nope"}}),
+        json!({"code": "slow_down", "message": "nope"}),
+    ] {
+        assert_eq!(
+            backend_error_status(&data),
+            StatusCode::TOO_MANY_REQUESTS,
+            "{data}"
+        );
+    }
+}
+
+#[test]
+fn classifies_a_wrapped_websocket_error_by_its_status() {
+    // The Codex websocket wraps HTTP-class errors as an `error` frame carrying a
+    // top-level `status` (or `status_code`); that status maps like the same HTTP
+    // status would. A known `code` still wins, and a missing, 2xx, or
+    // non-numeric status keeps the 502 default.
+    let cases = [
+        (
+            json!({"type": "error", "status": 400, "error": {"message": "unsupported"}}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            json!({"type": "error", "status_code": 429, "error": {"message": "slow"}}),
+            StatusCode::TOO_MANY_REQUESTS,
+        ),
+        (
+            json!({"type": "error", "status": 500, "error": {"code": "invalid_prompt"}}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            json!({"type": "error", "error": {"message": "no status"}}),
+            StatusCode::BAD_GATEWAY,
+        ),
+        (
+            json!({"type": "error", "status": 200, "error": {"message": "ok?"}}),
+            StatusCode::BAD_GATEWAY,
+        ),
+        (
+            json!({"type": "error", "status": "400", "error": {"message": "text"}}),
+            StatusCode::BAD_GATEWAY,
+        ),
+    ];
+    for (data, expected) in &cases {
+        assert_eq!(backend_error_status(data), *expected, "{data}");
+    }
+
+    // The machine maps the envelope against the same status, so `error.type`
+    // agrees with it on the non-streaming path.
+    let fixture = format!("event: error\ndata: {}\n\n", cases[0].0);
+    let mut machine = AnthropicSseMachine::new("gpt-5.2-codex", false, false);
+    for event in parse_sse_events(&fixture) {
+        let _ = machine.apply(event);
+    }
+    let (status, backend_error) = machine.take_backend_error().expect("recorded");
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(backend_error["error"]["type"], "invalid_request_error");
+    assert_eq!(backend_error["error"]["message"], "unsupported");
+}
+
+#[test]
+fn in_stream_message_rewrites_survive_status_classification() {
+    // The steer and context-overflow rewrites key on the error code, not the
+    // status: both codes stay on the 502 row and keep their rewritten messages.
+    let cases = [
+        (
+            json!({"code": "misalignment_policy_violation", "message": "blocked",
+                "misalignment": {"steer": {"message": "Stop here."}}}),
+            "blocked\n\nStop here.",
+        ),
+        (
+            json!({"code": "context_length_exceeded",
+                "message": "Your input exceeds the context window of this model."}),
+            "prompt is too long",
+        ),
+    ];
+    for (error, expected_message) in cases {
+        let fixture = format!(
+            "event: response.failed\ndata: {}\n\n",
+            json!({"type": "response.failed", "response": {"error": error}})
+        );
+        let mut machine = AnthropicSseMachine::new("gpt-5.2-codex", false, false);
+        for event in parse_sse_events(&fixture) {
+            let _ = machine.apply(event);
+        }
+        let (status, backend_error) = machine.take_backend_error().expect("recorded");
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{error}");
+        assert_eq!(backend_error["error"]["type"], "api_error", "{error}");
+        assert_eq!(
+            backend_error["error"]["message"], expected_message,
+            "{error}"
+        );
     }
 }
 
@@ -1938,6 +2113,95 @@ fn includes_encrypted_reasoning_only_when_thinking_enabled() {
     assert!(without.get("include").is_none());
 }
 
+#[test]
+fn chatgpt_always_requests_encrypted_reasoning() {
+    // The Codex CLI sends include unconditionally on the ChatGPT/Codex backend,
+    // so thinking-off turns keep the reasoning round-trip.
+    for body in [
+        json!({"messages": [{"role": "user", "content": "hi"}]}),
+        json!({"thinking": {"type": "enabled"}, "messages": [{"role": "user", "content": "hi"}]}),
+    ] {
+        let out = translate_with_flavor(body, ResponsesFlavor::Chatgpt);
+        assert_eq!(out["include"], json!(["reasoning.encrypted_content"]));
+    }
+}
+
+#[test]
+fn chatgpt_defaults_parallel_tool_calls_to_true() {
+    // codex always sends parallel_tool_calls:true on the ChatGPT/Codex backend
+    // (non-lite models); a client that omits it still gets the canonical wire
+    // shape. A client-provided value wins, and other flavors stay client-driven.
+    let absent = translate_with_flavor(
+        json!({"messages": [{"role": "user", "content": "hi"}]}),
+        ResponsesFlavor::Chatgpt,
+    );
+    assert_eq!(absent["parallel_tool_calls"], json!(true));
+
+    let client_false = translate_with_flavor(
+        json!({
+            "messages": [{"role": "user", "content": "hi"}],
+            "parallel_tool_calls": false
+        }),
+        ResponsesFlavor::Chatgpt,
+    );
+    assert_eq!(client_false["parallel_tool_calls"], json!(false));
+
+    let openai = translate(json!({"messages": [{"role": "user", "content": "hi"}]}));
+    assert!(openai.get("parallel_tool_calls").is_none());
+}
+
+#[test]
+fn chatgpt_default_keeps_an_anthropic_parallel_tool_use_disable() {
+    // Anthropic spells the same switch `tool_choice.disable_parallel_tool_use`;
+    // the chatgpt default must not turn it back on.
+    let with_choice = |disable: bool| {
+        translate_with_flavor(
+            json!({
+                "messages": [{"role": "user", "content": "hi"}],
+                "tools": [{"name": "lookup", "input_schema": {"type": "object"}}],
+                "tool_choice": {"type": "auto", "disable_parallel_tool_use": disable}
+            }),
+            ResponsesFlavor::Chatgpt,
+        )
+    };
+    assert_eq!(with_choice(true)["parallel_tool_calls"], json!(false));
+    assert_eq!(with_choice(false)["parallel_tool_calls"], json!(true));
+}
+
+#[test]
+fn chatgpt_plain_request_matches_the_captured_body() {
+    // Captured translated body: the chatgpt-flavor wire shape for a plain
+    // request, pinned by equality so the serialized body is a recorded artifact
+    // (the punch-list verify line's second half).
+    let out = translate_with_flavor(
+        json!({
+            "model": "gpt-5.2-codex",
+            "system": [{"type": "text", "text": "Be terse"}],
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_tokens": 1000
+        }),
+        ResponsesFlavor::Chatgpt,
+    );
+    assert_eq!(
+        out,
+        json!({
+            "model": "gpt-5.2-codex",
+            "instructions": "Be terse",
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}]
+            }],
+            "parallel_tool_calls": true,
+            "reasoning": {"effort": "medium", "summary": "auto"},
+            "text": {"verbosity": "medium"},
+            "include": ["reasoning.encrypted_content"],
+            "store": false,
+            "stream": true
+        })
+    );
+}
+
 /// End-to-end: a reasoning item streams out as a thinking block whose signature
 /// carries the encrypted state, and feeding that block back yields a Responses
 /// `reasoning` input item — preserving chain-of-thought under store:false.
@@ -2009,6 +2273,70 @@ fn streams_reasoning_as_thinking_block_and_round_trips() {
         .position(|i| i["type"] == "message" && i["role"] == "assistant")
         .unwrap();
     assert!(reasoning_pos < message_pos);
+}
+
+#[test]
+fn reasoning_without_encrypted_content_still_round_trips() {
+    // A reasoning item can arrive with no encrypted_content (and no summary).
+    // It still round-trips its id, so the next turn keeps the item instead of
+    // dropping it from the input.
+    let fixture = concat!(
+        "event: response.output_item.added\n",
+        "data: {\"item\":{\"type\":\"reasoning\",\"id\":\"rs_1\"}}\n\n",
+        "event: response.output_item.done\n",
+        "data: {\"item\":{\"type\":\"reasoning\",\"id\":\"rs_1\"}}\n\n",
+        "event: response.completed\n",
+        "data: {\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+    );
+    let mut machine = AnthropicSseMachine::new("gpt-5.2-codex", true, false);
+    let emitted = parse_sse_events(fixture)
+        .into_iter()
+        .flat_map(|event| machine.apply(event))
+        .collect::<String>();
+    let expected_signature = shunt::model::responses::encode_reasoning_signature("rs_1", "");
+    assert!(emitted.contains(&expected_signature));
+
+    let out = translate(json!({
+        "thinking": {"type": "enabled"},
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": [
+                {"type": "thinking", "thinking": "", "signature": expected_signature}
+            ]}
+        ]
+    }));
+    let input = out["input"].as_array().unwrap();
+    let reasoning = input
+        .iter()
+        .find(|item| item["type"] == "reasoning")
+        .expect("reasoning input item kept");
+    assert_eq!(reasoning["id"], "rs_1");
+    assert_eq!(reasoning["encrypted_content"], "");
+}
+
+#[test]
+fn streamed_summary_without_encrypted_content_still_round_trips() {
+    // Same as above but the reasoning block is OPEN at done (a summary streamed).
+    // That half of the delta would silently lose its round-trip id if only the
+    // closed-block path were fixed.
+    let fixture = concat!(
+        "event: response.output_item.added\n",
+        "data: {\"item\":{\"type\":\"reasoning\",\"id\":\"rs_1\"}}\n\n",
+        "event: response.reasoning_summary_text.delta\n",
+        "data: {\"delta\":\"Let me\"}\n\n",
+        "event: response.output_item.done\n",
+        "data: {\"item\":{\"type\":\"reasoning\",\"id\":\"rs_1\"}}\n\n",
+        "event: response.completed\n",
+        "data: {\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+    );
+    let mut machine = AnthropicSseMachine::new("gpt-5.2-codex", true, false);
+    let emitted = parse_sse_events(fixture)
+        .into_iter()
+        .flat_map(|event| machine.apply(event))
+        .collect::<String>();
+    let expected_signature = shunt::model::responses::encode_reasoning_signature("rs_1", "");
+    assert!(emitted.contains(&expected_signature));
+    assert!(emitted.contains("\"type\":\"signature_delta\""));
 }
 
 #[test]
@@ -2300,6 +2628,7 @@ fn native_translate(input: Value) -> Value {
         ResponsesFlavor::Chatgpt,
         true,
         None,
+        true,
     )
     .unwrap()
 }
@@ -2318,6 +2647,7 @@ fn translate_with_production_gate(model: &str, input: Value) -> Value {
         ResponsesFlavor::Chatgpt,
         production_native_for(model),
         None,
+        true,
     )
     .unwrap()
 }

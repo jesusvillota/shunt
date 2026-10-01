@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use switchyard_libsy::{
-    Algorithm, ClassifierContractConfig, CompositeRouter,
+    AdvisorGate, Algorithm, ClassifierContractConfig, CompositeRouter,
     CompositeRouterConfig as LibsyCompositeConfig, CustomClassifierConfig as LibsyCustomConfig,
     CustomClassifierPolicy, LlmClassifierConfig, LlmTaskClassifier, PickerMode, RuntimeModels,
     StageRouterConfig as LibsyStageConfig, TaskClassifierConfig, ToolSemantics,
@@ -29,11 +29,12 @@ use switchyard_libsy::{
 use switchyard_protocol::{Category, ModelId};
 
 use crate::config::{
-    CapabilityClassifierConfig, ClassifierPolicy, CompositeRouterConfig, CustomClassifierConfig,
-    LlmClassifierConfig as ShuntClassifierConfig, RouterConfig, SubagentsClassifierConfig,
-    ToolSemanticsConfig, DEFAULT_MAX_OUTPUT_TOKENS,
+    AdvisorRouterConfig, CapabilityClassifierConfig, ClassifierPolicy, ClassifyTrigger,
+    CompositeRouterConfig, CustomClassifierConfig, LlmClassifierConfig as ShuntClassifierConfig,
+    RouterConfig, SubagentsClassifierConfig, ToolSemanticsConfig, DEFAULT_MAX_OUTPUT_TOKENS,
 };
-use crate::routing::driven::{budget::JudgeBudget, DrivenEntry};
+use crate::routing::driven::retention::{Policy, Retention};
+use crate::routing::driven::{budget::JudgeBudget, DrivenEntry, GatedKind};
 
 /// Build the algorithm a driven `[models.router]` names and drop it, reporting
 /// upstream's message on failure.
@@ -45,6 +46,7 @@ pub(crate) fn check_buildable(router: &RouterConfig) -> Result<(), String> {
     match router {
         RouterConfig::LlmClassifier(classifier) => build_classifier(classifier).map(drop),
         RouterConfig::Composite(composite) => build_composite(composite).map(drop),
+        RouterConfig::Advisor(advisor) => build_advisor(advisor).map(drop),
         _ => Ok(()),
     }
 }
@@ -80,8 +82,25 @@ fn build_classifier(classifier: &ShuntClassifierConfig) -> Result<LlmTaskClassif
             default_target: category(&custom.default_target)?,
             config: custom_config_of(custom)?,
         },
+        ShuntClassifierConfig::Escalation(escalation) => LlmClassifierConfig::Escalation {
+            contract: escalation
+                .prompt
+                .as_ref()
+                .map_or_else(ClassifierContractConfig::default, |prompt| {
+                    ClassifierContractConfig::default().with_prompt(prompt.clone())
+                }),
+            config: escalation.escalation.to_libsy(),
+            max_output_tokens: escalation.max_output_tokens,
+        },
     };
     LlmTaskClassifier::new(config).map_err(|error| error.to_string())
+}
+
+/// Upstream's constructor is the whole validation of the advisor's own keys
+/// past the trigger pairing `Config::validate` spells (see
+/// [`crate::config::AdvisorRouterConfig`]).
+fn build_advisor(advisor: &AdvisorRouterConfig) -> Result<AdvisorGate, String> {
+    AdvisorGate::new(advisor.to_libsy()).map_err(|error| error.to_string())
 }
 
 fn build_composite(composite: &CompositeRouterConfig) -> Result<CompositeRouter, String> {
@@ -213,6 +232,8 @@ pub(super) fn router_entry(router: &RouterConfig) -> Result<Option<DrivenEntry>,
                 algorithm_label: router.algorithm(),
                 budget: JudgeBudget::new(),
                 tiers: None,
+                gated: classifier.is_gated().then_some(GatedKind::Escalation),
+                retention: Retention::new(classifier_policy(classifier)),
             }
         }
         RouterConfig::Composite(composite) => {
@@ -247,6 +268,37 @@ pub(super) fn router_entry(router: &RouterConfig) -> Result<Option<DrivenEntry>,
                 algorithm_label: router.algorithm(),
                 budget: JudgeBudget::new(),
                 tiers: Some((capable, efficient)),
+                gated: None,
+                retention: Retention::new(Policy::CompositeTier),
+            }
+        }
+        RouterConfig::Advisor(advisor) => {
+            let algorithm = Arc::new(build_advisor(advisor)?) as Arc<dyn Algorithm>;
+            let executor = ModelId::from(advisor.executor_target.as_str());
+            DrivenEntry {
+                algorithm,
+                // upstream reads the executor list as `Efficient` and the
+                // advisor as `Judge`; `Any` is the list its driver validates a
+                // routed target against, and the advisor is not a member — it
+                // reviews, it never serves.
+                models: Arc::new(RuntimeModels::new(HashMap::from([
+                    (Category::Efficient, vec![executor.clone()]),
+                    (
+                        Category::Judge,
+                        vec![ModelId::from(advisor.advisor_target.as_str())],
+                    ),
+                    (Category::Any, vec![executor]),
+                ]))),
+                targets: vec![advisor.executor_target.clone()],
+                fail_open: advisor.executor_target.clone(),
+                bounds: advisor.bounds(),
+                algorithm_label: router.algorithm(),
+                budget: JudgeBudget::new(),
+                tiers: None,
+                gated: Some(GatedKind::Advisor),
+                // An advisor retains no target between turns: it reviews the
+                // one it has just answered.
+                retention: Retention::new(Policy::None),
             }
         }
         _ => return Ok(None),
@@ -284,7 +336,31 @@ pub(super) fn overlay_entry(classifier: &SubagentsClassifierConfig) -> Result<Dr
         algorithm_label: "subagents",
         budget: JudgeBudget::new(),
         tiers: None,
+        // An overlay is custom-only, and custom mode decides before any answer
+        // is made — there is no turn for it to retain.
+        gated: None,
+        retention: Retention::new(trigger_policy(custom.classify_trigger)),
     })
+}
+
+/// Which retained state a `[models.router] type = "llm_classifier"`'s
+/// outcomes reveal ([`Policy`]).
+fn classifier_policy(classifier: &ShuntClassifierConfig) -> Policy {
+    match classifier {
+        ShuntClassifierConfig::Escalation(escalation) => Policy::EscalationLatch {
+            strong: escalation.strong_target.clone(),
+        },
+        _ => trigger_policy(classifier.classify_trigger()),
+    }
+}
+
+/// Affinity for the two triggers libsy retains an assignment under, and
+/// nothing for `every_request`, which judges every turn afresh.
+fn trigger_policy(trigger: ClassifyTrigger) -> Policy {
+    match trigger {
+        ClassifyTrigger::NewSession | ClassifyTrigger::UserTurn => Policy::Affinity,
+        ClassifyTrigger::EveryRequest => Policy::None,
+    }
 }
 
 /// The ids a verdict may name, with the config keys that named them dropped:
@@ -333,6 +409,30 @@ fn classifier_models(
             ),
         ])),
         ShuntClassifierConfig::Custom(custom) => group_models(&custom.models),
+        // The capability shape: upstream's escalation classifier reads the
+        // same three categories (`Capable`, `Efficient`, and the `Judge` its
+        // trajectory judge runs on), and `Any` is the served pair.
+        ShuntClassifierConfig::Escalation(escalation) => Ok(HashMap::from([
+            (
+                Category::Judge,
+                vec![ModelId::from(escalation.classifier_target.as_str())],
+            ),
+            (
+                Category::Capable,
+                vec![ModelId::from(escalation.strong_target.as_str())],
+            ),
+            (
+                Category::Efficient,
+                vec![ModelId::from(escalation.weak_target.as_str())],
+            ),
+            (
+                Category::Any,
+                vec![
+                    ModelId::from(escalation.strong_target.as_str()),
+                    ModelId::from(escalation.weak_target.as_str()),
+                ],
+            ),
+        ])),
     }
 }
 

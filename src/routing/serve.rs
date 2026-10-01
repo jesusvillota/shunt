@@ -26,6 +26,8 @@
 //! `caller = "router"`.
 
 pub(crate) mod bounds;
+pub(crate) mod gated;
+mod overflow;
 
 use std::sync::Mutex;
 
@@ -57,8 +59,9 @@ pub(crate) enum JudgeFailure {
     /// The reply passed `judge_max_response_bytes`.
     Oversized,
     /// The chain answered, or failed, with a non-success status — or its body
-    /// stream broke part-way through a reply it had already begun, which is a
-    /// failed upstream rather than a malformed answer.
+    /// stream broke part-way through a reply it had already begun, or the
+    /// adapter marked the reply `UpstreamTruncated`, which is a failed upstream
+    /// rather than a malformed answer.
     UpstreamStatus,
     /// The reply was not JSON, or was not a Messages response.
     InvalidReply,
@@ -190,8 +193,12 @@ async fn dispatch(
             // The cap, at the point the adapter would otherwise buffer the
             // whole reply to rewrite its `model`. `collect_bounded` below
             // stays as defence in depth: it bounds the relayed stream, which
-            // is the path an adapter that buffers nothing takes.
-            response_byte_cap: Some(bounds.judge_max_response_bytes),
+            // is the path an adapter that buffers nothing takes. No idle gap:
+            // the whole judge call is already under `judge_timeout_ms`.
+            response_bounds: crate::adapters::ResponseBounds {
+                max_bytes: Some(bounds.judge_max_response_bytes),
+                idle: None,
+            },
         })
         .await;
         let outcome = match outcome {
@@ -218,6 +225,27 @@ async fn dispatch(
                 })
             }
         };
+        // A Responses target answers an upstream that ended before
+        // `response.completed` with a whole-looking message, marked. The bytes
+        // parse, so without the mark a cut reply is accepted as a verdict —
+        // or, when the verdict itself was cut, recorded as `invalid_reply`
+        // for what was a dropped connection (issue #635). It is the same
+        // transport fault a body broken mid-read is below.
+        if outcome
+            .response
+            .extensions()
+            .get::<crate::stream_metrics::UpstreamTruncated>()
+            .is_some()
+        {
+            return Err((
+                JudgeFailure::UpstreamStatus,
+                LlmClientError::Transport {
+                    source: Box::new(std::io::Error::other(
+                        "the judge reply ended before its terminal event",
+                    )),
+                },
+            ));
+        }
         let status = outcome.status;
         let bytes = bounds::collect_bounded(
             outcome.response.into_body(),
@@ -361,6 +389,9 @@ pub(crate) fn judge_headers(state: &AppState, caller: &HeaderMap) -> HeaderMap {
     }
     headers.remove("anthropic-beta");
     headers.remove("content-length");
+    // The compaction mark is the client turn's: judge and advisor calls never
+    // carry it, so their handshakes never advance the conversation's window.
+    headers.remove(crate::routing::context::CONTEXT_COMPACTED_HEADER);
     headers
 }
 
@@ -386,3 +417,5 @@ fn client_call(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod truncated_judge_tests;

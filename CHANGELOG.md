@@ -1,5 +1,80 @@
 # Changelog
 
+## [0.51.1](https://github.com/pleaseai/shunt/compare/v0.51.0...v0.51.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **codex:** update client identity for gpt-6.1-sol ([#720](https://github.com/pleaseai/shunt/issues/720)) ([94a620b](https://github.com/pleaseai/shunt/commit/94a620b88e89ad9bb34c02688761e393862b0fd1))
+
+## [0.51.0](https://github.com/pleaseai/shunt/compare/v0.50.0...v0.51.0) (2026-09-30)
+
+
+### Features
+
+* **discovery:** add claude-sonnet-5-5 to the built-in catalog ([#715](https://github.com/pleaseai/shunt/issues/715)) ([b26fb65](https://github.com/pleaseai/shunt/commit/b26fb65b576ed64949a7c115f189007009dd75c8))
+
+
+### Bug Fixes
+
+* **retry:** parse decimal Retry-After with ceiling rounding and clamp bounded wait ([#518](https://github.com/pleaseai/shunt/issues/518)) ([67862e7](https://github.com/pleaseai/shunt/commit/67862e7ba3fc443484438b590a0d3c910270c653))
+
+## [0.50.0](https://github.com/pleaseai/shunt/compare/v0.49.1...v0.50.0) (2026-09-30)
+
+
+### Features
+
+* **accounts:** fail over and cool down a Codex account+model on "model is not supported" ([#676](https://github.com/pleaseai/shunt/issues/676)) ([dbbb7a5](https://github.com/pleaseai/shunt/commit/dbbb7a59be51147a15314b4d3be614edf84ee408))
+* **admin:** add hide_observed to keep host logins unread ([#610](https://github.com/pleaseai/shunt/issues/610)) ([5f32b34](https://github.com/pleaseai/shunt/commit/5f32b34ce9bf9699847783f5979e5a22d97c298e))
+* **antigravity:** show grouped Gemini / Claude+GPT quota pools ([#671](https://github.com/pleaseai/shunt/issues/671)) ([d7d002a](https://github.com/pleaseai/shunt/commit/d7d002aa6c966a7cda064becb17bdb19e715d367))
+
+
+### Bug Fixes
+
+* **adapters:** bound the remaining WebSocket and Antigravity accumulations on internal calls ([#688](https://github.com/pleaseai/shunt/issues/688)) ([e1ef6ab](https://github.com/pleaseai/shunt/commit/e1ef6ab6e23452e2b2bcc9bf21d06f3d6a6aac80))
+* **responses:** bound a gated pool-exhausted error body by a fresh idle gap ([#709](https://github.com/pleaseai/shunt/issues/709)) ([8b46aa7](https://github.com/pleaseai/shunt/commit/8b46aa762d6e64a092f9bb264052308a2b5ece64))
+* **responses:** codex prompt-cache parity with the Codex CLI ([#699](https://github.com/pleaseai/shunt/issues/699)) ([03d99f1](https://github.com/pleaseai/shunt/commit/03d99f14c130ab06f775363308731fc1fe4da60e))
+* **responses:** gated-path residuals — pool retry-after, estimate overlap, error-body idle anchor ([#706](https://github.com/pleaseai/shunt/issues/706)) ([7869c60](https://github.com/pleaseai/shunt/commit/7869c609b62615506cbc7d4959d9e52ed5205d53))
+* **routing:** charge the judge budget per dispatched call, atomically and per delegated identity ([#685](https://github.com/pleaseai/shunt/issues/685)) ([9092a6e](https://github.com/pleaseai/shunt/commit/9092a6e8c38e6c47833934e3bf52233065905de6))
+* **routing:** gated-lane follow-ups — context-length escalation, retry-after, advisor budget refusal, truncated judge replies ([#700](https://github.com/pleaseai/shunt/issues/700)) ([4662ecd](https://github.com/pleaseai/shunt/commit/4662ecdf6e84452b5c6267c2e96aaf20f65bae1c))
+* **routing:** record a failed advisor review's outcome; name the overflow raw-body fallback ([#705](https://github.com/pleaseai/shunt/issues/705)) ([cf91ed6](https://github.com/pleaseai/shunt/commit/cf91ed6b7701a57982afe42f7ba5e84a01a73d37))
+* **routing:** resolve a count_tokens probe on a driven entry to the session's retained target ([#687](https://github.com/pleaseai/shunt/issues/687)) ([c8c8dc7](https://github.com/pleaseai/shunt/commit/c8c8dc75efbd49487a294a132665dc1d21284484))
+
+## [0.49.1](https://github.com/pleaseai/shunt/compare/v0.49.0...v0.49.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **responses:** honor status on wrapped Codex websocket error frames ([#675](https://github.com/pleaseai/shunt/issues/675)) ([135e1a6](https://github.com/pleaseai/shunt/commit/135e1a6b8fb225ff4490e17b305075dc82797717))
+
+## [0.49.0](https://github.com/pleaseai/shunt/compare/v0.48.0...v0.49.0) (2026-09-24)
+
+
+### Features
+
+* **routing:** buffer-and-replay lane — escalation and advisor (ADR-0005 PR 6) ([#652](https://github.com/pleaseai/shunt/issues/652)) ([2d29392](https://github.com/pleaseai/shunt/commit/2d29392a620d690501d46b5a89d1d93d1afc4fa6))
+
+
+### Bug Fixes
+
+* **adapters:** apply gated_idle_ms to Gemini, Responses HTTP, and Cursor whole-body reads ([#670](https://github.com/pleaseai/shunt/issues/670)) ([8a394f2](https://github.com/pleaseai/shunt/commit/8a394f2a6fd4271af34d9f32545118fab9ccd432))
+* **responses:** classify in-stream slow_down, overload, and policy error codes ([#661](https://github.com/pleaseai/shunt/issues/661)) ([4737bcf](https://github.com/pleaseai/shunt/commit/4737bcf51ff108463639ff586831a4b16c9ae778))
+* **routing:** enforce gated_idle_ms during the Anthropic adapter's non-streaming model rewrite ([#668](https://github.com/pleaseai/shunt/issues/668)) ([cb8b1a5](https://github.com/pleaseai/shunt/commit/cb8b1a56048764cfbef605449f206c715c7db35a)), closes [#663](https://github.com/pleaseai/shunt/issues/663)
+
+## [0.48.0](https://github.com/pleaseai/shunt/compare/v0.47.0...v0.48.0) (2026-09-23)
+
+
+### Features
+
+* **antigravity:** named-account pooling with quota failover ([#604](https://github.com/pleaseai/shunt/issues/604)) ([50a9769](https://github.com/pleaseai/shunt/commit/50a9769fe73aedadb570917775d539cae9befd84))
+* **routing:** driven lane — llm_classifier, composite, subagents classifier form (ADR-0005 PR 5) ([#646](https://github.com/pleaseai/shunt/issues/646)) ([554d51b](https://github.com/pleaseai/shunt/commit/554d51b1f96262ccc369444ae3f466a4355c5f82))
+* support GPT-6 Sol/Luna and Claude Opus 5.5 ([#658](https://github.com/pleaseai/shunt/issues/658)) ([a6a8614](https://github.com/pleaseai/shunt/commit/a6a861492935121ebd40199f1158e1aea9a801a6))
+
+
+### Bug Fixes
+
+* **routing:** admit a prefill_router turn before it is driven ([#633](https://github.com/pleaseai/shunt/issues/633)) ([#645](https://github.com/pleaseai/shunt/issues/645)) ([131e52d](https://github.com/pleaseai/shunt/commit/131e52dc24b49c29760ba3d69e029cb6e36f6a41))
+
 ## [0.47.0](https://github.com/pleaseai/shunt/compare/v0.46.0...v0.47.0) (2026-09-21)
 
 

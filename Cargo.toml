@@ -7,7 +7,7 @@ name = "shunt-gateway"
 # unpublishable (issue #292). Remove this restriction with the pins once upstream
 # snapview/tungstenite-rs#426 ships in a crates.io release.
 publish = false
-version = "0.47.0"
+version = "0.51.1"
 edition = "2021"
 description = "Claude Code LLM gateway — an Anthropic Messages proxy that routes models to OpenAI/Codex and Anthropic-compatible backends"
 license = "MIT OR Apache-2.0"
@@ -34,6 +34,12 @@ path = "src/main.rs"
 # `ui/README.md`.
 ui = ["dep:rust-embed", "dep:mime_guess"]
 
+# Terminal pool monitor (`shunt top`): a live, keyboard-driven view of the
+# managed account pool that talks to a running gateway's admin API. Off by
+# default so the gateway binary carries no terminal-UI dependencies
+# (`docs/pool-tui.md`).
+tui = ["dep:ratatui"]
+
 # Learned prefill routing (`[models.router] type = "prefill_router"`, ADR-0005
 # §6). Upstream's `prefill-router` crate embeds Python through `pyo3` with
 # `auto-initialize`, so the build links libpython and the router needs
@@ -57,7 +63,7 @@ arc-swap = "1.9.2"
 # `switchyard_libsy::Algorithm` is an `#[async_trait]` trait, so hosting one
 # needs the same attribute macro on the impl.
 async-trait = "0.1"
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
@@ -178,6 +184,7 @@ url = "2.5.8"
 # streaming encoder/decoder is needed, so the dictionary-builder and legacy-format
 # default features stay off.
 zstd = { version = "0.13", default-features = false }
+ratatui = { version = "0.30.2", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

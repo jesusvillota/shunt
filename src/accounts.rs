@@ -278,6 +278,21 @@ pub struct UsageSnapshot {
     pub seven_day_oi: Option<UsageWindow>,
 }
 
+/// One grouped model-family quota window from Google's Code Assist `retrieveUserQuotaSummary`
+/// RPC, as surfaced for an Antigravity pool account. The pool-side twin of
+/// `auth::observation::QuotaBucket` — kept separate since `accounts.rs` (pool)
+/// and `auth::observation` (local discovery) are intentionally independent
+/// modules with no existing coupling. The wire/JSON shape mirrors it so the
+/// frontend's existing bar-rendering code needs only a data-source change.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct QuotaBucketSnapshot {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_time: Option<String>,
+}
+
 impl UsageSnapshot {
     /// True when the fetch succeeded but reported no window at all. A usage
     /// poller must not call [`AccountPool::note_usage`] on an empty snapshot:
@@ -339,6 +354,11 @@ struct AccountHealth {
     cooldown_until: Option<Instant>,
     cooldown_until_fable: Option<Instant>,
     quota: QuotaState,
+    /// Latest grouped model-family quota windows from the Antigravity `retrieveUserQuotaSummary`
+    /// poll. Memory-only, like `cooldown_until`: re-fetched every poll tick
+    /// with no rotation logic depending on it, so it never enters `QuotaState`
+    /// (which `state_persist.rs` round-trips through the on-disk format).
+    quota_buckets: Vec<QuotaBucketSnapshot>,
     /// Latest configured selection state. Quota gauges exclude disabled accounts.
     enabled: bool,
     /// Whether the pool has processed at least one upstream response for this
@@ -385,6 +405,22 @@ struct AccountHealth {
     /// state_path` persists quota alone, so a restart clears this and the
     /// account's next terminal failure re-establishes it.
     needs_relogin: Option<ReloginCause>,
+    /// Provider-scoped operator pauses. Quota/cooldown state is shared by physical
+    /// account identity, but an operator pause belongs to the configured provider
+    /// lane that was paused. Memory-only and cleared on restart.
+    paused_providers: HashSet<String>,
+    /// Per-model cooldowns, keyed by the ASCII-lowercased upstream model: the
+    /// account is healthy, but the upstream refused this one model for it
+    /// (see [`is_codex_model_unsupported`]). Selection folds the entry for
+    /// the requested model into [`governing_cooldown`], so other models on
+    /// the account are unaffected. Expired entries are pruned on insert
+    /// ([`AccountPool::cooldown_model`]) and on every selection of the account
+    /// because the key can be client-supplied on the inbound passthrough; for
+    /// the same reason live entries are capped at [`MAX_MODEL_COOLDOWNS`], and
+    /// a key longer than [`MAX_MODEL_COOLDOWN_KEY_BYTES`] is never stored.
+    /// Memory-only, like
+    /// `cooldown_until`.
+    model_cooldowns: HashMap<String, Instant>,
 }
 
 /// Token-free, serializable view of one account's pool health for the admin
@@ -396,7 +432,7 @@ pub struct AccountSnapshot {
     /// Whether the pool has recorded at least one upstream response for this
     /// account. When `false`, the quota/cooldown fields are all absent.
     pub has_state: bool,
-    /// Derived: not disabled, not cooling down, and not near quota.
+    /// Derived: not disabled or paused for this provider, not cooling down, and not near quota.
     pub available: bool,
     pub near_quota: bool,
     /// Seconds until the account-wide cooldown expires, when active.
@@ -407,6 +443,10 @@ pub struct AccountSnapshot {
     pub priority: u32,
     /// Configured exclusion from pool selection.
     pub disabled: bool,
+    /// Whether the operator has manually paused this account for the provider
+    /// whose snapshot is being read. Runtime-only: survives config reloads but
+    /// not process restarts.
+    pub paused: bool,
     /// Burn-rate headroom in seconds across the governing quota windows, when
     /// `[server.pool]` is configured and the projection is finite: positive
     /// means the account survives to its tightest reset at the current pace.
@@ -418,6 +458,12 @@ pub struct AccountSnapshot {
     pub utilization_7d_oi: Option<f64>,
     pub reset_7d_oi: Option<u64>,
     pub status: Option<String>,
+    /// Grouped model-family quota windows from the Antigravity `retrieveUserQuotaSummary` poll,
+    /// when present. Omitted when empty. Unlike the 5h/7d utilization fields
+    /// above, these carry no account-wide window — each bucket names its own
+    /// model with its own remaining fraction and reset time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quota_buckets: Vec<QuotaBucketSnapshot>,
     /// The credential is dead and needs an operator re-login (see
     /// [`AccountHealth::needs_relogin`]). Reported alongside — not folded
     /// into — `available` and the cooldown fields, so the dashboard can tell
@@ -431,16 +477,17 @@ impl AccountSnapshot {
     /// records a terminal verdict by store name in the pool's side table, and
     /// such an account has no health entry to carry it (see
     /// [`AccountPool::store_relogin`]).
-    fn unseen(account: &AccountConfig, needs_relogin: bool) -> Self {
+    fn unseen(account: &AccountConfig, needs_relogin: bool, paused: bool) -> Self {
         Self {
             name: account.name.clone(),
             has_state: false,
-            available: !account.disabled,
+            available: !account.disabled && !paused,
             near_quota: false,
             cooldown_secs_remaining: None,
             cooldown_fable_secs_remaining: None,
             priority: account.priority,
             disabled: account.disabled,
+            paused,
             headroom_secs: None,
             utilization_5h: None,
             reset_5h: None,
@@ -449,6 +496,7 @@ impl AccountSnapshot {
             utilization_7d_oi: None,
             reset_7d_oi: None,
             status: None,
+            quota_buckets: Vec::new(),
             needs_relogin,
         }
     }
@@ -497,6 +545,11 @@ pub struct AccountPool {
     /// only pattern needed; `forget_identity` takes this one alone, after it has
     /// released `entries`, which is still consistent with that order.
     store_relogin: Mutex<HashSet<StoreAccountRef>>,
+    /// Runtime override for `[server.pool] sort_by_reset`, set via
+    /// `PATCH /admin/api/pool`. `[server.pool]` is process-wide (there is one,
+    /// not one per provider), so this override is too. `None` defers to the
+    /// config file's own value; memory-only, cleared on restart.
+    sort_by_reset_override: Mutex<Option<bool>>,
 }
 
 #[derive(Debug)]
@@ -741,13 +794,14 @@ impl AccountPool {
         // adding or removing an alias cannot move an existing session. Disabled
         // aliases yield to an enabled representative; fully disabled identities
         // are then dropped from the rotation entirely. `collapse_representatives`
-        // and `rotation` need no lock, so both are computed before the entries
-        // lock below — the opportunistic re-probe candidate (Change B) is
-        // selected only from these final representatives.
-        let rotation = (0..distinct)
-            .map(|offset| ident_reps[(start_slot + offset) % distinct])
-            .filter(|&index| !accounts[index].disabled)
-            .collect::<Vec<_>>();
+        // needs no lock, so it is computed before the entries lock below.
+        // `rotation` also needs each account's `paused` bit, which only the
+        // lock guards; it is built just inside the lock, right after the
+        // per-account loop that already computes `account_key` and fetches
+        // `health` for every account, so its pause bit falls out for free —
+        // a separate pre-pass locking the mutex once per account
+        // (`account_pool_mixed_cycles` regressed ~13% when this first shipped
+        // that way) is what this avoids.
 
         let now = Instant::now();
         let unix_now = SystemTime::now()
@@ -755,22 +809,39 @@ impl AccountPool {
             .unwrap_or_default()
             .as_secs();
         let is_fable = is_fable_model(model);
+        let model_key = model.map(str::to_ascii_lowercase);
         let reprobe = allow_reprobe.then(|| reprobe_interval(pool)).flatten();
-        let (snapshots, pending_reprobe, quota_expired) = {
+        let (snapshots, rotation, pending_reprobe, quota_expired) = {
             let mut entries = self.entries.lock().expect("account health lock poisoned");
             let mut snapshots = Vec::with_capacity(accounts.len());
+            let mut paused = vec![false; accounts.len()];
             let mut quota_expired = false;
-            for account in accounts {
+            for (index, account) in accounts.iter().enumerate() {
                 let health = entries.entry(account_key(&provider, account)).or_default();
                 health.enabled |= !account.disabled;
+                paused[index] = health.paused_providers.contains(&provider);
                 quota_expired |= expire_stale_quota(&mut health.quota, unix_now);
                 // Assessing under the lock is pure CPU work and avoids cloning
                 // each account's QuotaState just to assess it after release.
                 let assessment = assess_quota(&health.quota, account, is_fable, pool, unix_now);
                 let weekly_reset = governing_weekly_reset(&health.quota, is_fable);
-                let cooldown_until = governing_cooldown(health, is_fable);
-                snapshots.push((cooldown_until, assessment, weekly_reset));
+                // Match quota assessment's request-aware weekly window so a
+                // stale Fable-only reset cannot reorder ordinary traffic.
+                let min_reset = [health.quota.reset_5h, weekly_reset]
+                    .into_iter()
+                    .flatten()
+                    .min();
+                // Prune expired per-model refusals here as well as on insert:
+                // the key can be client-supplied, so without a later refusal
+                // an expired entry would otherwise outlive its cooldown.
+                health.model_cooldowns.retain(|_, until| *until > now);
+                let cooldown_until = governing_cooldown(health, is_fable, model_key.as_deref());
+                snapshots.push((cooldown_until, assessment, weekly_reset, min_reset));
             }
+            let rotation = (0..distinct)
+                .map(|offset| ident_reps[(start_slot + offset) % distinct])
+                .filter(|&index| !accounts[index].disabled && !paused[index])
+                .collect::<Vec<_>>();
             // Opportunistic re-probe (Change B): among the final rotation
             // representatives, find the single stale near-quota ChatGPT-family
             // account and reserve it while still holding the entries lock.
@@ -791,7 +862,7 @@ impl AccountPool {
                     if account.store_family != Some(StoreFamily::Chatgpt) {
                         continue;
                     }
-                    let (cooldown_until, ref assessment, _) = snapshots[index];
+                    let (cooldown_until, ref assessment, _, _) = snapshots[index];
                     if cooldown_until.is_some_and(|until| until > now) || !assessment.near {
                         continue;
                     }
@@ -861,7 +932,7 @@ impl AccountPool {
                 }
             });
 
-            (snapshots, pending_reprobe, quota_expired)
+            (snapshots, rotation, pending_reprobe, quota_expired)
         };
 
         if quota_expired {
@@ -887,8 +958,10 @@ impl AccountPool {
         };
 
         let sticky = ident_reps[start_slot];
-        let (sticky_cooldown, ref sticky_quota, _) = snapshots[sticky];
-        if !accounts[sticky].disabled
+        let (sticky_cooldown, ref sticky_quota, _, _) = snapshots[sticky];
+        // `rotation` already excludes a disabled or paused sticky account, so
+        // membership in it covers both checks the fast path needs.
+        if rotation.contains(&sticky)
             && sticky_cooldown.is_none_or(|until| until <= now)
             && !sticky_quota.near
         {
@@ -907,17 +980,32 @@ impl AccountPool {
         match pool {
             // Priority beats headroom; ties prefer the account projected to
             // keep the most margin before its tightest window resets.
-            Some(_) => available_under.sort_by(|&left, &right| {
-                accounts[left]
-                    .priority
-                    .cmp(&accounts[right].priority)
-                    .then_with(|| {
-                        snapshots[right]
-                            .1
-                            .headroom
-                            .total_cmp(&snapshots[left].1.headroom)
-                    })
-            }),
+            Some(pool_cfg) => {
+                let sort_by_reset = self.effective_sort_by_reset(Some(pool_cfg));
+                available_under.sort_by(|&left, &right| {
+                    accounts[left]
+                        .priority
+                        .cmp(&accounts[right].priority)
+                        .then_with(|| {
+                            if sort_by_reset {
+                                // Soonest reset first; None (unknown) sorts last.
+                                let l = snapshots[left].3;
+                                let r = snapshots[right].3;
+                                match (l, r) {
+                                    (Some(lt), Some(rt)) => lt.cmp(&rt),
+                                    (Some(_), None) => std::cmp::Ordering::Less,
+                                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                                    (None, None) => std::cmp::Ordering::Equal,
+                                }
+                            } else {
+                                snapshots[right]
+                                    .1
+                                    .headroom
+                                    .total_cmp(&snapshots[left].1.headroom)
+                            }
+                        })
+                })
+            }
             // Legacy: `Option` orders `None` before `Some`, so accounts with
             // an unknown weekly reset sort first.
             None => available_under.sort_by(|&left, &right| {
@@ -1271,6 +1359,29 @@ impl AccountPool {
         self.mark_dirty();
     }
 
+    /// Apply one successfully polled Antigravity `retrieveUserQuotaSummary` response.
+    /// Google's response is a full authoritative snapshot on every call, so the
+    /// buckets wholesale replace whatever the previous tick recorded — no
+    /// partial-window reconciliation like Claude's per-window
+    /// overwrite-if-present or Codex's clear-flags dance.
+    ///
+    /// Display-only on purpose: this leaves `health.quota` (5h/7d/aggregate
+    /// status) untouched and records no utilization metric, so Antigravity
+    /// pool selection/rotation behavior is unchanged (it already ignores quota
+    /// for this family) — matching the `/admin/observed` display-only
+    /// precedent.
+    pub fn note_antigravity_usage(
+        &self,
+        provider: &str,
+        account: &AccountConfig,
+        buckets: Vec<QuotaBucketSnapshot>,
+    ) {
+        let mut entries = self.entries.lock().expect("account health lock poisoned");
+        let health = entries.entry(account_key(provider, account)).or_default();
+        health.observed = true;
+        health.quota_buckets = buckets;
+    }
+
     fn note_usage_inner(
         &self,
         provider: &str,
@@ -1356,6 +1467,42 @@ impl AccountPool {
         crate::metrics::record_pool_rotation(provider, reason);
     }
 
+    /// Cool down one `(account, model)` pair: selection for `model` treats the
+    /// account as cooling down until `duration` passes, while every other model
+    /// on the account is unaffected. Unlike [`Self::cooldown_scoped`] this
+    /// leaves the account-wide cooldowns and the storm-control ramp alone — the
+    /// credential is healthy; the upstream only refused this one model for it
+    /// (see [`is_codex_model_unsupported`]).
+    pub fn cooldown_model(
+        &self,
+        provider: &str,
+        account: &AccountConfig,
+        model: &str,
+        duration: Duration,
+        reason: &'static str,
+    ) {
+        let now = Instant::now();
+        let mut entries = self.entries.lock().expect("account health lock poisoned");
+        let health = entries.entry(account_key(provider, account)).or_default();
+        health.observed = true;
+        health.enabled = !account.disabled;
+        // Prune on insert so expired refusals do not accumulate. On the inbound
+        // passthrough the key is client-supplied, so the live refusals are
+        // bounded too: an overlong model is not recorded at all (the refusal
+        // still rotates; the account is merely re-tried for it), and a full
+        // map records no new model. Keeping the existing entries means a burst
+        // of bogus models cannot push out a genuine refusal recorded earlier.
+        health.model_cooldowns.retain(|_, until| *until > now);
+        let key = model.to_ascii_lowercase();
+        let fits = health.model_cooldowns.contains_key(&key)
+            || health.model_cooldowns.len() < MAX_MODEL_COOLDOWNS;
+        if model.len() <= MAX_MODEL_COOLDOWN_KEY_BYTES && fits {
+            health.model_cooldowns.insert(key, now + duration);
+        }
+        drop(entries);
+        crate::metrics::record_pool_rotation(provider, reason);
+    }
+
     /// Record that this account's credential is terminally dead: only an
     /// operator re-login can revive it. Callers must have established that the
     /// failure is terminal — [`crate::auth::claude::auth::is_terminal_refresh_failure`]
@@ -1421,6 +1568,54 @@ impl AccountPool {
             &key,
             account,
         );
+    }
+
+    /// Pause or resume one provider lane for an account. The pause persists in
+    /// memory until toggled again or the process restarts, without affecting a
+    /// different provider that resolves to the same physical identity. Inserts
+    /// a default health entry if the account has not been selected yet.
+    pub fn set_paused(&self, provider: &str, account: &AccountConfig, paused: bool) {
+        let mut entries = self.entries.lock().expect("account health lock poisoned");
+        let key = account_key(provider, account);
+        let health = entries.entry(key).or_default();
+        if paused {
+            health.paused_providers.insert(provider.to_string());
+        } else {
+            health.paused_providers.remove(provider);
+        }
+    }
+
+    /// Whether an account is currently paused.
+    pub fn is_paused(&self, provider: &str, account: &AccountConfig) -> bool {
+        let entries = self.entries.lock().expect("account health lock poisoned");
+        entries
+            .get(&account_key(provider, account))
+            .is_some_and(|h| h.paused_providers.contains(provider))
+    }
+
+    /// Set (or clear, with `None`) the runtime override of `sort_by_reset`.
+    /// `[server.pool]` is process-wide, so this override applies to every
+    /// provider using the pool tier.
+    pub fn set_sort_by_reset_override(&self, value: Option<bool>) {
+        *self
+            .sort_by_reset_override
+            .lock()
+            .expect("account health lock poisoned") = value;
+    }
+
+    /// Effective `sort_by_reset`: the runtime override when set, else the
+    /// config file's own `[server.pool] sort_by_reset`. Always `false` when
+    /// `[server.pool]` is absent, whatever the override says — select_order_inner's
+    /// legacy (no-pool) branch never consults this, so reporting the override's
+    /// value there would claim an effect selection does not actually have.
+    pub fn effective_sort_by_reset(&self, pool: Option<&PoolConfig>) -> bool {
+        let Some(pool) = pool else {
+            return false;
+        };
+        self.sort_by_reset_override
+            .lock()
+            .expect("account health lock poisoned")
+            .unwrap_or(pool.sort_by_reset)
     }
 
     /// Set or clear the needs-re-login mark on every pool entry backed by one
@@ -1951,8 +2146,14 @@ impl AccountPool {
                         // with no entry at all, the side table's verdict. `has_state`
                         // stays `false`, which is still true and which both dashboard
                         // tables already read *after* `needs_relogin`, so the row
-                        // renders "needs re-login" rather than "unseen".
-                        return AccountSnapshot::unseen(account, store_condemned);
+                        // renders "needs re-login" rather than "unseen". `paused` is
+                        // read from any entry that exists regardless of `observed`, so
+                        // an operator's pause shows up immediately even before the
+                        // account is ever selected.
+                        let paused = entries
+                            .get(&key)
+                            .is_some_and(|health| health.paused_providers.contains(provider));
+                        return AccountSnapshot::unseen(account, store_condemned, paused);
                     };
                     quota_expired |= expire_stale_quota(&mut health.quota, unix_now);
                     let quota = assess_quota(&health.quota, account, is_fable, pool, unix_now);
@@ -1969,12 +2170,16 @@ impl AccountPool {
                     AccountSnapshot {
                         name: account.name.clone(),
                         has_state: true,
-                        available: !account.disabled && !cooling && !quota.near,
+                        available: !account.disabled
+                            && !health.paused_providers.contains(provider)
+                            && !cooling
+                            && !quota.near,
                         near_quota: quota.near,
                         cooldown_secs_remaining,
                         cooldown_fable_secs_remaining,
                         priority: account.priority,
                         disabled: account.disabled,
+                        paused: health.paused_providers.contains(provider),
                         headroom_secs: (pool.is_some() && quota.headroom.is_finite())
                             .then_some(quota.headroom as i64),
                         utilization_5h: health.quota.utilization_5h,
@@ -1984,6 +2189,7 @@ impl AccountPool {
                         utilization_7d_oi: health.quota.utilization_7d_oi,
                         reset_7d_oi: health.quota.reset_7d_oi,
                         status: health.quota.status.clone(),
+                        quota_buckets: health.quota_buckets.clone(),
                         // The entry's own mark *or* the side table's, because
                         // the set cannot always reach the entry: a verdict
                         // recorded with no uuid — the credential file carried no
@@ -2465,6 +2671,29 @@ pub(crate) fn account_key(upstream: &str, account: &AccountConfig) -> AccountKey
     }
 }
 
+/// Opaque provider-scoped reference for one resolved pool identity.
+///
+/// The admin API returns this value and accepts it back on mutations. It is
+/// deliberately distinct from the display name because different credentials
+/// may legitimately share one name.
+pub(crate) fn account_ref(upstream: &str, account: &AccountConfig) -> String {
+    let key = account_key(upstream, account);
+    let encoded = serde_json::to_vec(&key).expect("account key is serializable");
+    let mut hasher = Sha256::new();
+    hasher.update(upstream.as_bytes());
+    hasher.update([0]);
+    hasher.update(encoded);
+    let digest = hasher.finalize();
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut value = String::with_capacity(5 + digest.len() * 2);
+    value.push_str("acct_");
+    for byte in digest {
+        value.push(HEX[(byte >> 4) as usize] as char);
+        value.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    value
+}
+
 /// Collapse accounts sharing a stable upstream identity ([`account_identity`])
 /// down to one representative per identity, keeping the enabled (or, among
 /// equally-disabled duplicates, the lowest-priority) account as the
@@ -2602,16 +2831,22 @@ pub fn is_fable_model(model: Option<&str>) -> bool {
     model.is_some_and(|model| model.to_ascii_lowercase().contains("fable"))
 }
 
-fn governing_cooldown(health: &AccountHealth, is_fable: bool) -> Option<Instant> {
-    // Fable traffic must wait for both applicable cooldowns, so the later expiry governs.
-    if is_fable {
-        match (health.cooldown_until, health.cooldown_until_fable) {
-            (Some(account), Some(fable)) => Some(account.max(fable)),
-            (account, fable) => account.or(fable),
-        }
-    } else {
-        health.cooldown_until
-    }
+/// The cooldown that governs selecting this account for a request: the
+/// account-wide cooldown, plus the Fable-only one for Fable traffic, plus the
+/// per-model one for `model_key` (the ASCII-lowercased upstream model). A
+/// request must wait for every applicable cooldown, so the latest expiry
+/// governs.
+fn governing_cooldown(
+    health: &AccountHealth,
+    is_fable: bool,
+    model_key: Option<&str>,
+) -> Option<Instant> {
+    let fable = is_fable.then_some(health.cooldown_until_fable).flatten();
+    let model = model_key.and_then(|model| health.model_cooldowns.get(model).copied());
+    [health.cooldown_until, fable, model]
+        .into_iter()
+        .flatten()
+        .max()
 }
 
 fn governing_weekly_reset(quota: &QuotaState, is_fable: bool) -> Option<u64> {
@@ -3136,6 +3371,10 @@ pub fn classify_kimi(status: StatusCode, headers: &HeaderMap) -> FailoverAction 
 /// Takes the same `(status, headers)` shape as [`classify`] so both adapters
 /// share one call site. Codex quota/rejection headers are display-only: every
 /// 429 still rotates rather than pausing the same account.
+///
+/// Every other 4xx relays here, including a 400. The Responses pool reads the
+/// body of a 400 separately and rotates on the one per-account 400 it knows,
+/// the model entitlement refusal — see [`is_codex_model_unsupported`].
 pub fn classify_codex(status: StatusCode, _headers: &HeaderMap) -> FailoverAction {
     if status.is_success() {
         return FailoverAction::Relay;
@@ -3152,6 +3391,60 @@ pub fn classify_codex(status: StatusCode, _headers: &HeaderMap) -> FailoverActio
     FailoverAction::Relay
 }
 
+/// How long a Codex pool account stays skipped for one model after the
+/// upstream refused that model for it ([`is_codex_model_unsupported`]). The
+/// refusal is a rollout/entitlement gate that flaps: on 2026-09-24 it lifted
+/// within hours. A refusal is a fast 400, so re-probing the account for the
+/// model hourly is cheap, and a shorter cooldown picks the model back up
+/// sooner than CLIProxyAPI's 12h once the gate lifts.
+pub const CODEX_MODEL_UNSUPPORTED_COOLDOWN: Duration = Duration::from_secs(60 * 60);
+
+/// Most live per-model cooldowns one account holds. A real pool is refused a
+/// handful of models at a time; the cap only matters when the inbound
+/// passthrough is fed distinct unsupported model strings, and then a full map
+/// records no new model until an entry expires.
+const MAX_MODEL_COOLDOWNS: usize = 64;
+
+/// Longest model string recorded as a per-model cooldown key. Real model ids
+/// are far shorter; a longer client-supplied string is not stored.
+const MAX_MODEL_COOLDOWN_KEY_BYTES: usize = 128;
+
+/// Whether a Codex/ChatGPT upstream response is the per-account model
+/// entitlement refusal: HTTP 400 whose message says the model "is not
+/// supported", e.g. `{"detail":"The 'gpt-6-luna' model is not supported when
+/// using Codex with a ChatGPT account."}`.
+///
+/// The backend gates a model per ChatGPT account during a rollout, and the
+/// gate flaps over hours, so another pool account may well be entitled to the
+/// same model. The pool therefore rotates on this 400 and cools only the
+/// `(account, model)` pair ([`AccountPool::cooldown_model`]) instead of
+/// relaying it the way [`classify_codex`] relays every other 400. The match
+/// mirrors CLIProxyAPI's `isModelSupportErrorMessage` (its
+/// `model_not_supported` cooldown): a case-insensitive "model is not
+/// supported" — checked only in the JSON string fields `detail`,
+/// `error.message`, and top-level `message`, never the raw body, so the text
+/// echoed anywhere else (a prompt, an unrelated field) cannot trigger it.
+///
+/// Only HTTP responses are classified. On the websocket transport the refusal
+/// arrives as an in-stream `error` event after the turn has committed, so it
+/// is relayed without rotating, like any other in-stream error.
+pub fn is_codex_model_unsupported(status: StatusCode, body: &[u8]) -> bool {
+    if status != StatusCode::BAD_REQUEST {
+        return false;
+    }
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return false;
+    };
+    ["/detail", "/error/message", "/message"]
+        .into_iter()
+        .filter_map(|pointer| value.pointer(pointer)?.as_str())
+        .any(|message| {
+            message
+                .to_ascii_lowercase()
+                .contains("model is not supported")
+        })
+}
+
 /// Classify an Antigravity (Code Assist) upstream response for account-pool
 /// failover. The backend reports quota exhaustion as a plain 429
 /// (`RESOURCE_EXHAUSTED` in the body, no Anthropic-style quota headers), so a
@@ -3164,22 +3457,51 @@ pub fn classify_antigravity(status: StatusCode, headers: &HeaderMap) -> Failover
     classify(status, headers)
 }
 
+/// Parse a `Retry-After` header. The value is returned unclamped: every caller
+/// bounds it for its own purpose (account cooldowns clamp, retry policy compares
+/// it against its budget), and a clamp here would hide an over-budget deadline.
 pub fn retry_after(headers: &HeaderMap) -> Option<Duration> {
     let value = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
-    // RFC 7231 allows two forms: delta-seconds or an HTTP-date. Try the cheap
-    // numeric form first, then fall back to the date form — a server that sends
-    // `Retry-After: <HTTP-date>` would otherwise be silently ignored.
-    if let Ok(seconds) = value.trim().parse::<u64>() {
-        return Some(Duration::from_secs(seconds));
+    retry_after_value(value)
+}
+
+/// Parse one bounded `Retry-After` value. Delta-seconds are rounded upward
+/// to whole seconds so a fractional value can never cause an early retry, and
+/// saturate at `u64::MAX` seconds; dates in the past retain their zero-delay
+/// policy meaning.
+fn retry_after_value(value: &str) -> Option<Duration> {
+    if value.len() > 128 {
+        return None;
     }
-    let deadline = httpdate::parse_http_date(value.trim()).ok()?;
-    // Honor the wait until that instant; a deadline already in the past means
-    // "retry now" (zero wait) rather than falling through to computed backoff.
-    Some(
-        deadline
-            .duration_since(SystemTime::now())
-            .unwrap_or(Duration::ZERO),
-    )
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    // RFC delta-seconds are decimal digits; accepting only this grammar avoids
+    // f64's exponent and sign forms while still supporting provider decimals.
+    if value
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || byte == b'.')
+        && value.bytes().filter(|&byte| byte == b'.').count() <= 1
+        && !value.starts_with('.')
+        && !value.ends_with('.')
+    {
+        let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+        // `whole` is a non-empty digit run, so the only parse failure is
+        // overflow — saturate instead of discarding a valid, very long delay.
+        let seconds = whole.parse::<u64>().unwrap_or(u64::MAX);
+        let has_fraction = fraction.bytes().any(|byte| byte != b'0');
+        return Some(Duration::from_secs(
+            seconds.saturating_add(u64::from(has_fraction)),
+        ));
+    }
+
+    let deadline = httpdate::parse_http_date(value).ok()?;
+    let wait = deadline
+        .duration_since(SystemTime::now())
+        .unwrap_or(Duration::ZERO);
+    Some(wait)
 }
 
 #[cfg(test)]
@@ -5832,6 +6154,177 @@ mod tests {
     }
 
     #[test]
+    fn model_cooldown_defers_only_that_model_on_that_account() {
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b")];
+        let session = "model-cooldown";
+        let sticky = pool.select_order("codex", &accounts, Some(session), Some("gpt-x"), None)[0];
+        let other = 1 - sticky;
+        let key = account_key("codex", &accounts[sticky]);
+        pool.entries
+            .lock()
+            .unwrap()
+            .get_mut(&key)
+            .unwrap()
+            .ramp_allowance = 4;
+
+        // Stored case-insensitively: a refusal for `GPT-X` governs `gpt-x`.
+        pool.cooldown_model(
+            "codex",
+            &accounts[sticky],
+            "GPT-X",
+            Duration::from_secs(120),
+            "model_not_supported",
+        );
+
+        assert_eq!(
+            pool.select_order("codex", &accounts, Some(session), Some("gpt-x"), None),
+            vec![other, sticky],
+            "the refused model must skip the cooled account for the uncooled one"
+        );
+        assert_eq!(
+            pool.select_order("codex", &accounts, Some(session), Some("gpt-y"), None)[0],
+            sticky,
+            "another model on the same account must be unaffected"
+        );
+        {
+            let entries = pool.entries.lock().unwrap();
+            let health = &entries[&key];
+            assert!(health.observed);
+            assert_eq!(health.cooldown_until, None, "no account-wide cooldown");
+            assert_eq!(health.ramp_allowance, 4, "the storm-control ramp is kept");
+        }
+
+        // Every account cooled for the model: the soonest expiry still leads.
+        pool.cooldown_model(
+            "codex",
+            &accounts[other],
+            "gpt-x",
+            Duration::from_secs(60),
+            "model_not_supported",
+        );
+        assert_eq!(
+            pool.select_order("codex", &accounts, Some(session), Some("gpt-x"), None),
+            vec![other, sticky]
+        );
+
+        // Expired entries are pruned when the next one lands.
+        pool.cooldown_model(
+            "codex",
+            &accounts[sticky],
+            "gpt-x",
+            Duration::ZERO,
+            "model_not_supported",
+        );
+        pool.cooldown_model(
+            "codex",
+            &accounts[sticky],
+            "gpt-z",
+            Duration::from_secs(60),
+            "model_not_supported",
+        );
+        {
+            let entries = pool.entries.lock().unwrap();
+            let cooled = entries[&key].model_cooldowns.keys().collect::<Vec<_>>();
+            assert_eq!(cooled, vec!["gpt-z"]);
+        }
+
+        // Expired entries are also pruned by selection, with no later refusal:
+        // a selection for any model drops every lapsed per-model entry.
+        pool.cooldown_model(
+            "codex",
+            &accounts[sticky],
+            "gpt-z",
+            Duration::ZERO,
+            "model_not_supported",
+        );
+        pool.select_order("codex", &accounts, Some(session), Some("gpt-y"), None);
+        let entries = pool.entries.lock().unwrap();
+        assert!(
+            entries[&key].model_cooldowns.is_empty(),
+            "selection must prune expired model cooldowns"
+        );
+    }
+
+    #[test]
+    fn model_cooldowns_are_bounded_for_client_supplied_models() {
+        let pool = AccountPool::new();
+        let account = account("a");
+        let key = account_key("codex", &account);
+        // A genuine refusal recorded first survives the burst that fills the map.
+        pool.cooldown_model(
+            "codex",
+            &account,
+            "gpt-real",
+            Duration::from_secs(60),
+            "model_not_supported",
+        );
+        for index in 0..MAX_MODEL_COOLDOWNS {
+            pool.cooldown_model(
+                "codex",
+                &account,
+                &format!("bogus-{index}"),
+                Duration::from_secs(60 + index as u64),
+                "model_not_supported",
+            );
+        }
+        pool.cooldown_model(
+            "codex",
+            &account,
+            &"x".repeat(MAX_MODEL_COOLDOWN_KEY_BYTES + 1),
+            Duration::from_secs(600),
+            "model_not_supported",
+        );
+        let entries = pool.entries.lock().unwrap();
+        let cooled = &entries[&key].model_cooldowns;
+        assert_eq!(cooled.len(), MAX_MODEL_COOLDOWNS, "live entries are capped");
+        assert!(cooled.contains_key("gpt-real"), "an earlier entry is kept");
+        assert!(
+            !cooled.contains_key(&format!("bogus-{}", MAX_MODEL_COOLDOWNS - 1)),
+            "a full map records no new model"
+        );
+        assert!(
+            cooled
+                .keys()
+                .all(|model| model.len() <= MAX_MODEL_COOLDOWN_KEY_BYTES),
+            "an overlong model is not stored"
+        );
+    }
+
+    #[test]
+    fn detects_the_codex_model_entitlement_refusal() {
+        let refusal =
+            "The 'gpt-6-luna' model is not supported when using Codex with a ChatGPT account.";
+        for body in [
+            serde_json::json!({ "detail": refusal }),
+            serde_json::json!({ "error": { "message": refusal } }),
+            serde_json::json!({ "message": refusal }),
+            serde_json::json!({ "detail": "The model IS NOT SUPPORTED here" }),
+        ] {
+            assert!(
+                is_codex_model_unsupported(StatusCode::BAD_REQUEST, body.to_string().as_bytes()),
+                "must match: {body}"
+            );
+        }
+        let refusal_body = serde_json::json!({ "detail": refusal }).to_string();
+        assert!(!is_codex_model_unsupported(
+            StatusCode::FORBIDDEN,
+            refusal_body.as_bytes()
+        ));
+        for body in [
+            serde_json::json!({ "detail": "Invalid value for 'input'." }).to_string(),
+            refusal.to_string(),
+            serde_json::json!({ "input": refusal }).to_string(),
+            serde_json::json!({ "error": { "code": refusal } }).to_string(),
+        ] {
+            assert!(
+                !is_codex_model_unsupported(StatusCode::BAD_REQUEST, body.as_bytes()),
+                "must not match: {body}"
+            );
+        }
+    }
+
+    #[test]
     fn shared_rejection_cooldown_defers_both_model_families() {
         let pool = AccountPool::new();
         let accounts = vec![account("a"), account("b")];
@@ -7731,6 +8224,65 @@ mod tests {
     }
 
     #[test]
+    fn note_antigravity_usage_applies_buckets_and_replaces_wholesale() {
+        let pool = AccountPool::new();
+        let provider = "antigravity-usage-buckets";
+        let target = account("agy-target");
+        let sibling = account("agy-sibling");
+        pool.sync_enabled_accounts(provider, &[target.clone(), sibling.clone()]);
+
+        pool.note_antigravity_usage(
+            provider,
+            &target,
+            vec![
+                QuotaBucketSnapshot {
+                    label: "Gemini Models · 5h".to_string(),
+                    remaining: Some(0.7),
+                    reset_time: Some("2026-09-24T00:00:00Z".to_string()),
+                },
+                QuotaBucketSnapshot {
+                    label: "Claude + GPT Models · 5h".to_string(),
+                    remaining: Some(0.92),
+                    reset_time: None,
+                },
+            ],
+        );
+
+        let snaps = pool.snapshot(provider, &[target.clone(), sibling.clone()], None, None);
+        let target_snap = snaps.iter().find(|s| s.name == target.name).unwrap();
+        assert!(target_snap.has_state);
+        assert_eq!(target_snap.quota_buckets.len(), 2);
+        assert_eq!(target_snap.quota_buckets[0].label, "Gemini Models · 5h");
+        assert_eq!(target_snap.quota_buckets[0].remaining, Some(0.7));
+        // Display-only: the aggregate quota state is untouched, so selection
+        // behavior is unchanged.
+        assert_eq!(target_snap.utilization_5h, None);
+        assert_eq!(target_snap.utilization_7d, None);
+        assert!(!target_snap.near_quota);
+        let sibling_snap = snaps.iter().find(|s| s.name == sibling.name).unwrap();
+        assert!(!sibling_snap.has_state);
+        assert!(sibling_snap.quota_buckets.is_empty());
+
+        // A second poll fully replaces the first bucket list — Google's
+        // response is authoritative each call, so nothing merges.
+        pool.note_antigravity_usage(
+            provider,
+            &target,
+            vec![QuotaBucketSnapshot {
+                label: "Claude + GPT Models · weekly".to_string(),
+                remaining: Some(0.5),
+                reset_time: None,
+            }],
+        );
+        let snaps = pool.snapshot(provider, std::slice::from_ref(&target), None, None);
+        assert_eq!(snaps[0].quota_buckets.len(), 1);
+        assert_eq!(
+            snaps[0].quota_buckets[0].label,
+            "Claude + GPT Models · weekly"
+        );
+    }
+
+    #[test]
     fn codex_usage_drops_elapsed_resets_before_fresh_utilization() {
         let pool = AccountPool::new();
         let provider = "codex-usage-expired-reset-regression";
@@ -8132,6 +8684,60 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(RETRY_AFTER, HeaderValue::from_static("42"));
         assert_eq!(retry_after(&headers), Some(Duration::from_secs(42)));
+    }
+
+    #[test]
+    fn parses_decimal_retry_after_with_upward_rounding() {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static(" 1.01 "));
+        assert_eq!(retry_after(&headers), Some(Duration::from_secs(2)));
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("0"));
+        assert_eq!(retry_after(&headers), Some(Duration::ZERO));
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("0.0"));
+        assert_eq!(retry_after(&headers), Some(Duration::ZERO));
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("0.5"));
+        assert_eq!(retry_after(&headers), Some(Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn preserves_extreme_retry_after_unclamped_and_saturates() {
+        // Callers bound the value themselves; the parser must hand back the
+        // requested deadline so retry policy can see it exceeds its budget.
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("7200"));
+        assert_eq!(retry_after(&headers), Some(Duration::from_secs(7200)));
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("999999999999"));
+        assert_eq!(
+            retry_after(&headers),
+            Some(Duration::from_secs(999_999_999_999))
+        );
+
+        // Past u64 seconds (with or without a fraction, and past u128 too),
+        // a valid delta saturates rather than being discarded.
+        for value in [
+            "18446744073709551615.5",
+            "18446744073709551616",
+            "1234567890123456789012345678901234567890",
+        ] {
+            headers.insert(RETRY_AFTER, HeaderValue::from_static(value));
+            assert_eq!(
+                retry_after(&headers),
+                Some(Duration::from_secs(u64::MAX)),
+                "{value} must saturate"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_and_overlong_retry_after() {
+        let mut headers = HeaderMap::new();
+        for value in ["1e3", ".5", "1.", "-1", "nan", ""] {
+            headers.insert(RETRY_AFTER, HeaderValue::from_static(value));
+            assert_eq!(retry_after(&headers), None, "{value} must be rejected");
+        }
+        let long = "1".repeat(129);
+        headers.insert(RETRY_AFTER, HeaderValue::from_str(&long).unwrap());
+        assert_eq!(retry_after(&headers), None);
     }
 
     #[test]
@@ -9469,5 +10075,421 @@ mod tests {
             "the stale near candidate is promoted even over a healthy sticky account"
         );
         assert!(reservation.is_some());
+    }
+    #[test]
+    fn paused_account_is_excluded_from_select_order() {
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b")];
+        pool.set_paused("anthropic", &accounts[0], true);
+        for _ in 0..10 {
+            let order = pool.select_order("anthropic", &accounts, None, None, None);
+            assert!(
+                !order.contains(&0),
+                "paused account must not appear in selection"
+            );
+            assert_eq!(order, vec![1]);
+        }
+    }
+
+    #[test]
+    fn paused_account_shows_in_snapshot_as_paused_and_unavailable() {
+        // A pause issued before the account was ever selected must still be
+        // visible on the dashboard, not just enforced in `select_order`.
+        let pool = AccountPool::new();
+        let accounts = vec![account("a")];
+        pool.set_paused("anthropic", &accounts[0], true);
+        let snaps = pool.snapshot("anthropic", &accounts, None, None);
+        assert!(snaps[0].paused);
+        assert!(!snaps[0].available, "a paused account is not available");
+    }
+
+    #[test]
+    fn unpause_restores_selection() {
+        let pool = AccountPool::new();
+        let accounts = vec![account("a")];
+        pool.set_paused("anthropic", &accounts[0], true);
+        assert!(pool.is_paused("anthropic", &accounts[0]));
+        assert!(pool
+            .select_order("anthropic", &accounts, None, None, None)
+            .is_empty());
+
+        pool.set_paused("anthropic", &accounts[0], false);
+        assert!(!pool.is_paused("anthropic", &accounts[0]));
+        assert_eq!(
+            pool.select_order("anthropic", &accounts, None, None, None),
+            vec![0]
+        );
+    }
+
+    #[test]
+    fn paused_sticky_still_ranks_the_remaining_accounts() {
+        // A session-sticky account that is otherwise healthy (no cooldown, not
+        // near quota) used to take the fast path regardless of `paused`: the
+        // paused account itself never appeared (it is filtered out of
+        // `rotation` earlier), but the *other* accounts came back in raw
+        // rotation order instead of properly ranked by headroom.
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b"), account("c"), account("d")];
+        let cfg = PoolConfig::default();
+        let session = "paused-sticky-ranks";
+        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let sticky = rotation[0];
+        let others: Vec<usize> = rotation[1..].to_vec();
+        let now = unix_now();
+        // Same pattern as `all_near_accounts_fall_back_to_headroom_order`:
+        // equal utilization, decreasing reset distance across `others` in
+        // rotation order, so the headroom order is exactly reversed.
+        for (offset, &index) in others.iter().enumerate() {
+            let reset_in = [16_200u64, 9_000, 3_600][offset];
+            pool.note_quota(
+                "anthropic",
+                &accounts[index],
+                &quota_headers(&[
+                    (
+                        "anthropic-ratelimit-unified-5h-utilization",
+                        "0.3".to_string(),
+                    ),
+                    (
+                        "anthropic-ratelimit-unified-5h-reset",
+                        (now + reset_in).to_string(),
+                    ),
+                ]),
+            );
+        }
+
+        // Sanity: while the sticky account is healthy and un-paused, it still
+        // takes the fast path, so `others` stay in raw rotation order.
+        let baseline = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(
+            baseline, rotation,
+            "a healthy sticky account takes the fast path"
+        );
+
+        pool.set_paused("anthropic", &accounts[sticky], true);
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert!(!order.contains(&sticky), "the paused account never appears");
+        let expected: Vec<usize> = others.iter().rev().copied().collect();
+        assert_eq!(
+            order, expected,
+            "pausing the sticky account must not skip ranking the remaining ones by headroom"
+        );
+    }
+
+    #[test]
+    fn effective_sort_by_reset_is_false_without_pool_config_even_if_overridden() {
+        // `[server.pool]` absent means the legacy branch of `select_order_inner`
+        // runs, which never consults `sort_by_reset` at all. Reporting the
+        // runtime override as active in that state (e.g. on `GET
+        // /admin/api/pool`) would claim an effect selection does not have.
+        let pool = AccountPool::new();
+        pool.set_sort_by_reset_override(Some(true));
+        assert!(!pool.effective_sort_by_reset(None));
+        assert!(pool.effective_sort_by_reset(Some(&PoolConfig {
+            sort_by_reset: true,
+            ..Default::default()
+        })));
+    }
+
+    #[test]
+    fn sort_by_reset_ranks_soonest_reset_first() {
+        // Mirrors `available_accounts_order_by_burn_rate_headroom`, but with
+        // `sort_by_reset` on: ordering follows the nearest reset instead of
+        // burn-rate headroom, even though headroom here would rank the
+        // opposite way (the soonest-reset account also has the least margin).
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b"), account("c")];
+        let cfg = PoolConfig {
+            sort_by_reset: true,
+            ..Default::default()
+        };
+        let session = "sort-by-reset";
+        let now = unix_now();
+        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let sticky = rotation[0];
+        // Push the sticky account near quota so the available_under sort runs.
+        pool.note_quota(
+            "anthropic",
+            &accounts[sticky],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.99".to_string(),
+            )]),
+        );
+        let others: Vec<usize> = (0..accounts.len()).filter(|&i| i != sticky).collect();
+        let (soonest, latest) = (others[0], others[1]);
+        pool.note_quota(
+            "anthropic",
+            &accounts[soonest],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 3_600).to_string(),
+                ),
+            ]),
+        );
+        pool.note_quota(
+            "anthropic",
+            &accounts[latest],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 16_200).to_string(),
+                ),
+            ]),
+        );
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(order[0], soonest, "soonest-resetting account sorts first");
+        assert_eq!(order[1], latest, "later-resetting account sorts after");
+        assert_eq!(order.last(), Some(&sticky), "near sticky sorts last");
+    }
+
+    #[test]
+    fn sort_by_reset_ignores_a_stale_fable_reset_on_a_non_fable_request() {
+        // An account that previously served Fable traffic can carry a stale,
+        // near `reset_7d_oi` alongside an unrelated (and later) shared weekly
+        // `reset_7d`. For an ordinary (non-Fable) request, `min_reset` must
+        // track the same governing window `assess_quota` does — shared
+        // weekly, not the Fable-only one — or the leftover Fable reset wins
+        // the sort on a window this request does not consume from.
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b"), account("c")];
+        let cfg = PoolConfig {
+            sort_by_reset: true,
+            ..Default::default()
+        };
+        let session = "sort-by-reset-fable-leak";
+        let now = unix_now();
+        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let sticky = rotation[0];
+        pool.note_quota(
+            "anthropic",
+            &accounts[sticky],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.99".to_string(),
+            )]),
+        );
+        let others: Vec<usize> = (0..accounts.len()).filter(|&i| i != sticky).collect();
+        let (nearer_weekly, leaky_fable) = (others[0], others[1]);
+        pool.note_quota(
+            "anthropic",
+            &accounts[nearer_weekly],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-7d-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-reset",
+                    (now + 3_600).to_string(),
+                ),
+            ]),
+        );
+        // A far shared-weekly reset, but a stale, very-soon Fable-only reset
+        // left over from earlier Fable traffic on this account.
+        pool.note_quota(
+            "anthropic",
+            &accounts[leaky_fable],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-7d-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-reset",
+                    (now + 16_200).to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d_oi-reset",
+                    (now + 100).to_string(),
+                ),
+            ]),
+        );
+        // `None` model: not Fable, so only the shared `7d` reset governs.
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(
+            order[0], nearer_weekly,
+            "the account with the nearer shared-weekly reset sorts first, \
+             regardless of the other account's stale, irrelevant Fable reset"
+        );
+        assert_eq!(order[1], leaky_fable);
+        assert_eq!(order.last(), Some(&sticky));
+    }
+
+    #[test]
+    fn sort_by_reset_pushes_unknown_reset_last() {
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b"), account("c")];
+        let cfg = PoolConfig {
+            sort_by_reset: true,
+            ..Default::default()
+        };
+        let session = "sort-by-reset-unknown";
+        let now = unix_now();
+        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let sticky = rotation[0];
+        pool.note_quota(
+            "anthropic",
+            &accounts[sticky],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.99".to_string(),
+            )]),
+        );
+        let others: Vec<usize> = (0..accounts.len()).filter(|&i| i != sticky).collect();
+        let (known, unknown) = (others[0], others[1]);
+        // `known` gets a reset timestamp; `unknown` stays under quota with no
+        // reset signal at all.
+        pool.note_quota(
+            "anthropic",
+            &accounts[known],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 3_600).to_string(),
+                ),
+            ]),
+        );
+        pool.note_quota(
+            "anthropic",
+            &accounts[unknown],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.3".to_string(),
+            )]),
+        );
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(
+            order[0], known,
+            "the account with a known reset sorts first"
+        );
+        assert_eq!(
+            order[1], unknown,
+            "the account with no reset signal sorts after a known one"
+        );
+        assert_eq!(order.last(), Some(&sticky), "near sticky sorts last");
+    }
+
+    #[test]
+    fn sort_by_reset_runtime_override_wins_over_config_and_is_reversible() {
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b"), account("c")];
+        let cfg = PoolConfig::default(); // sort_by_reset: false in the file.
+        let session = "sort-by-reset-override";
+        let now = unix_now();
+        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let sticky = rotation[0];
+        pool.note_quota(
+            "anthropic",
+            &accounts[sticky],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.99".to_string(),
+            )]),
+        );
+        let others: Vec<usize> = (0..accounts.len()).filter(|&i| i != sticky).collect();
+        let (soonest, latest) = (others[0], others[1]);
+        // Utilizations are deliberately unequal, and chosen so headroom order
+        // disagrees with reset order: `soonest`'s near reset and high
+        // utilization make its projected margin negative, while `latest`'s far
+        // reset and low utilization give it a large positive margin. A
+        // same-utilization fixture (as in the sibling reset-order tests) would
+        // have the two orders agree here and prove nothing about the override.
+        pool.note_quota(
+            "anthropic",
+            &accounts[soonest],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.9".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 3_600).to_string(),
+                ),
+            ]),
+        );
+        pool.note_quota(
+            "anthropic",
+            &accounts[latest],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.05".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 16_200).to_string(),
+                ),
+            ]),
+        );
+
+        // Config says headroom order; that is what an un-overridden pool uses.
+        assert!(!pool.effective_sort_by_reset(Some(&cfg)));
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(
+            order[0], latest,
+            "headroom order: larger margin sorts first"
+        );
+
+        // The runtime override flips it without touching the config file.
+        pool.set_sort_by_reset_override(Some(true));
+        assert!(pool.effective_sort_by_reset(Some(&cfg)));
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(order[0], soonest, "override: soonest reset sorts first");
+
+        // Clearing the override reverts to the config's own value.
+        pool.set_sort_by_reset_override(None);
+        assert!(!pool.effective_sort_by_reset(Some(&cfg)));
+    }
+
+    #[test]
+    fn pause_is_scoped_to_the_provider_for_a_shared_identity() {
+        let pool = AccountPool::new();
+        let mut shared = account("shared");
+        shared.uuid = Some("same-physical-account".to_string());
+        let accounts = vec![shared];
+
+        pool.set_paused("anthropic-primary", &accounts[0], true);
+
+        assert!(pool
+            .select_order("anthropic-primary", &accounts, None, None, None)
+            .is_empty());
+        assert_eq!(
+            pool.select_order("anthropic-backup", &accounts, None, None, None),
+            vec![0],
+            "pausing one provider lane must not pause another lane using the same identity"
+        );
+        assert!(pool.snapshot("anthropic-primary", &accounts, None, None)[0].paused);
+        assert!(!pool.snapshot("anthropic-backup", &accounts, None, None)[0].paused);
+    }
+
+    #[test]
+    fn account_ref_disambiguates_same_name_and_provider() {
+        let mut left = account("same");
+        left.uuid = Some("left-id".to_string());
+        let mut right = account("same");
+        right.uuid = Some("right-id".to_string());
+
+        assert_ne!(
+            account_ref("anthropic", &left),
+            account_ref("anthropic", &right)
+        );
+        assert_ne!(
+            account_ref("anthropic", &left),
+            account_ref("anthropic-alt", &left)
+        );
     }
 }

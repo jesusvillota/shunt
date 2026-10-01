@@ -59,6 +59,7 @@ description: すべての shunt.toml キー — server、providers、routes、mo
 | `tokens_file` | _(未設定)_ | `name:token` ペアを保持するファイルのパス（1 行に 1 つ、またはカンマ区切り）。`tokens_env` が未設定または空のときに使われます。これも **write** ティアです |
 | `session_ttl_secs` | `3600` | ログイン後のブラウザーセッションの寿命（秒） |
 | `pending_ttl_secs` | `600` | 開始したプロビジョニングフローを完了できる時間（秒） |
+| `hide_observed` | `false` | `true` の場合、shunt はホストの CLI/アプリのログインを一切読み取りません。`GET /admin/api/observed` は引き続き管理認証を必要としますが空のリストを返し、ダッシュボードの **Accounts and usage** 表には管理対象のプールアカウントのみが表示されます。設定のホットリロードで適用され、すでに開いているダッシュボードはページを再読み込みすると新しい値に従います |
 
 管理トークンは環境変数からもファイルからも与えられます。指定された環境変数には 1 つ以上の認証情報が必要です。例: `SHUNT_ADMIN_TOKENS="ops:<token>"`。あるいは `tokens_file` にパス（`~` は展開されます）を設定し、そのファイルにペアを置くこともできます — これは `shunt dashboard setup` が `~/.shunt/admin-token` に書き込むファイルそのもので、起動環境に秘密を置かずに済みます。両方が設定されている場合は、空でない `tokens_env` が優先されます。テーブルが存在するのに 3 つの認証情報ソース（`tokens_env`/`tokens_file`、`write_keys`、`read_keys`）が**すべて**未設定・空・不正な場合、起動はフェイルクローズします。`tokens_env` を設定せずキー配列だけを使う構成は正常に起動します。
 
@@ -192,7 +193,7 @@ headers = { "x-api-key" = "..." }
 | `provider` | `codex` | どの route にも `model` が一致しない inbound request を処理する `[providers.<name>]` テーブル名。`auth = "chatgpt_oauth"` を使う必要があります |
 | `routes` | `[]` | オプションのモデル単位ルーティング（下記参照） |
 
-`POST /backend-api/codex/responses`、`POST /responses`、`POST /v1/responses` を登録し、いずれも指定した provider のアカウントプールが処理します。`[server.auth]` があれば、他のサーバー側 credential ルートと同様に有効なクライアントトークンを要求します。`[server.auth]` がなければ、オペレーターの Codex credential を注入しつつ到達可能な誰にでも**開放**された状態になるため、loopback 以外の環境では必ず保護してください。`/v1/messages` と異なり、request は Anthropic Messages へ変換したりその逆を行ったりせず、アップストリームへそのまま relay されます。
+`/backend-api/codex/responses`、`/responses`、`/v1/responses` のそれぞれに `POST` と `GET`（WebSocket アップグレード）を登録し、いずれも指定した provider のアカウントプールが処理します。`[server.auth]` があれば、他のサーバー側 credential ルートと同様に有効なクライアントトークンを要求します。`[server.auth]` がなければ、オペレーターの Codex credential を注入しつつ到達可能な誰にでも**開放**された状態になるため、loopback 以外の環境では必ず保護してください。`/v1/messages` と異なり、request は Anthropic Messages へ変換したりその逆を行ったりせず、アップストリームへそのまま relay されます。
 
 ### `[[server.codex_endpoint.routes]]`（オプション）
 
@@ -204,7 +205,7 @@ headers = { "x-api-key" = "..." }
 | `provider` | *(必須)* | このモデルを提供する provider。`kind = "responses"` でなければならず、credential を持たない auth モード（`passthrough` または `none`）は使えません |
 | `upstream_model` | `model` | アップストリームへ送るモデル id。`model` と異なる場合、shunt は本文トップレベルの `model` だけを書き換え、他のフィールドはそのまま残します |
 
-未知の provider、`responses` 以外の provider、credential を持たない auth モード（`passthrough` または `none`）の provider へ向かう route は検証で拒否され、重複した `model` や空のフィールドも拒否されます。route はライブの設定スナップショットから読み込まれるため、追加・編集・削除は**リロード**時に反映されます。再起動が必要なのは `[server.codex_endpoint]` テーブル自体を有効化・無効化するときだけです。ChatGPT 以外の provider へルーティングされた request は、新しく組み立てたヘッダー許可リスト（`content-type`、`accept`、flavor ゲートを通過した `OpenAI-Beta`、そして `xai_oauth` route の場合は Grok CLI の identity ヘッダー）と identity エンコードの本文、credential 1 つだけを使い、プールもフェイルオーバーもありません。
+未知の provider、`responses` 以外の provider、credential を持たない auth モード（`passthrough` または `none`）の provider へ向かう route は検証で拒否され、重複した `model` や空のフィールドも拒否されます。route はライブの設定スナップショットから読み込まれるため、追加・編集・削除は**リロード**時に反映されます。再起動が必要なのは `[server.codex_endpoint]` テーブル自体を有効化・無効化するときだけです。ChatGPT 以外の provider へルーティングされた request は、新しいヘッダー許可リストから始まります。クライアントから引き継ぐのは `content-type`（なければ `application/json`）と `accept` だけで、shunt が解決された credential、flavor ゲートを通過した `OpenAI-Beta`、`xai_oauth` route の Grok CLI identity ヘッダー一式、そして host が正確に `api.openai.com` で、空でない conversation id が解決された `api_key` route に新しく生成した `session-id`、`thread-id`、`x-client-request-id`、`x-codex-window-id` を加えます。呼び出し元が送った credential、Codex identity、session、`x-codex-*` ヘッダーは引き続き削除されます。xAI とその他のサードパーティ OpenAI 互換 host にはアフィニティヘッダーを追加せず、API キーパスは `accept: text/event-stream` も生成しません。request は identity エンコードの本文と credential 1 つだけを使い、プールもフェイルオーバーもありません。
 同じオプトインで `GET /models` と `GET /backend-api/codex/models` も登録され、通常のモデル検出認証ゲートの後に有効な Codex フォールバック `{"models":[]}` を返します。共有の `GET /v1/models` でも、`client_version` クエリがある場合は Anthropic 風のヘッダーより優先して Codex の空形式を選択します。`client_version` がなければ、既存の Anthropic 検出レスポンスは変わりません。shunt は不完全な Codex `ModelInfo` 行を生成しません。
 
 ## `[server.usage]`（オプション）
@@ -231,14 +232,15 @@ headers = { "x-api-key" = "..." }
 | `default_threshold_7d` | 未設定 | 共有の週次（`7d`）ウィンドウのソフトなデフォルト |
 | `default_threshold_fable` | 未設定 | fable 専用の週次（`7d_oi`）ウィンドウのソフトなデフォルト |
 | `burn_rate_avoidance` | `false` | ウィンドウのリセット前にソフトしきい値を使い切ると予測されるアカウントも回避する |
-| `usage_refresh_seconds` | 無効（`0`/未設定） | Claude `GET /api/oauth/usage` と Codex `GET /wham/usage` のポーリング間隔（秒）。60 未満の正の値は 60 秒の下限に切り上げられます |
+| `sort_by_reset` | `false` | バーンレートのヘッドルームではなく、利用可能なアカウントをクォータのリセットが最も早い順(昇順、不明なリセットは最後)に並べ替える。`shunt.toml` を編集せずに、管理ダッシュボードまたは `PATCH /admin/api/pool` でランタイムに切り替え可能 — [プールアカウント制御](/ja/guides/pool-account-controls/)を参照 |
+| `usage_refresh_seconds` | 無効（`0`/未設定） | Claude `GET /api/oauth/usage`、Codex `GET /wham/usage`、Antigravity `POST :retrieveUserQuotaSummary` のポーリング間隔（秒）。60 未満の正の値は 60 秒の下限に切り上げられます |
 | `state_path` | 未設定 | プールのアカウント単位のクォータ状態を保存するファイル。再起動時に空のプールではなく、最後に観測された使用率からウォームスタートします。未設定で永続化は無効（デフォルト） |
 | `ramp_initial_concurrency` | 無効（`0`/未設定） | ストーム制御: トラフィックを受け始めたばかりのアカウントアイデンティティに対する初期の並行受け入れ許容量。`0` または未設定で受け入れゲーティングは無効 |
 | `reprobe_seconds` | このテーブルが存在すれば `900`。`0` で無効 | 陳腐化した近接クォータの Codex/ChatGPT アカウントに対する日和見的な再プローブ間隔（秒）。60 未満の正の値は 60 秒の下限に切り上げられます。`0` で再プローブは無効。`[server.pool]` 自体が存在しない場合、この値に関係なく再プローブは無効（issue #135 以前の挙動）。WebSocket を使わない outbound Responses 選択とオプションの inbound Codex HTTP エンドポイントは再プローブを維持し、WebSocket 有効時の outbound 選択では無効 |
 
-各ウィンドウ `X` について、有効なソフトしきい値は次の順で解決されます: アカウントの `threshold_X` → アカウントの `threshold` → `default_threshold_X` → `default_threshold` → `hard_threshold`。これは `hard_threshold` を上限としてクランプされます。すべてのしきい値は `[0.0, 1.0]` の使用率の割合であり、範囲外の値は起動時にエラーになります。しきい値とバーンレートのノブは両方のプールファミリーを制御します: Anthropic プールは `anthropic-ratelimit-unified-*` ヘッダーから、Codex/ChatGPT プールは `x-codex-*` の 5 時間／週次ウィンドウから制御されます（Codex には Fable スコープの `7d_oi` ウィンドウがないため、そこでは `default_threshold_fable` は無効です）。`usage_refresh_seconds` は `claude_oauth` アカウントだけでなく、非公式の `wham/usage` エンドポイント経由で Codex/ChatGPT バックエンドの `chatgpt_oauth` アカウントもポーリングします。
+各ウィンドウ `X` について、有効なソフトしきい値は次の順で解決されます: アカウントの `threshold_X` → アカウントの `threshold` → `default_threshold_X` → `default_threshold` → `hard_threshold`。これは `hard_threshold` を上限としてクランプされます。すべてのしきい値は `[0.0, 1.0]` の使用率の割合であり、範囲外の値は起動時にエラーになります。しきい値とバーンレートのノブが選択に影響するのは Anthropic と Codex/ChatGPT の 2 ファミリーです。Anthropic は `anthropic-ratelimit-unified-*` ヘッダー、Codex/ChatGPT は `x-codex-*` の 5 時間／週次ウィンドウを使います（Codex には Fable 用の `7d_oi` はありません）。`usage_refresh_seconds` は imported の `antigravity_oauth` アカウントも Code Assist の `retrieveUserQuotaSummary` RPC でポーリングします。Antigravity の summary は **Gemini Models** と **Claude + GPT Models** の 2 つの共有クォータプールを返し、プランで提供される場合は各プールに 5 時間と週次のウィンドウがあります。これらはダッシュボード表示専用で、プール選択には使われません。
 
-正の `usage_refresh_seconds` は追加でバックグラウンドポーラーを起動し、各ファミリーの usage API と突き合わせてアカウントプールのクォータ状態を補正します: `claude_oauth` アカウントは公式の Anthropic OAuth usage API と、Codex/ChatGPT バックエンドの `chatgpt_oauth` アカウントは非公式の `wham/usage` エンドポイントと突き合わせます。未設定または `0` で無効（デフォルト）です。ポーリングされるのはどちらのファミリーも imported（更新可能）なアカウントのみで、長期の `claude setup-token` や、どちらのファミリーであれ `token_env` アカウントは、usage エンドポイントが更新不可トークンを拒否するためスキップされます。Claude のポーラーは報告されたウィンドウの使用率、ウィンドウ固有のリセット時刻、使用率の観測時刻を更新します。ウィンドウ別および集約 status の鮮度と、status の観測時にキャプチャしたリセット境界だけがヘッダー由来のままで、shunt の外での同一アカウントの消費まで含む権威ある使用量と突き合わせても status の寿命は延長しません。Codex のポーラーは使用率と使用率の観測時刻を更新し、リセットメタデータはレスポンス由来（`x-codex-*` ヘッダーと WebSocket の `codex.rate_limits` イベント）、status メタデータはヘッダー由来のままです。報告されたウィンドウでは、未来の保存済みリセットを保持し、経過した保存済みリセットだけを新しい使用率を書き込む前にクリアします。wham の `reset_at` は実際のリセットメタデータとして採用しません。非公開スキーマは lenient かつ fail-soft に解析され、間隔は起動時に固定され、設定のリロードではポーラーの起動・停止・再調整は行われません。
+正の `usage_refresh_seconds` は、Claude の公式 usage API、Codex/ChatGPT の非公式 `wham/usage`、Antigravity の非公開 `retrieveUserQuotaSummary` RPC を対象にバックグラウンドポーラーを起動します。未設定または `0` で無効（デフォルト）です。ポーリングするのは imported（更新可能）なアカウントだけで、長期の `claude setup-token` と `token_env` 資格情報はスキップします。Claude では報告された各ウィンドウの使用率・リセット時刻・使用率観測時刻を補正し、status の鮮度はヘッダー由来のままです。Codex では使用率とその観測時刻を補正し、リセットメタデータは応答由来、status はヘッダー由来のままです。保存済みの未来のリセットは保持し、経過したものだけを新しい使用率の書き込み前に消去します。wham の `reset_at` は実際のリセットメタデータとして採用しません。Antigravity では本番ホスト表記を既存の daily-host resolver で正規化し、Gemini / Claude+GPT の grouped windows をダッシュボード用フィールドにだけ保存します。generic な選択用 quota state には反映しません。非公開 schema は fail-soft に扱い、間隔は起動時に固定され、設定リロードでは開始・停止・再調整しません。
 
 `state_path` はプールのクォータ状態（すべてのプロバイダーのアカウントについて、ウィンドウごとの使用率と各ウィンドウ固有のリセット時刻、使用率と status の独立した観測時刻およびキャプチャ済み status のリセット境界）をディスクに保存します。設定しない場合、再起動は空のプールから始まり、各アカウントは再起動後の最初のレスポンスまで未観測に見えるため、burn-rate 回避が無効になり、トラフィックでプールが再充填されるまで `GET /usage` は空を返します。このファイルは権威あるソースではなくベストエフォートのキャッシュです — クォータはいずれにせよアップストリームのレスポンスから再導出されるため、ファイルが欠落・陳腐化・破損していてもコールドスタートになるだけで、起動失敗にはなりません。書き込みは非公開の temp ファイル（Unix では `0600`）を対象にアトミックにリネームする方式で、クォータが変化したときだけバックグラウンドタイマーで行われます。書き込みに失敗した場合は次の tick で再試行します。クールダウンは保存されず（再起動で失効）、復元されたウィンドウのうちすでにリセットを過ぎたものは、復元時の import 中に最初の選択または snapshot より前に破棄されます。使用率は自身の観測時刻による上限と、そのウィンドウのリセットの早い方で失効し、上限だけが過ぎた場合はそのウィンドウの未来のリセットが残ります。status は自身の観測時刻による上限と観測時にキャプチャした status リセット境界の早い方で失効し、キャプチャした境界も status とともに消去されます。バージョン2のファイルは明示的な移行経路でバージョン3に書き直され、バージョン3のリセットなし status はリセットのみの更新後もリセットなしのままです。パスは起動時に固定され、設定のリロードでは永続化の開始・停止・パス変更は行われません。
 
@@ -316,7 +318,7 @@ codex-fallback = "gpt-5.2"
 
 origin に関係なく、保持された各スロットはそのスロットが実際に保持している値でもチェックされます。`authorization` と `x-api-key` は、そのスロット自身の値が shunt 自身が発行した JWT と**形が一致する**場合 — 3 セグメント構造で、ペイロードの `aud` クレームが `"shunt"` であるか、`iss` クレームがこのゲートウェイのアイデンティティと一致するか、`shunt_token_use` クレームが `"gateway-session"`（shunt だけが発行する専用マーカー）である場合 — または設定済みの `[server.auth]` クライアントトークンと一致する場合にのみクリアされます。この JWT チェックは意図的に「今このトークンが認証されるか」ではなく「形が一致するか」で判定します: 期限切れのトークン、別の `public_url` を持つ兄弟インスタンスが発行したトークン、`jwt_secret` のローテーション後に検証できなくなったトークンも、依然として shunt 自身の認証情報であるため引き続きクリアされます。このマーカーは形状チェックに追加された分岐であり、必須条件ではありません: マーカー導入前に発行されたトークンも `aud`/`iss` で引き続き一致し、`verify` 自体もマーカーを要求しないため、古いバージョンの shunt が発行したトークンは TTL 内であれば引き続き認証されます。`apiKeyHelper` は両方のスロットを同じ値で埋めるため、どちらの認証情報も一方または両方のスロットに入り得ます。もう一方のスロットがゲートウェイ JWT や静的なクライアントトークンを保持していても、本物のアップストリーム認証情報を保持しているスロットはそのまま転送されます。クリアされるのはゲート用認証情報を保持しているスロットだけです。`[server.auth] header` には `authorization` 自体を含め任意のヘッダー名を指定でき、そう設定した場合クライアントはプレフィックスなしの `Authorization: <token>` で認証します。そのためこのスロットは `Bearer` ペイロードだけでなく値全体としてもチェックされ、そうしたトークンがアップストリームへ転送されることはありません。 この設定には注意点があります: 推論リクエストでは shunt がルーティング前に設定されたヘッダーを無条件に除去するため、そのスロットは上流へ何も運びません — ゲートトークンだけでなく、呼び出し元自身の認証情報も落ちます。`header` を既定の専用 `x-shunt-token` のままにすればこの衝突を避けられます。
 
-プロキシされた成功レスポンスと最終失敗には、`x-gateway-upstream`（選択したアップストリーム名）、`x-gateway-model`（クライアントが要求した id）、`x-gateway-upstream-model`（マッピング後のバックエンド id）が必ず含まれます — コミット済みストリーミングチェーン経路は例外で、レスポンスには `content-type` と `x-gateway-model`、そしてルーターがルーティングしたリクエスト、またはオーバーレイが振り向けたリクエストなら後述のルーターの 2 つのヘッダーが載り、勝者に依存する `x-gateway-upstream` と `x-gateway-upstream-model` は省略され、アップストリームのレスポンスヘッダーはクライアントに届きません。[`[models.router]`](#modelsrouterオプション) エントリがルーティングしたレスポンスには、さらに `x-gateway-routed-model`（ルーターが選んだターゲット）と `x-gateway-route-source`（それを選んだ理由）が付きます。[ステージルーター](/ja/guides/stage-router/)だけでなくすべてのルーター `type` に付きます。[`[models.subagents]`](#modelssubagentsオプション) オーバーレイが振り向けた委譲ターンにも同じ 2 つが付き、その `x-gateway-route-source` は `subagent_type` または `subagent` です。両方とも付かないのは、ルーターもオーバーレイもそのターンを決定しなかった場合だけです。`count_tokens` はチェーンの最初の要素だけを使い、フェイルオーバーせず、この 2 つのヘッダーも付けません。`[server.codex_endpoint]` は `[[server.codex_endpoint.routes]]` のエントリがないモデルについては設定された単一アップストリームに固定され、いずれにせよこのチェーンには参加しません。
+プロキシされた成功レスポンスと最終失敗には、`x-gateway-upstream`（選択したアップストリーム名）、`x-gateway-model`（クライアントが要求した id）、`x-gateway-upstream-model`（マッピング後のバックエンド id）が必ず含まれます — コミット済みストリーミングチェーン経路は例外で、レスポンスには `content-type` と `x-gateway-model`、そしてルーターがルーティングしたリクエスト、またはオーバーレイが振り向けたリクエストなら後述のルーターの 2 つのヘッダーが載り、勝者に依存する `x-gateway-upstream` と `x-gateway-upstream-model` は省略され、アップストリームのレスポンスヘッダーはクライアントに届きません。[`[models.router]`](#modelsrouterオプション) エントリがルーティングしたレスポンスには、さらに `x-gateway-routed-model`（ルーターが選んだターゲット）と `x-gateway-route-source`（それを選んだ理由）が付きます。[ステージルーター](/ja/guides/stage-router/)だけでなくすべてのルーター `type` に付きます。[`[models.subagents]`](#modelssubagentsオプション) オーバーレイが振り向けた委譲ターンにも同じ 2 つが付き、その `x-gateway-route-source` は `subagent_type` または `subagent`、`llm_classifier` 形式では [classifier 自身のソース](/ja/guides/llm-classifier/#クライアントから見えるもの)です。両方とも付かないのは、ルーターもオーバーレイもそのターンを決定しなかった場合だけです。`count_tokens` はチェーンの最初の要素だけを使い、フェイルオーバーせず、この 2 つのヘッダーも付けません。`[server.codex_endpoint]` は `[[server.codex_endpoint.routes]]` のエントリがないモデルについては設定された単一アップストリームに固定され、いずれにせよこのチェーンには参加しません。
 
 ### 既存設定の移行
 
@@ -347,6 +349,27 @@ origin に関係なく、保持された各スロットはそのスロットが�
 | `tool_search` | 未設定（「auto」、デフォルト） \| `true` \| `false` | gpt-5.4+ モデルかつフレーバーが xAI/Grok でない場合に、Claude Code のツール検索へネイティブなクライアント実行 `tool_search` プロトコルを使う。未設定時は、すでに動作確認済みのホスト — ChatGPT/Codex バックエンドと `api.openai.com` — でのみネイティブがデフォルトになり、LiteLLM・vLLM・OpenRouter・自前ホストのプロキシなど他のすべての OpenAI 互換エンドポイントはテキストベースのシムのまま。検証済みのカスタムエンドポイントをネイティブへオプトインするには `true`、常にシムを強制するには `false` を設定する。[Codex → ツール検索](/ja/guides/codex/#ネイティブプロトコル) を参照。 |
 
 名前だけのエントリーは、`shunt login claude --name <name> --mode oauth|import|setup-token` で作成した `~/.shunt/accounts/claude/<name>.json` を読み取ります。対話型 CLI はこの 3 つの mode を提示し、リフレッシュ可能な OAuth を推奨します。`--long-lived` は `--mode setup-token` の deprecated alias です。`SHUNT_CLAUDE_ACCOUNTS_DIR` でストアディレクトリを上書きできます。リフレッシュ可能な OAuth/import ファイルは provider が refresh token をローテーションすると同じ場所に更新されるため、ファイルごとに稼働中の owner は 1 つだけにしてください。複数の shunt プロセスで共有したり、独立してコピーしたりしないでください。プロセスごとに個別にプロビジョニングするか、適切な場合は静的な setup token を使ってください。
+
+### `[providers.<name>.retry]`
+
+サポートされる単一クレデンシャル呼び出しにおける**一時的な**上流障害に対する有界のリトライです。対象は `passthrough`/`api_key` の Anthropic パスと、単一クレデンシャルの Responses パス（`api_key`、`xai_oauth`/Grok、プールされたアカウントを持たない `chatgpt_oauth` provider）です。接続レベルのトランスポートエラー（接続の reset/refused、タイムアウト）が起きると、リクエストを再送します（クライアントにレスポンスのバイトが 1 つも届かないうちに、リクエストボディ全体で）。これらは冪等でない生成 POST であり、上流がすでに課金対象の生成を受け付けている可能性があるため、一時的なレスポンスステータスはリトライしません。現在の Cursor アダプターのストリーミングターンはこのリトライ層で包まれていないため、正規化された `retry` テーブルは効果を持たず、レスポンス前の接続障害はそのまま表面化します。サポートされるどのパスも `4xx` レスポンスをリトライせず、レスポンスボディのストリーミングが始まった後にリトライが始まることはありません。
+
+バックオフはランダム化（full）ジッター付きの指数方式で、`max_backoff_ms` が上限です。サーバーが返す `Retry-After` が優先されます（delta-seconds 形式と HTTP-date 形式の両方に従います）。小数の delta-seconds も受け付けて次の整数秒に切り上げ、形式が不正な値や長すぎる値は無視します。`max_backoff_ms` より長い待機を求められた場合は、予算を超えて待機せず、レスポンスを即座に表面化します。この設定にかかわらず、**`count_tokens` にはリトライを適用しません**。`claude_oauth` / `chatgpt_oauth` / `kimi_oauth` のアカウントプールは独自のアカウントローテーションによるフェイルオーバーを行い、このテーブルの影響を受けません。
+
+```toml
+[providers.openai.retry]
+max_retries = 2          # デフォルト。0 でリトライを完全に無効化
+initial_backoff_ms = 500 # デフォルト
+max_backoff_ms = 8000    # デフォルト。従う Retry-After の上限も兼ねる
+multiplier = 2.0         # デフォルト。指数成長係数（>= 1.0）
+```
+
+| キー | 値 | 意味 |
+| :-- | :-- | :-- |
+| `max_retries` | 整数（デフォルト `2`、最大 `10`） | 最初の試行後の追加試行回数。`0` でリトライを無効化します。 |
+| `initial_backoff_ms` | ミリ秒（デフォルト `500`、`max_retries > 0` のときは `> 0` が必須） | 最初のリトライ前のバックオフ上限（ジッターが `[0, この値]` の範囲で適用される）。試行ごとに `multiplier` 倍に増えます。 |
+| `max_backoff_ms` | ミリ秒（デフォルト `8000`、`max_retries > 0` のときは `> 0` が必須） | 個々のバックオフと、従う `Retry-After` の上限。 |
+| `multiplier` | 1.0 以上の有限数（デフォルト `2.0`） | 試行ごとにバックオフへ適用する指数成長係数。 |
 
 ## `[[routes]]`
 
@@ -399,8 +422,10 @@ codex = "gpt-5.2"
 
 広告する id ひとつに対するリクエスト単位のルーティングです。宛先をひとつ指定する代わりに
 `[models.router]` テーブルを置き、その `type` キーがルーティングアルゴリズムを選び、
-アルゴリズムが宛先を選びます。このテーブルがなければ `[[models]]` エントリは従来どおりに
-動作し、どこにもルーターを設定しなければルーティングは変わりません。
+アルゴリズムが宛先を選びます。このテーブルと
+[`[models.subagents]`](#modelssubagentsオプション) オーバーレイがなければ、`[[models]]`
+エントリは従来どおりに動作します。type の選び方は[ルーティングの概要](/ja/guides/routing/)を
+参照してください。
 
 shunt が通常使う `kind` や `mode` ではなく `type` を使うのは、**shunt 自身の命名規約に対する
 意図的な例外**であり、リファレンスでそう明記するのはこの 1 か所だけです。ルーティング
@@ -408,10 +433,8 @@ shunt が通常使う `kind` や `mode` ではなく `type` を使うのは、**
 で、キー名をそのままにしておけば、上流のスキーマ文書と `type` の値を訳し直さずにそのまま
 持ち込めます。
 
-どのルーターが指定するターゲットも通常の公開モデル id なので、それぞれが通常のラダーで
-解決され、フェイルオーバーチェーン、アカウントプール、アダプター、`effort`、
-`service_tier` をそのまま保ちます。クライアントに返される id は要求された id のままで、
-選ばれたターゲットはアップストリームにのみ伝わります。
+どのルーターが指定するターゲットも通常の公開モデル id で、通常のラダーで 1 ホップで
+解決されます。クライアントに返される id は要求された id のままです。
 
 | `type` | 選び方 | リクエストボディを読むか |
 | :-- | :-- | :-- |
@@ -420,15 +443,16 @@ shunt が通常使う `kind` や `mode` ではなく `type` を使うのは、**
 | `random` | 重み付き抽選、既定ではセッション固定 | 読まない |
 | `noop` | 選ばない — 空のメッセージを返す | 読まない |
 | `prefill_router` | 直近のユーザーターンを読む学習済み分類器（`prefill-router` ビルドが必要） | 読む — ユーザーターンのテキスト |
-| `llm_classifier` | LLM ジャッジの判定。いつ尋ねるかは `classify_trigger` が決めます | 読む — パッケージのプロンプト、または自分で書いたプロンプトでトランスクリプトを読みます |
+| `llm_classifier` | LLM ジャッジの判定。いつ尋ねるかは `classify_trigger` が決めます。`mode = "escalation"` では、完成した効率側のターンに対するジャッジの判断 | 読む — パッケージのプロンプト、または自分で書いたプロンプトでトランスクリプトを読みます |
 | `composite` | LLM ジャッジがステージルーターの fall-open ティアを決めます | 読む — ジャッジはトランスクリプトを、シグナルは tool-result メタデータを |
+| `advisor` | 1 つの実行モデルがすべてのターンを提供し、より強力なレビュアーがその締めくくりのターンを承認するか差し戻します | 読む — レビュアーのためにトランスクリプトを |
 
-**まだ利用できない**形はふたつで、指定すると起動エラーになります。`type = "advisor"` と、
-`llm_classifier` の `mode = "escalation"` です。どちらもルーティングを決めている最中に
-ターンを提供するため、バッファして再生するレーンが必要で、それは後続のリリースで追加され
-ます。`prefill_router` は実装済みですが**コンパイル時にゲート**されており、既定で無効な
-`prefill-router` カーゴフィーチャーを有効にしてビルドしたバイナリでのみ利用できます —
-[後述](#type--prefill_router)。
+`llm_classifier` の [`mode = "escalation"`](#mode--escalation) と
+[`type = "advisor"`](#type--advisor) は判定が出るまでターンを留め置くため、クライアントが
+ストリーミングを求めた応答を shunt がバッファリングする唯一のルートです —
+[留め置くターン](#留め置くターン-escalation-と-advisor)を参照してください。`prefill_router` は、
+既定で無効な `prefill-router` カーゴフィーチャーを有効にしてビルドしたバイナリでのみ利用
+できます — [後述](#type--prefill_router)。
 
 同じエントリに `[models.router]` と `[models.upstream_model]` を併記することはできません。
 
@@ -508,16 +532,9 @@ only_on_wrong_signal_escalation = true
 | `only_on_wrong_signal_escalation` | `true` | `escalation_note` をシグナル主導の上昇（ルートソース `override` と `dimensions`）に限定します。`false` にするとスコアラーによるすべての上昇で追加します |
 
 ノートは `system` 配列の**末尾**に新しいブロックとして入ります。Claude Code の attribution
-ブロックは先頭の要素で、触れません。固定のまま続いたターン、シグナルのないターン、
-`count_tokens` プローブにはノートが付きません。引き継ぎが起きていないターン —
-セッションの最初のターンと、すでに固定されているティアを確認しただけのターン —
-も同じです。空のノートは起動エラーです。
-
-**切り替えのたびにプロンプトキャッシュミスを 1 回払います。** `system` 配列はキャッシュ
-されたプレフィックスの一部なので、ノートを足しても外してもプレフィックスは無効になります。
-ティアの切り替え自体がすでに手放すモデル別プレフィックスに上乗せされるコストです。この
-テーブルがオプトインである理由であり、`only_on_wrong_signal_escalation` の既定値が狭い側で
-ある理由でもあります。
+ブロックには触れません。空のノートは起動エラーです。どのターンにノートが付くか、そして
+切り替えのたびにプロンプトキャッシュミスを払う理由は、
+[ステージルーターガイド](/ja/guides/stage-router/#引き継ぐモデルに理由を伝える)にあります。
 
 #### `[models.router.classifier]`（オプション）
 
@@ -539,36 +556,18 @@ base_threshold = 0.5
 | `base_threshold` | `0.5` | サポート対象のタスクを効率ティアに留める `p_solve` の下限。`(0.0, 1.0]` |
 | `classify_trigger` | `every_request` | ジャッジを呼びうるタイミング。`every_request` は決着しなかったどのターンでも呼びます（ツールの継続ターンを含む）。`user_turn` は直近のメッセージが人間のユーザーターンのとき — `role: user` で、`tool_result` ではないブロックを少なくとも 1 つ持つとき — だけ呼びます。そのためツールの継続ターンは新たなジャッジ呼び出しを払わず、セッションのピンに乗ります。`new_session` はここでは `every_request` とまったく同じ挙動で、これは上流も同じことを述べています — このルーターは決定をすでに shunt 自身のセッションピンに保持しているからです |
 
-ジャッジのターゲットも通常の公開モデル id で、ティアのターゲットと同じ 1 ホップ規則に従い
-ます。さらに条件がひとつ加わります。**passthrough** ルートに解決されてはいけません。
-`auth = "passthrough"` は*呼び出し元の資格情報をそのまま転送する*という意味ですが、
-ジャッジ呼び出しが取り除くのはまさにその呼び出し元の資格情報です。そのためそうした
-ターゲットは何も持たずに到達し、起動エラーになります。それ以外の auth モードはすべて
-受け付けられ、`auth = "none"` も含まれます。このモードはそのエンドポイントが資格情報を
-まったく必要としないという意味なので、認証なしで動くローカル・セルフホストのジャッジは
-エラーではなくサポートされた構成です。呼び出し元の資格情報スロットはひとつも同行しません — 予約済みの
-`x-shunt-*` スロットと `cookie`、`authorization`、`x-api-key`、`anthropic-beta` はすべて
-取り除かれます。呼び出しはそのターゲット自身のアカウントプールのクォータを消費します。
-ジャッジには専用の `[[models]]` エントリを与えるべきなのはこのためです。
-
-ジャッジが決めたターンはルートソース `llm-classifier` として報告され、他の決定と同じように
-セッションをピン留めします。ジャッジの失敗は種類を問わず — タイムアウト、応答サイズ超過、
-アップストリームエラー、解釈できない判定、予算切れ — picker の既定値である `fall_open` に
-解決されます。`count_tokens` プローブでジャッジを呼ぶことはなく、リクエストが認証と
-ポリシー検査を通る前に呼ぶこともありません。ジャッジを呼ぶターンでは、インバウンド認証は
-要求された id に加えてそのエントリが指定しうるすべてのターゲットとジャッジを、それぞれの
-フェイルオーバーチェーン全体まで含めて対象にします。そのため passthrough の応答ターゲット
-に資格情報を注入するジャッジが付くとクライアントの資格情報が必要になり、認証に失敗した
-リクエストやポリシーが拒否したリクエストはジャッジ呼び出しを 1 回も行いません。ジャッジを
-呼ばないターンは、実際に解決されたチェーンだけで認証されます — シグナルが自力で決めた
-ターンと、[`[models.subagents]`](#modelssubagentsオプション) オーバーレイがルーターより
-先に振り向けたターンです。
+ジャッジのターゲットはティアのターゲットと同じ 1 ホップ規則に従い、**passthrough** ルートに
+解決されてはいけません — ジャッジ呼び出しからは呼び出し元の資格情報が取り除かれるので、
+そうしたターゲットは起動エラーです。`auth = "none"` は受け付けられます。ジャッジが決めた
+ターンはルートソース `llm-classifier` として報告され、ジャッジの失敗は種類を問わず
+`fall_open` に解決されます。ジャッジの資格情報、アドミッション、失敗がどう働くかは
+[ステージルーターガイド](/ja/guides/stage-router/#ジャッジのフォールバック)にあります。
 
 #### 呼び出しごとの上限
 
 6 つのキーが、エントリが行うすべての内部呼び出しに上限を課します。これらはその呼び出しを
 行うテーブルに置きます — `classifier` を持つ `stage_router`、`llm_classifier`、
-`composite` といった driven タイプの `[models.router]` と、classifier 形式の
+`composite`、`advisor` といった driven タイプの `[models.router]` と、classifier 形式の
 [`[models.subagents]`](#modelssubagentsオプション) オーバーレイ（自分の分を別に持ちます）
 です。上限を超えるとアップストリーム呼び出しはキャンセルされます。各値は最低でも `1` で、
 `0` はそのキーを示す起動エラーです。
@@ -577,26 +576,39 @@ base_threshold = 0.5
 | :-- | :-- | :-- |
 | `judge_timeout_ms` | `30000` | ストリーミングしないジャッジ呼び出しのエンドツーエンド期限。ヘッダー*と*ボディの両方を覆うので、`200` を返したあと止まった応答もここで打ち切られます |
 | `judge_max_response_bytes` | `65536` | 収集するジャッジ応答の最大サイズ。これを超えると `fall_open` に解決されます |
-| `gated_max_bytes` | `8388608` | 保持するターンの最大サイズ |
-| `gated_idle_ms` | `60000` | 保持するターンで完成したコンテンツフレーム間に許される最大間隔。SSE の ping フレームではリセットされず、チャンク境界で分割されたフレームは分類前に再結合されます |
-| `gated_max_duration_ms` | `600000` | 保持するターンの実時間上限 |
-| `max_judge_calls` | `8` | 1 セッションが行えるジャッジ呼び出し数 |
+| `gated_max_bytes` | `8388608` | 保持するターンの最大サイズ。SSE フレームのバイト数、または JSON ボディ |
+| `gated_idle_ms` | `60000` | 保持するターンで完成したコンテンツフレーム間に許される最大間隔。SSE のキープアライブ(`event: ping` フレームと `:` コメントフレーム)ではリセットされず、チャンク境界で分割されたフレームは分類前に再結合されます |
+| `gated_max_duration_ms` | `600000` | 保持するターンの実時間上限。ヘッダーとボディの両方を覆います |
+| `max_judge_calls` | `8` | 1 セッションが行えるジャッジ呼び出し数。呼び出しを送る時点で数え、払い戻しはしません。委譲されたエージェント id ごとに専用の予算があり、エージェント id のない委譲ターンはセッションごとに別の予算を 1 つ共有します。ジャッジ呼び出しをしないターンが拒否されることはありません。留め置くターンそのものはジャッジ呼び出しではないので数えません |
 
-`gated_*` の 3 つのキーは値を受け付け、検証され、保持コレクターが実際に適用しますが、
-**保持されるターンはまだ存在しません** — これらのキーが備えるバッファリングされた昇格
-ターンと advisor ターンは後続のリリースで追加されます。それまでこの 3 つがランタイムで
-課す上限はありません。
+`gated_*` の 3 つのキーは、[`escalation`](#mode--escalation) や [`advisor`](#type--advisor)
+のエントリで**留め置かれる**ターン、つまり判定が出るまで shunt が手元に留めるターンに上限を
+課します。それ以外のエントリには留め置くターンがないので、これらのキーが課す上限もありません。
+
+バイト上限とアイドル上限は、アダプターが非ストリーミングの応答を自分で組み立てる箇所、つまり
+shunt が応答を収集する前にも適用されます。バイト上限が数えるものは、そのアダプターが受け取る
+ものに従います。Anthropic、Gemini、HTTP 経由の Responses は届いたボディそのもの、Codex
+WebSocket はイベントごとのタイプとペイロードの compact JSON、Antigravity は行終端を含む CLI
+の stdout、Cursor は保持するテキストとツール呼び出しのフィールドです。アイドル間隔は
+WebSocket のイベント間(最初のイベントを待つ間を含む)と、内容を含む Antigravity の出力行の
+間で計ります。ツールステップだけではリセットされません。OpenAI Responses の宛先では、
+リクエストを送った時点から間隔を計ります。そのため、応答ヘッダーや、WebSocket のハンドシェイク(プール済み接続なら生存確認)と最初のイベントを
+待つ時間も間隔に含まれます。shunt がローカルでトークンを数える時間(最大 1 秒)は応答を読むのと
+並行して進むので、間隔を過ぎて届いた応答はそのまま打ち切られます。エラー応答の本文も同じ間隔の
+中で読みます。`chatgpt_oauth` のアカウントプールのアカウントがすべて失敗したあとに中継する
+エラー本文は、最後のアカウントが失敗した時点から計り直した間隔の中で読みます。リクエストを送り直すと、間隔も計り直します。こうした呼び出しの途中で Antigravity
+のモデルカタログのキャッシュが空で取得が走る場合も、同じ上限で読みます。上限に達したカタログは、
+カタログなしで shunt が推測するモデル id にフォールバックし、次のクライアントターンが改めて
+取得します。
 
 #### `type = "llm_classifier"`
 
-シグナルが尽きたところだけを埋めるのではなく、LLM **ジャッジ**がターン全体を決めます。
-エントリにはジャッジと、ジャッジが選べる宛先と、判定の形を決める `mode` を書きます。
+LLM **ジャッジ**がターン全体を決めます。エントリにはジャッジと、ジャッジが選べる宛先と、
+3 つある判定の形のどれかを決める `mode` を書きます。ここでは `capability` と `custom` を
+説明します。`escalation` は[別の節](#mode--escalation)で扱います。
 
-`mode` は**必須**です。上流のスキーマは `capability` を既定値にしていますが、ここでは
-そうしません。3 つのモードはまったく別の原理でルーティングし、そのうち `escalation` は
-まだここにありません。`mode` を省いた設定が `capability` として読まれると、あとから
-`escalation` を追加したときに、その設定の意味が黙って変わってしまいます。
-`mode = "escalation"` は、実在する 2 つのモードを示す起動エラーです。
+`mode` は**必須**で、`capability` を既定値にする上流のスキーマとは異なります。
+[LLM 分類器ガイド](/ja/guides/llm-classifier/)を参照してください。
 
 **`mode = "capability"`** — パッケージのジャッジがタスクの解決確率を返します。その値が
 `base_threshold` 以上ならターンは `weak_target` へ、下回れば `strong_target` へ行きます。
@@ -674,38 +686,71 @@ policy = { type = "target_selector", selector = "/target" }
 | `recent_turn_window` | 未設定 | 設定すると、ジャッジが追加で見る直近のターン数。最低でも `1` |
 | `max_output_tokens` | `4096` | ジャッジの判定に対する完了トークンの上限。最低でも `1` |
 
-**ジャッジが答えないとき。** ジャッジ呼び出しがどのように失敗しても — タイムアウト、サイズ
-超過、アップストリームエラー、`400`、解釈できない判定 — 判定なしとみなされ、ターンは
-アルゴリズム自身の既定値へ行きます。`capability` モードなら `strong_target`、`custom`
-モードなら `default_target` グループの最初のモデルです。判定するターン 1 回につき、ジャッジ
-呼び出しは**ちょうど 1 回**、最初のジャッジ候補に対してだけ行われます。したがって失敗しても
-`models.judge` をたどって再試行はしません。ターンはそのまま応答され、ルートソースは
-`classifier_fail_open` で、クライアントは変わらず `200` を受け取ります。
-
-**セッションはアルゴリズムの中にあります。** `classify_trigger` の保持は上流の状態で、
-ルーターのインスタンスの中にあり、shunt はそれを設定を読み込むたびに一度だけ構築します。
-ホットリロードは作り直すので、リロードすると各セッションが持っていたターゲットを忘れます —
-`prefill_router` と同じ性質です。`max_judge_calls` は shunt 自身のもので、(セッション,
-エージェント) ごとに数えます。だから委譲された子は親ではなく自分の予算を使います。
-セッション id を送らないリクエストは追跡されないので、その呼び出し元にはこの上限が
-リクエスト単位で効きます。予算を使い切ったターンはジャッジを飛ばして fail-open の
-ターゲットへ行き、ジャッジ呼び出しの結果は `budget_exhausted` として記録されます。
-
-**プローブはジャッジなしで解決します。** `count_tokens` リクエストがジャッジを呼ぶことは
-なく、fail-open のターゲットで応答されます。リクエストボディのない面 — `GET /routes`、
-`/v1/models` ディスカバリー、`shunt check` — も同じで、これらはルートソース
-`classifier_default` として報告します。
+ジャッジ呼び出しがどのように失敗しても、あるいは `max_judge_calls` に拒否されても、ターンは
+アルゴリズムの既定値 — `capability` モードなら `strong_target`、`custom` モードなら
+`default_target` グループの最初のモデル — へ、ルートソース `classifier_fail_open` で行きます。
+`count_tokens` プローブがジャッジを呼ぶことはありません。保持、予算、プローブの挙動は
+[LLM 分類器ガイド](/ja/guides/llm-classifier/#ジャッジが走るタイミング)にあります。
 
 ターゲットもジャッジも、ステージルーターと同じ 1 ホップ規則に従う通常の公開モデル id で、
 ジャッジは **passthrough** ルートに解決されてはいけません。理由は[上](#modelsrouterclassifierオプション)
-のとおりです — ジャッジ呼び出しは呼び出し元の資格情報をひとつも運ばないので、passthrough
-ルートには動かすものが残りません。
+のとおりです。
+
+#### `mode = "escalation"`
+
+`llm_classifier` の 3 つ目のモードは、各セッションを `weak_target` で始め、各ターンを
+留め置いて、**完成した**ターンをジャッジに判定させます。昇格の判定が `confirmations` 回
+続くとセッションが固定され、そのターンと以後のすべてのターンを `strong_target` が提供します。
+[エスカレーションガイド](/ja/guides/escalation/)を参照してください。
+
+```toml
+[[models]]
+id = "claude-escalate"
+
+[models.router]
+type = "llm_classifier"
+mode = "escalation"
+classifier_target = "claude-haiku-4-5"
+strong_target = "claude-opus-4-8"
+weak_target = "claude-sonnet-4-6"
+# prompt = "…"
+# max_output_tokens = 4096
+
+[models.router.escalation]
+confirmations = 2
+# recent_turn_window = 28
+# window_message_chars = 500
+```
+
+| キー | 既定値 | 意味 |
+| :-- | :-- | :-- |
+| `type` | ✅ 必須 | `llm_classifier` |
+| `mode` | ✅ 必須 | `escalation` |
+| `classifier_target` | ✅ 必須 | 軌跡ジャッジの公開モデル id。尋ねるだけで、提供はしません |
+| `strong_target` | ✅ 必須 | セッションが固定されたあとに提供するモデル id |
+| `weak_target` | ✅ 必須 | 固定前に提供するモデル id。`classifier_target` と同じ id でも構いません |
+| `prompt` | パッケージのプロンプト | パッケージの軌跡ジャッジプロンプトを置き換えます |
+| `max_output_tokens` | `4096` | ジャッジ判定の完了トークン上限。最低でも `1` |
+| `escalation.confirmations` | `2` | 固定に必要な、連続した昇格判定の数。最低でも `1`。`1` より大きい値にはセッション id が必要です。ないと毎ターンが 0 から始まり、セッションはいつまでも固定されません |
+| `escalation.recent_turn_window` | `28` | ジャッジに見せる直近のメッセージ数。最低でも `1` |
+| `escalation.window_message_chars` | `500` | そのウィンドウ内のメッセージごとの文字数上限。最低でも `50` |
+
+`[models.router.escalation]` テーブルは任意です。省くと 3 つの既定値が使われ、これは上流が
+ベンチマークした設定です。6 つの[呼び出しごとの上限](#呼び出しごとの上限)は
+`[models.router]` に置きます。classifier 形式の
+[`[models.subagents]`](#modelssubagentsオプション) オーバーレイは引き続き
+`mode = "custom"` のみです。
+
+`classifier_target` と違い、`weak_target` は **passthrough** ルートでも構いません。
+留め置くターンのルートソースと失敗時の扱いは
+[留め置くターン](#留め置くターン-escalation-と-advisor)を参照してください。
 
 #### `type = "composite"`
 
 ジャッジがステージルーターの fall-open ティアを決め、シグナルの採点には手を触れません。
 stage テーブルは **`picker` を受け付けません** — そのティアは classifier が供給するから
 です。したがってここに `picker` を書くと起動エラーです。
+[コンポジットガイド](/ja/guides/composite/)を参照してください。
 
 ```toml
 [[models]]
@@ -743,12 +788,89 @@ confidence_threshold = 0.5
 
 6 つの[呼び出しごとの上限](#呼び出しごとの上限)は、どちらのサブテーブルでもなく
 `[models.router]` に置きます。classifier が届かなかったターンは
-`stage.efficient_target` に fall-open します。これは上流の規則であり、プローブやボディの
-ない面が報告する値でもあります。
+`stage.efficient_target` に fall-open し、これはボディのない面が報告する値でもあります。
 
-stage 側は libsy 自身の stage ルートなので、決着したターンは classifier の決定ではなく
-ステージルーターのルートソースをそのまま報告します — composite のシグナル起因のターンを、
-素の `stage_router` のターンと同じように読めるということです。
+#### `type = "advisor"`
+
+1 つの**実行モデル**（executor）がクライアントに見えるすべてのターンを提供します。より強力な
+**アドバイザー**（advisor）が、実行モデルの締めくくりのターンをクライアントが見る前に
+レビューし、留め置いたターンを承認するか、実行モデルに作業のやり直しを指示します。
+アドバイザーがターンを提供することはありません。
+[advisor ゲートガイド](/ja/guides/advisor/)を参照してください。
+
+```toml
+[[models]]
+id = "claude-reviewed"
+
+[models.router]
+type = "advisor"
+executor_target = "claude-sonnet-4-6"
+advisor_target = "claude-opus-4-8"
+gate_trigger = "no_tool_call"
+max_reviews = 1
+# gate_stall_turns = 0
+# gate_min_tool_results = 0
+# advisor_max_tokens = 2048
+# transcript_max_chars = 200000
+# fail_open = true
+```
+
+| キー | 既定値 | 意味 |
+| :-- | :-- | :-- |
+| `type` | ✅ 必須 | `advisor` |
+| `executor_target` | ✅ 必須 | クライアントに見えるすべてのターンを提供します |
+| `advisor_target` | ✅ 必須 | 留め置いたターンをレビューします。提供はしません |
+| `gate_trigger` | `no_tool_call` | レビューを起こす条件。`no_tool_call`（実行モデルがツール呼び出しなしで終えた最初のターン）または `pattern` |
+| `gate_trigger_pattern` | 未設定 | `pattern` トリガーの正規表現。アンカーなしで検索します。`pattern` では空でない値が必須で、`no_tool_call` で設定すると起動エラーです |
+| `max_reviews` | `1` | セッションごとに許されるレビュー数。最低でも `1`。`x-claude-code-session-id` のないリクエストはそれ自体を 1 つのセッションとして数えるため、セッションのない呼び出し元どうしで予算を共有することはありません |
+| `gate_stall_turns` | `0` | 会話にこの数のアシスタントターンがたまると、作業途中のチェックポイントとして 1 ターンをレビューします。`0` で無効 |
+| `gate_min_tool_results` | `0` | `no_tool_call` のターンをレビュー対象にする前に会話に必要な tool result 数 |
+| `advisor_max_tokens` | `2048` | レビュー 1 回あたりの出力トークン上限。最低でも `1` |
+| `advisor_temperature` | 未設定 | レビューのサンプリング温度。未設定ならレビューのリクエストから省きます |
+| `transcript_max_chars` | `200000` | アドバイザーに送るトランスクリプトの上限。長い場合は中央を削ります。最低でも `256` |
+| `fail_open` | `true` | レビューが失敗したら留め置いたターンを提供します。`false` なら代わりにリクエストを `502` で失敗させます — セッションが `max_judge_calls` を使い切ったためレビューを送らなかった場合も同様です。失敗したレビューはやはりその結果（例：`upstream_error`、`timeout`）として数え、`max_judge_calls` が拒否したレビューは `budget_exhausted` として数えます |
+| `reviewer_system_prompt` | パッケージのプロンプト | APPROVE/REDO のレビュアープロンプトを置き換えます |
+| `redo_feedback_prefix` | パッケージのプロンプト | 実行モデルに差し戻す REDO 計画の前に置く文言を置き換えます |
+
+6 つの[呼び出しごとの上限](#呼び出しごとの上限)は `[models.router]` に置きます。
+
+`advisor_target` と違い、`executor_target` は **passthrough** ルートでも構いません。
+セッションにレビューの予算が残っているあいだは、実行モデルのすべてのターンを留め置きます —
+[留め置くターン](#留め置くターン-escalation-と-advisor)を参照してください。
+
+#### 留め置くターン: escalation と advisor
+
+**留め置かれる**（gated）ターン — 固定前の escalation の効率側ターン、またはレビュー予算が
+残るセッションの advisor の実行モデルのターン — は、先に作って留め置き、判定が出てから
+はじめて提供します。応答ヘッダーは再生が始まるときにはじめて確定します。ほかのターンは
+これまでとまったく同じようにストリーミングされます。呼び出し元のモードをどう保つか、何を
+完成したターンとみなすか、留め置くことに何のコストがかかるかは
+[ルーティングの概要](/ja/guides/routing/#留め置くターン)にあります。
+
+`x-gateway-route-source` — および `shunt.router.decisions` の `source` ラベル — が何が起きた
+かを示します。
+
+| ソース | エントリ | 意味 | 配信 |
+| :-- | :-- | :-- | :-- |
+| `escalation_weak` | escalation | ジャッジが効率側のターンを通しました。辞退したか、昇格の連続回数がまだ `confirmations` に満たないかのどちらかです | 再生 |
+| `escalation_latch` | escalation | このターンかそれ以前にセッションが固定され、強力なターゲットがターンを提供しました | ライブ |
+| `escalation_fallback` | escalation | 効率側のターンが失敗したか、終端マーカーの前に切れたか、アップストリームがコンテキストウィンドウに対して長すぎるとして拒否したため、強力なターゲットがターンを提供しました。ジャッジは呼んでいません | ライブ |
+| `classifier_fail_open` | escalation | 完成した効率側のターンのあとでジャッジが失敗したため、効率側のターンを提供しました | 再生 |
+| `advisor_approve` | advisor | 実行モデルのターンをレビューし、承認しました | 再生 |
+| `advisor_pass` | advisor | 実行モデルのターンをレビューなしで提供しました。ゲートに該当しなかった（たとえばツール呼び出しで終わるターン）か、レビューを予約できませんでした | 再生 |
+| `advisor_fail_open` | advisor | 完成した実行モデルのターンのあとでレビューが失敗したため、そのターンを提供しました | 再生 |
+| `advisor_redo` | advisor | レビュアーが REDO と答えました。捨てたターンは送っておらず、これは実行モデルの再実行です | ライブ |
+| `advisor_exhausted` | advisor | セッションの `max_reviews` を使い切ったか、レビューモデルの呼び出しが 3 回失敗したため（失敗した呼び出しは `max_reviews` を払い戻します）、実行モデルがバッファリングなしでストリーミングします | ライブ |
+| `gated_error` | 両方 | 留め置いたターンを提供できませんでした — 下記を参照 | エラー |
+
+**何かが失敗したとき:**
+
+| 失敗したもの | `escalation` | `advisor` |
+| :-- | :-- | :-- |
+| 留め置くターンが `gated_*` の上限を超えた、または終端マーカーの前に終わった | ヘッダーを送る前に捨て、強力なターゲットがターンをライブで提供します（`escalation_fallback`） | ヘッダーを送る前に捨て、リクエストは Anthropic エラー形式のゲートウェイ所有の `502` で失敗します（`gated_error`）。REDO でもフェイルオーバーの試行でもありません — アップストリームはすでに `2xx` で応答しています |
+| 留め置く呼び出しのアップストリームがコンテキストウィンドウに対して長すぎるとしてターンを拒否した：`error.message` に — メッセージに該当する文言がなければ JSON かどうかを問わず生の本文全体に — `prompt is too long`、`maximum number of tokens`、`context window`、`context length` のいずれかを含む `400` | 強力なターゲットがターンをライブで提供します（`escalation_fallback`） | クライアントがコンテキストを圧縮できるよう、そのまま中継します（`gated_error`） |
+| 留め置く呼び出しのアップストリームがそれ以外のエラーのステータスで応答した | ライブのターンと同じく、アップストリームの `retry-after` を付けてクライアントにそのまま中継します（`gated_error`）。`chatgpt_oauth` のアカウントプールのアカウントがすべて尽きた場合も同じです | そのまま中継します（`gated_error`） |
+| 完成したターンのあとでジャッジやレビューが失敗した — タイムアウト、大きすぎる応答やパースできない応答、アップストリームのエラー、`max_judge_calls` の使い切り | 効率側のターンを提供します（`classifier_fail_open`） | `fail_open = true` なら実行モデルのターンを提供し（`advisor_fail_open`）、`fail_open = false` ならリクエストはゲートウェイ所有の `502` で失敗します（`gated_error`）。`max_judge_calls` がレビューを拒否した場合も同様です。失敗したレビューはやはりその結果（例：`upstream_error`、`timeout`）として数え、`max_judge_calls` が拒否したものは `budget_exhausted` として数えます |
 
 #### `type = "auto"`
 
@@ -801,20 +923,10 @@ weights = [9, 1]
 | `affinity` | `session` | `session` は 1 セッションを 1 つの枝に固定し、`request` はリクエストごとに抽選します |
 
 `affinity = "session"` では、枝は `sha256(seed ‖ model ‖ セッション id)` を重みの範囲に
-写した値です。何も保存しないので再起動しても枝は変わらず、同じ設定を読み込んだレプリカ間
-でも同一です。そのかわり `seed`、`targets`、`weights` を変えると枝が動くことがあります。
-`x-claude-code-session-id` を送らないリクエストは 1 つの枝を共有せず、そのリクエストだけの
-重み付き抽選を行います。セッションを送らないクライアントでも 90/10 の分割は 90/10 のまま
-です。`affinity = "request"` ではリクエストごとに抽選し、`seed` を設定すると抽選列を再現
-できます。
-
-セッションアフィニティは**アクセス制御ではなく固定（stickiness）です。** セッション id は
-クライアントが決めるので、id を変えて再試行する呼び出し元は自分を望みの枝へ寄せられます。
-それで守られるものはありません — どのターゲットも、その呼び出し元が名前で直接指定できる
-公開モデル id だからです。アクセス制御は managed model ポリシーの仕事です。
-
-リクエストボディのない面 — `GET /routes`、`/v1/models` ディスカバリ、`shunt check` — は、
-重みが正の最初のターゲットを報告します。
+写した値です。`x-claude-code-session-id` のないリクエストは、そのリクエストだけの重み付き
+抽選を行います。セッションアフィニティはアクセス制御ではなく固定（stickiness）です。
+リクエストボディのない面は、重みが正の最初のターゲットを報告します。
+[ルーティングの概要](/ja/guides/routing/#random)を参照してください。
 
 #### `type = "noop"`
 
@@ -985,10 +1097,8 @@ gateway ログインでも守られません。
 `[models.upstream_model]` マップを持つエントリ、`[models.router]` テーブルを持つエントリ、
 マップを持たず `[[routes]]` 経由で解決される id のいずれでも構いません。その id を要求した
 `Task` サブエージェント、フックエージェント、ワークフローサブエージェントは、オーバー
-レイのターゲットへ振り分けられます。親セッション自身のターンはこのテーブルを一切見ず、
-オーバーレイがなかったときとまったく同じようにエントリを解決します。テーブルを `router`
-の中ではなくエントリ側に置くのは、固定エントリにはルーターテーブルが存在せず、
-Switchyard の「passthrough with subagents」がここではまさに固定エントリにあたるからです。
+レイのターゲットへ振り分けられます。親セッション自身のターンはこのテーブルを一切見ません。
+[サブエージェントルーティングガイド](/ja/guides/subagents/)を参照してください。
 
 ```toml
 [[models]]
@@ -1011,21 +1121,16 @@ by_type = { Explore = "claude-haiku-4-5", fork = "claude-sonnet-4-6", teammate =
 
 **委譲された作業とみなされるもの。** `x-claude-code-request-class` が `subagent` または
 `workflow` のリクエストです。そのヘッダーがない場合は、空でない
-`x-claude-code-agent-id` を持つリクエストが該当します。このヘッダーは Claude Code が
-ヒントのゲートに関係なくすべての委譲ターンで送ります。クラスが送られてきたときは
-そちらが正です。エージェント id を伴う `main` はメイントラフィックであり、`compaction`
-と `auxiliary` はハーネスの保守作業で、この 3 つがオーバーレイを使うことはありません。
-したがって、クラスとタイプのヘッダーがゲートで止まっているデフォルトのデプロイでは、
-`Task` の子はすべて `target` へ行きます。`by_type` を使うにはクライアント側で
-`CLAUDE_CODE_GATEWAY_HINT_HEADERS=1` を設定する必要があります。
+`x-claude-code-agent-id` を持つリクエストが該当します。`main`、`compaction`、`auxiliary`
+がオーバーレイを使うことはなく、`by_type` を使うにはクライアント側で
+`CLAUDE_CODE_GATEWAY_HINT_HEADERS=1` を設定する必要があります —
+[委譲された作業とみなされるもの](/ja/guides/subagents/#委譲された作業とみなされるもの)を
+参照してください。
 
-**`by_type` のキーは厳密に照合され、大文字小文字も区別します。** 組み込みエージェントの
-id はそのまま届きます — `Explore`、`Plan`、`general-purpose`、`claude`、そして `fork`
-（クライアントは `CLAUDE_CODE_FORK_SUBAGENT=1` のときだけ提示します）。`.claude/agents/`
-のプロジェクトエージェントは `custom` として届き、自身の名前は決して送られないため、
-一致しうるキーは `custom` だけです。`teammate` は Agent Teams のメンバーを指すクライアント
-側のリテラルで、ワイヤ上ではまだ観測されていません。空のキーや空白文字を含むキーは、
-どうやっても一致しないため起動エラーです。
+**`by_type` のキーは厳密に照合され、大文字小文字も区別します。** 照合の相手は
+[サブエージェントルーティングガイド](/ja/guides/subagents/#passthrough-形式)に挙げた
+`x-claude-code-agent-type` のリテラル値です。空のキーや空白文字を含むキーは、どうやっても
+一致しないため起動エラーです。
 
 **ターゲット。** ルーターのターゲットと同じワンホップ規則に従う、通常の公開モデル id です。
 `target` と `by_type` のすべての値は、末尾の `[1m]`／`[1M]` ヒントを除去したあとで、自前の
@@ -1037,17 +1142,11 @@ id はそのまま届きます — `Explore`、`Plan`、`general-purpose`、`cla
 `server.default_provider` で解決されます。
 
 **状態を持ちません。** ターゲットは設定とリクエストのヘッダーだけで決まります。セッション
-ピンもストアもジャッジ呼び出しもありません。ルーターを持つ id では、子はルーターが走る
-前に振り分けられるため、子のターンがトランスクリプトに対して採点されることはなく、親の
-ピンに触れることもありません。振り分けられたターンには `x-gateway-routed-model`
-（ターゲット）と `x-gateway-route-source`（`by_type` に一致したときは `subagent_type`、
-`target` へのフォールバックなら `subagent`）が付き、`shunt.router.decisions` に
-`algorithm = "subagents"` として計上されます。リクエストを伴わないサーフェスは何も
-解決しません。`/v1/models` ディスカバリと `shunt check` はモデルごとの宛先情報を
-まったく持たず、`GET /routes` は親自身の `[[routes]]`／`[models.router]` エントリが
-ある場合にそれを示すだけです（`server.default_provider` に委ねられた id はどちらの
-配列にも現れません）。いずれのサーフェスも振り分け先のターゲットを解決せず、この
-オーバーレイが `routers` 配列に載ることもありません。
+ピンもストアもジャッジ呼び出しもありません。振り分けられたターンは
+`x-gateway-route-source` に、`by_type` に一致したときは `subagent_type` を、`target` への
+フォールバックなら `subagent` を報告し、`algorithm = "subagents"` として計上されます。
+リクエストを伴わないサーフェスが振り分け先のターゲットを解決することはなく、この
+オーバーレイが `GET /routes` の `routers` 配列に載ることもありません。
 
 #### subagents `type = "llm_classifier"`
 
@@ -1055,6 +1154,8 @@ id はそのまま届きます — `Explore`、`Plan`、`general-purpose`、`cla
 タスクを読み、それを処理するグループの名前を挙げます。ここにあるのは `mode = "custom"`
 だけで — `mode = "capability"` は起動エラーです — キーは[上](#type--llm_classifier)で
 説明した `custom` モードのものです。
+[サブエージェントルーティングガイド](/ja/guides/subagents/#llm_classifier-形式)を参照して
+ください。
 
 ```toml
 [models.subagents]
@@ -1083,25 +1184,14 @@ policy = { type = "target_selector", selector = "/target" }
 
 `[models.router]` の形式と異なる規則が 3 つあります。
 
-- **`classify_trigger` の既定値は `new_session`** で、`user_turn` は拒否されます。委譲
-  された子はひとつのタスクなので、ターゲットは一度選んで最後まで保持します。ユーザー
-  ターンごとに判定し直せば、変わりようのない決定にジャッジ呼び出しを払い続けることに
-  なります。
-- **`message_hash_fallback` は `false` でなければなりません。** 分類はすでに (セッション,
-  エージェント) でキーを取っているので、代わりに最初のメッセージをハッシュすると、ひとつ
-  のセッションの異なる子ふたつがひとつの判定に束ねられてしまいます。
-- **親が分類されることはありません。** 何が委譲された作業かは、上の `passthrough` 形式と
-  まったく同じです。したがって親のターン、エージェント id を伴う `main` のターン、
-  `compaction` と `auxiliary` のクラスはいずれも、このテーブルがないかのようにエントリを
-  解決し、ジャッジ呼び出しも行いません。
+- **`classify_trigger` の既定値は `new_session`** で、`user_turn` は拒否されます。
+- **`message_hash_fallback` は `false` でなければなりません。** 分類は (セッション,
+  エージェント) でキーを取ります。
+- **親が分類されることはありません。** 委譲された作業ではないターンは、このテーブルがない
+  かのようにエントリを解決し、ジャッジ呼び出しも行いません。
 
 6 つの[呼び出しごとの上限](#呼び出しごとの上限)は、呼び出しを行う当事者であるこの
-テーブルに置きます。ジャッジは他と同じ規則に従います — 1 ホップ、passthrough ルート禁止、
-そして呼び出し元の資格情報スロットはひとつも同行しません。委譲されたターンがジャッジを
-呼びうるため、そうしたターンのインバウンド認証はオーバーレイのターゲットとジャッジまで
-対象にします — 認証できない委譲ターンはジャッジ呼び出しを 1 回も行わずに拒否されます。
-`count_tokens` プローブも同様にジャッジ呼び出しなしで、`default_target` グループの最初の
-モデルで応答します。
+テーブルに置きます。ジャッジは他と同じ規則に従います — 1 ホップ、passthrough ルート禁止。
 
 ## `[sentry]`(任意)
 
