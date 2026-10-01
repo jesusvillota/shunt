@@ -1,13 +1,13 @@
 # `shunt top` — live terminal pool monitor
 
-A keyboard-driven terminal view of the managed account pool. It is a client of
-a **running** gateway's admin API, not a second copy of pool state: it polls
-`GET /admin/api/pool` and mutates through
-`PATCH /admin/api/pool/{provider}/accounts/{account_ref}` (pause/resume) and
-`PATCH /admin/api/pool` (`sort_by_reset`), so what it shows is what the web
-dashboard shows and what the scheduler acts on. The mutation endpoints come
-from the pool pause / reset-rank work
-([pool account controls](../site/src/content/docs/guides/pool-account-controls.md)).
+A keyboard-and-mouse terminal view of the managed account pool, one section per
+provider. It is a client of a **running** gateway's admin API, not a second copy
+of pool state: it polls `GET /admin/api/pool` (every 2 s) and acts through the
+admin API (`PATCH /admin/api/pool/{provider}/accounts/{account_ref}` to pause,
+`POST /admin/api/accounts/{claude,codex,antigravity}` to add accounts), so what it
+shows is what the web dashboard shows and what the scheduler acts on. Two things it
+saves to the **config file** the gateway runs — added accounts and the ranking —
+which the gateway hot-reloads.
 
 ## Build and run
 
@@ -15,71 +15,121 @@ Off by default, so the gateway binary carries no terminal-UI dependencies:
 
 ```bash
 cargo build --release --features tui
-./target/release/shunt top
+./target/release/shunt top --config /path/to/shunt.toml
 ```
 
 The gateway needs `[server.admin]` (`shunt dashboard setup` does it in one step).
-`shunt top` finds its target the same way:
 
 | Setting | Flag | Default |
 | :-- | :-- | :-- |
-| Gateway URL | `--url` | derived from `[server].bind` in the config (`--config`, or the usual search path), else `http://127.0.0.1:3001` |
+| Gateway URL | `--url` | derived from `[server].bind` in the config, else `http://127.0.0.1:3001` |
 | Admin token | `--token` | `SHUNT_ADMIN_TOKEN`, then the first entry of `SHUNT_ADMIN_TOKENS`, then `~/.shunt/admin-token` |
-| Token header | `--header` | `x-shunt-admin-token` (`[server.admin].header`) |
+| Config file | `--config` | the first file the gateway's loader would find. **Pass the same file the gateway was started with**: ranking and added accounts are written there |
+| Token header | `--header` | `x-shunt-admin-token` |
 | Poll interval | `--interval-ms` | `2000` (minimum `500`) |
 
-Pausing and the rank toggle need a **write-tier** token; a read-tier key can watch
-but gets a clear "read-only" message on a mutation. A header credential carries
-no cookie, so no CSRF handling is involved.
+Everything except watching needs a **write-tier** admin token; a read-tier key
+gets a plain "read-only" message.
 
-## What you see
+## The screen
 
-One row per managed account across all pooled providers: state, 5h and 7d
-utilization bars (green < 70%, yellow < 90%, red above), the peak across all
-windows and quota buckets, and time to the soonest reset. The detail pane shows
-the selected account's windows, cooldowns, priority, burn-rate headroom, and any
-per-model quota buckets (Antigravity). The header shows counts by state, the
-gateway's current ranking policy, and a live/stale indicator — if the gateway
-goes away the last snapshot stays on screen with the error in red, and polling
-continues until it returns.
+```
+ shunt top  http://127.0.0.1:3001                          ● live · updated 1s ago
+────────────────────────────────────────────────────────────────────────────────
+  #  Account              Plan    State            5h limit (used · resets in)  7d limit (used · resets in)
+▾ anthropic   ON   ranking: balanced · 3 accounts
+  1  work                 max     available        ████░░░░  50% · 2h 14m       ██░░░░░░  25% · 3d 4h
+  2  spare                max     near quota       ███████░  88% · 41m          ███░░░░░  40% · 5d
+```
 
-States follow the dashboard's ladder, with `paused` added:
-`disabled` > `paused` > `needs re-login` > `unseen` > `cooling` > `near quota` >
-`cooling (fable)` > `available`.
+Each provider is its own section with an **ON/OFF** switch and its ranking mode.
+Each account shows its rank, state, and for both the 5-hour and the 7-day limit how
+much is used and how long until that limit resets. Usage bars turn yellow at 70% and
+red at 90%. If the gateway goes away the last data stays on screen with the error in
+red, and polling continues until it returns.
+
+No line is highlighted until you choose one (arrow keys or a click). Click empty
+space, or press `Esc`, and nothing is selected again.
+
+States: `disabled` (config) · `paused` · `needs re-login` · `unseen` (no traffic yet) ·
+`cooling down` · `near quota` · `cooling (fable)` · `available`.
 
 ## Keys
 
 | Key | Action |
 | :-- | :-- |
-| `↑`/`↓`, `j`/`k`, `PgUp`/`PgDn`, `g`/`G` | Move |
-| `p` or `Space` | Pause / resume the selected account |
-| `t` | Toggle the **gateway's** ranking: burn-rate headroom ↔ soonest quota reset |
-| `s` | Cycle the table's sort: pool order, name, state, 5h, 7d, peak usage, soonest reset |
-| `r` | Reverse the sort direction |
-| `Tab` | Filter to one provider, cycling back to all |
-| `R` / `F5` | Refresh now |
+| `↑`/`↓`, `j`/`k`, `PgUp`/`PgDn`, click | Choose a provider line or an account |
+| `Esc`, click on empty space | Unselect |
+| `p` / `Space` | Pause or resume the chosen account |
+| `o` | Switch the chosen account's whole provider on or off |
+| `m` | Switch the provider between **balanced** and **custom order** |
+| `Shift+↑`/`Shift+↓` (or `K`/`J`) | Move the chosen account up or down a custom order |
+| `a` | Add an account |
 | `?` | Help |
-| `q` / `Esc` / `Ctrl-C` | Quit |
+| `q` / `Ctrl-C` | Quit |
 
-Two different "sorts" exist on purpose: `s`/`r` only reorder **your view**;
-`t` changes **which account the gateway picks** (`[server.pool] sort_by_reset`,
-process-wide). Accounts with no reading sort last in either direction, so
-reversing a usage sort never promotes an account just because it has no data.
-The cursor follows the account, not the row, across re-sorts and polls.
+## Ranking
 
-## Semantics worth knowing
+The number in the first column says in which order the gateway tries a provider's
+accounts for a new conversation: **1 is drawn first**.
 
-- Pause and the rank toggle are **memory-only**: a gateway restart clears them.
-- Pause targets the opaque `account_ref`, so two accounts sharing a display name
-  stay independent. A gateway that does not report `account_ref` predates pause
-  support; the monitor says so instead of guessing.
-- Mutations trigger an immediate re-poll, so the table reflects them without
-  waiting out the interval.
-- The terminal is restored on quit and on panic.
+- **Balanced** (the default): all accounts share one tier and the gateway spreads
+  load by *headroom* — how much room an account has left before its limit, given how
+  fast it is being used. The numbers shown are the gateway's live order and change as
+  usage changes; an account that cannot take traffic right now (paused, cooling down,
+  needs re-login, disabled) shows `–`. If `[server.pool] sort_by_reset` is on
+  (process-wide, set in the config or through the admin API), balanced orders by
+  soonest reset instead and the numbers follow that.
+- **Custom order**: your own 1, 2, 3…. Pressing `m` starts from the order the gateway
+  is using at that moment so nothing reshuffles; then move accounts with
+  `Shift+↑/↓`. The order is saved as each account's `priority` in `shunt.toml`
+  (`1` = most preferred) — an existing config key, no new one. Pressing `m` again
+  removes the priorities and returns to balanced.
+
+Two things the number does **not** do: a conversation already running stays on the
+account it started with (session stickiness) unless that account is cooling down or
+near quota; and when an account reaches its limit the gateway moves to the next one
+regardless of rank.
+
+## Switching a provider off
+
+`o` pauses every account in the provider that is not already paused, and `o` again
+resumes exactly those (accounts you had paused yourself stay paused). Like a single
+pause it is **memory-only** — a gateway restart clears it — and while a provider is
+off, requests routed to it find no account to use and fail the way an exhausted pool
+does. If this program is restarted while a provider is off, `o` resumes every paused
+account in it.
+
+## Adding an account
+
+`a` opens a short dialog: choose a provider (skipped when one is selected), type a
+name (lowercase letters, digits, hyphens), and the gateway starts a browser login. The
+link is opened in your browser when possible and shown in the dialog (`Tab` copies it
+through the terminal's clipboard support). Claude shows a code to paste back
+(`code#state`); Codex and Antigravity redirect to a page that may not load — paste the
+full address from the address bar. Mouse capture is off while the link is on screen so
+you can also select it by hand.
+
+When the account is stored, **it is added to the pool in `shunt.toml`** — the
+dashboard stores the credential but leaves the file alone. A provider that lists no
+`[[providers.<name>.accounts]]` already pools the whole store, so nothing needs
+writing; one that lists accounts gets a name-only entry appended. Kimi accounts cannot
+be added this way (the admin API has no Kimi provisioning).
+
+## Config edits: what is and is not touched
+
+Edits are made with a format-preserving TOML editor — comments and layout stay. Only
+`[providers.<name>]` tables are edited; a provider defined through `[[upstreams]]` is
+refused with a message. Editing a provider that lists no accounts (so the gateway was
+pooling the whole store) first lists every account, otherwise writing priorities would
+silently shrink the pool; that provider then pools exactly its listed accounts, so a
+store account added *outside* this program must be listed by hand. YAML configs are not
+edited.
 
 ## Tests
 
-`src/tui/` unit tests cover the state ladder, sort ordering, cursor stability,
-every keybinding (as a pure reducer), and rendering through a `TestBackend`;
-`tests/tui_client.rs` drives poll / pause / resume / rank / read-tier refusal
-against an in-process gateway.
+`src/tui/` unit tests cover the state ladder, balanced and custom ordering, cursor and
+mouse behaviour, every keybinding as a pure reducer, the TOML edits, the add dialog's
+state machine, and rendering through a `TestBackend`; `tests/tui_client.rs` drives
+poll / pause / resume / provisioning start and its refusals against an in-process
+gateway.

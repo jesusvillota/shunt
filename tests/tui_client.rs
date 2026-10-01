@@ -1,6 +1,6 @@
 //! The `shunt top` admin-API client against a real in-process gateway: poll,
-//! pause/resume by `account_ref`, the reset-rank toggle, and the read-tier
-//! refusal the monitor surfaces to the operator.
+//! pause/resume by `account_ref`, account provisioning start/complete, and the
+//! read-tier refusal the monitor surfaces to the operator.
 
 #![cfg(feature = "tui")]
 
@@ -55,7 +55,7 @@ fn config() -> Config {
 }
 
 #[tokio::test]
-async fn polls_pauses_resumes_and_toggles_rank() {
+async fn polls_pauses_resumes_and_starts_provisioning() {
     let config = config();
     let Ok(listener) = tokio::net::TcpListener::bind(config.server.bind_addr().unwrap()).await
     else {
@@ -68,33 +68,50 @@ async fn polls_pauses_resumes_and_toggles_rank() {
 
     let writer = Client::new(&base, "x-shunt-admin-token", WRITE_KEY).unwrap();
     let snapshot = writer.fetch_pool().await.unwrap();
-    assert_eq!(snapshot.rows.len(), 1);
-    let row = &snapshot.rows[0];
+    let provider = &snapshot.providers[0];
+    assert_eq!(provider.auth.as_deref(), Some("claude_oauth"));
+    assert_eq!(provider.account_kind(), Some("claude"));
+    assert_eq!(provider.rows.len(), 1);
+    let row = &provider.rows[0];
     assert_eq!(row.account.name, "monitored");
-    assert!(!snapshot.sort_by_reset);
     let account_ref = row.account_ref().expect("gateway reports account_ref");
+    let provider_name = provider.name.clone();
 
     writer
-        .set_paused(&row.provider, account_ref, true)
+        .set_paused(&provider_name, account_ref, true)
         .await
         .unwrap();
     let paused = writer.fetch_pool().await.unwrap();
-    assert_eq!(paused.rows[0].state, AccountState::Paused);
+    assert_eq!(paused.providers[0].rows[0].state, AccountState::Paused);
+    assert!(!paused.providers[0].is_on(), "its only account is paused");
 
     writer
-        .set_paused(&row.provider, account_ref, false)
+        .set_paused(&provider_name, account_ref, false)
         .await
         .unwrap();
     let resumed = writer.fetch_pool().await.unwrap();
-    assert_ne!(resumed.rows[0].state, AccountState::Paused);
+    assert_ne!(resumed.providers[0].rows[0].state, AccountState::Paused);
+    assert!(resumed.providers[0].is_on());
 
-    writer.set_sort_by_reset(true).await.unwrap();
-    assert!(writer.fetch_pool().await.unwrap().sort_by_reset);
+    // Provisioning: the start call yields an authorize URL (no upstream call is
+    // made); completing without a valid code is refused with the gateway's reason.
+    let url = writer.start_account("claude", "pool-b").await.unwrap();
+    assert!(url.starts_with("https://"), "{url}");
+    let refused = writer
+        .complete_account("claude", "pool-b", "not-a-code")
+        .await;
+    let message = format!("{:#}", refused.unwrap_err());
+    assert!(message.contains("authorization code"), "{message}");
+    let invalid = writer.start_account("claude", "Bad Name").await;
+    assert!(format!("{:#}", invalid.unwrap_err()).contains("[a-z0-9-]+"));
 
     // A read-tier key can poll but not mutate, and says why.
     let reader = Client::new(&base, "x-shunt-admin-token", READ_KEY).unwrap();
-    assert_eq!(reader.fetch_pool().await.unwrap().rows.len(), 1);
-    let refused = reader.set_paused(&row.provider, account_ref, true).await;
+    assert_eq!(
+        reader.fetch_pool().await.unwrap().providers[0].rows.len(),
+        1
+    );
+    let refused = reader.set_paused(&provider_name, account_ref, true).await;
     assert!(format!("{:#}", refused.unwrap_err()).contains("read-only"));
 
     // A wrong token is reported as such rather than as an empty pool.
@@ -102,7 +119,7 @@ async fn polls_pauses_resumes_and_toggles_rank() {
     assert!(format!("{:#}", stranger.fetch_pool().await.unwrap_err()).contains("rejected"));
 
     // An unknown account surfaces the 404 hint instead of failing silently.
-    let missing = writer.set_paused(&row.provider, "no-such-ref", true).await;
+    let missing = writer.set_paused(&provider_name, "no-such-ref", true).await;
     assert!(format!("{:#}", missing.unwrap_err()).contains("404"));
     serve.abort();
 }

@@ -1,27 +1,62 @@
-//! Monitor state and key handling. `App::on_key` is a pure reducer that hands
-//! back an [`Effect`] for the runtime to perform, so every keybinding is
+//! Monitor state and input handling. `on_key` / `on_mouse` are reducers that
+//! hand back an [`Effect`] for the runtime to perform, so every binding is
 //! testable without a terminal or a gateway.
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::{
+    crossterm::event::{
+        KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    },
+    layout::Rect,
+};
 
-use super::model::{Row, Snapshot, SortKey};
+use super::{
+    add::{self, AddFlow, Target},
+    config_edit::DEFAULT_PRIORITY,
+    model::{ProviderView, RankMode, Row, Snapshot},
+};
 
 /// How long a status-bar notice stays up.
 const NOTICE_TTL: Duration = Duration::from_secs(5);
+/// How long a just-written ranking is shown ahead of the gateway, which only
+/// reports it after its hot reload.
+const OVERLAY_TTL: Duration = Duration::from_secs(6);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     None,
     Quit,
-    Refresh,
     SetPaused {
         provider: String,
         account_ref: String,
+        label: String,
         paused: bool,
     },
-    SetSortByReset(bool),
+    /// Pause (`on == false`) or resume every account named in `account_refs`.
+    SetProvider {
+        provider: String,
+        on: bool,
+        account_refs: Vec<String>,
+    },
+    /// Write these priorities to the config file. `pool_names` is every account
+    /// the provider currently pools, for a provider that lists none explicitly.
+    SetRanks {
+        provider: String,
+        ranks: Vec<(String, u32)>,
+        pool_names: Vec<String>,
+    },
+    ClearRanks {
+        provider: String,
+    },
+    Add(add::Effect),
+    /// Put text on the clipboard (via the terminal).
+    CopyToClipboard(String),
+    /// Mouse capture off while the dialog needs text selection, on otherwise.
+    MouseCapture(bool),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,112 +65,151 @@ pub enum Notice {
     Error(String),
 }
 
+/// What the cursor is on: a provider's header line, or one of its accounts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sel {
+    pub provider: String,
+    pub account: Option<String>,
+}
+
+/// One selectable line, in screen order.
+pub struct Entry<'a> {
+    pub sel: Sel,
+    pub provider: &'a ProviderView,
+    /// `None` for a provider header; otherwise the account's rank and row.
+    pub row: Option<(Option<usize>, &'a Row)>,
+}
+
+struct RankOverlay {
+    provider: String,
+    ranks: Vec<(String, u32)>,
+    at: Instant,
+}
+
 pub struct App {
     pub snapshot: Snapshot,
     pub base_url: String,
-    pub interval: Duration,
-    /// Last successful poll. `None` until the first one lands.
     pub last_ok: Option<Instant>,
-    /// The most recent poll failure; cleared by the next success.
     pub poll_error: Option<String>,
-    pub sort: SortKey,
-    pub descending: bool,
-    /// Index into `snapshot.providers()`; `None` shows every provider.
-    pub filter: Option<usize>,
+    /// `None` until the operator picks a line, and again after they click
+    /// outside the list or press Esc.
+    pub selected: Option<Sel>,
     pub show_help: bool,
     pub notice: Option<(Notice, Instant)>,
-    /// The selection follows the account, not the row index, so a re-sort or a
-    /// poll that reorders the table does not move the cursor onto another one.
-    selected: Option<(String, String)>,
-}
-
-fn key_of(row: &Row) -> (String, String) {
-    (
-        row.provider.clone(),
-        row.account_ref().unwrap_or(&row.account.name).to_string(),
-    )
+    pub dialog: Option<AddFlow>,
+    /// First visible list line.
+    pub scroll: usize,
+    /// Scroll the selection into view on the next draw (keyboard moves only).
+    pub reveal: bool,
+    /// Where the list was drawn, and what each drawn line is, for mouse clicks.
+    pub list_area: Rect,
+    pub hits: Vec<Option<Sel>>,
+    /// Accounts a provider switch paused, so switching back on resumes exactly
+    /// those and not ones the operator had paused on purpose.
+    switched_off: HashMap<String, Vec<String>>,
+    overlay: Option<RankOverlay>,
 }
 
 impl App {
-    pub fn new(base_url: String, interval: Duration) -> Self {
+    pub fn new(base_url: String) -> Self {
         Self {
             snapshot: Snapshot::default(),
             base_url,
-            interval,
             last_ok: None,
             poll_error: None,
-            sort: SortKey::Default,
-            descending: false,
-            filter: None,
+            selected: None,
             show_help: false,
             notice: None,
-            selected: None,
+            dialog: None,
+            scroll: 0,
+            reveal: false,
+            list_area: Rect::default(),
+            hits: Vec::new(),
+            switched_off: HashMap::new(),
+            overlay: None,
         }
     }
 
-    pub fn filter_name(&self) -> Option<String> {
-        self.filter
-            .and_then(|at| self.snapshot.providers().into_iter().nth(at))
+    /// Every selectable line in screen order: each provider's header, then its
+    /// accounts in the order the gateway would try them.
+    pub fn entries(&self) -> Vec<Entry<'_>> {
+        let mut entries = Vec::new();
+        for provider in &self.snapshot.providers {
+            entries.push(Entry {
+                sel: Sel {
+                    provider: provider.name.clone(),
+                    account: None,
+                },
+                provider,
+                row: None,
+            });
+            for (rank, row) in provider.ordered(self.snapshot.sort_by_reset) {
+                entries.push(Entry {
+                    sel: Sel {
+                        provider: provider.name.clone(),
+                        account: Some(row.key().to_string()),
+                    },
+                    provider,
+                    row: Some((rank, row)),
+                });
+            }
+        }
+        entries
     }
 
-    pub fn rows(&self) -> Vec<&Row> {
-        let filter = self.filter_name();
-        self.snapshot
-            .view(filter.as_deref(), self.sort, self.descending)
-    }
-
-    /// Index of the selected account within [`Self::rows`], falling back to the
-    /// first row when the selected account vanished from the pool.
     pub fn selected_index(&self) -> Option<usize> {
-        let rows = self.rows();
-        if rows.is_empty() {
-            return None;
-        }
-        let at = self
-            .selected
-            .as_ref()
-            .and_then(|key| rows.iter().position(|row| &key_of(row) == key));
-        Some(at.unwrap_or(0))
+        let selected = self.selected.as_ref()?;
+        self.entries()
+            .iter()
+            .position(|entry| &entry.sel == selected)
     }
 
-    pub fn selected_row(&self) -> Option<&Row> {
-        let at = self.selected_index()?;
-        self.rows().get(at).copied()
+    fn selected_provider(&self) -> Option<&ProviderView> {
+        let name = &self.selected.as_ref()?.provider;
+        self.snapshot.provider(name)
     }
 
-    fn select(&mut self, at: usize) {
-        let key = self.rows().get(at).map(|row| key_of(row));
-        if key.is_some() {
-            self.selected = key;
+    fn selected_row(&self) -> Option<(&ProviderView, &Row)> {
+        let selected = self.selected.as_ref()?;
+        let provider = self.snapshot.provider(&selected.provider)?;
+        let key = selected.account.as_deref()?;
+        provider
+            .rows
+            .iter()
+            .find(|r| r.key() == key)
+            .map(|r| (provider, r))
+    }
+
+    fn select_index(&mut self, at: usize) {
+        let sel = self.entries().get(at).map(|entry| entry.sel.clone());
+        if sel.is_some() {
+            self.selected = sel;
+            self.reveal = true;
         }
     }
 
     fn move_by(&mut self, delta: isize) {
-        let len = self.rows().len();
-        let Some(at) = self.selected_index() else {
+        let len = self.entries().len();
+        if len == 0 {
             return;
+        }
+        let next = match self.selected_index() {
+            Some(at) => at.saturating_add_signed(delta).min(len - 1),
+            None if delta < 0 => len - 1,
+            None => 0,
         };
-        let next = at.saturating_add_signed(delta).min(len - 1);
-        self.select(next);
+        self.select_index(next);
     }
 
     pub fn on_poll(&mut self, result: Result<Snapshot, String>) {
         match result {
             Ok(snapshot) => {
-                // Pin the cursor to its account *before* the table changes
-                // underneath it, in case it had defaulted to row 0.
-                if self.selected.is_none() {
-                    if let Some(at) = self.selected_index() {
-                        self.select(at);
-                    }
-                }
                 self.snapshot = snapshot;
-                // A provider that disappeared must not leave a dangling filter.
-                if self
-                    .filter
-                    .is_some_and(|at| at >= self.snapshot.providers().len())
-                {
-                    self.filter = None;
+                self.apply_overlay();
+                // A line that is gone (account removed, provider dropped) must
+                // not leave an invisible selection that keys still act on.
+                if self.selected.is_some() && self.selected_index().is_none() {
+                    self.selected = None;
                 }
                 self.last_ok = Some(Instant::now());
                 self.poll_error = None;
@@ -148,12 +222,95 @@ impl App {
         self.notice = Some((notice, Instant::now()));
     }
 
-    /// The live notice, if it has not expired.
     pub fn current_notice(&self) -> Option<&Notice> {
         self.notice
             .as_ref()
             .filter(|(_, at)| at.elapsed() < NOTICE_TTL)
             .map(|(notice, _)| notice)
+    }
+
+    /// Show a ranking the moment it is written, then keep showing it until the
+    /// gateway's own report catches up (or [`OVERLAY_TTL`] passes). Without this
+    /// the list would sit unchanged for the reload delay and a second key press
+    /// would be computed from a stale order.
+    fn set_overlay(&mut self, provider: &str, ranks: Vec<(String, u32)>) {
+        self.overlay = Some(RankOverlay {
+            provider: provider.to_string(),
+            ranks,
+            at: Instant::now(),
+        });
+        self.apply_overlay();
+    }
+
+    fn apply_overlay(&mut self) {
+        let Some(overlay) = &self.overlay else { return };
+        let caught_up = self
+            .snapshot
+            .provider(&overlay.provider)
+            .is_none_or(|provider| {
+                overlay.ranks.iter().all(|(name, rank)| {
+                    provider
+                        .rows
+                        .iter()
+                        .find(|row| &row.account.name == name)
+                        .is_none_or(|row| row.priority() == *rank)
+                })
+            });
+        if caught_up || overlay.at.elapsed() > OVERLAY_TTL {
+            self.overlay = None;
+            return;
+        }
+        let overlay = self.overlay.take().expect("checked above");
+        if let Some(provider) = self
+            .snapshot
+            .providers
+            .iter_mut()
+            .find(|p| p.name == overlay.provider)
+        {
+            for row in &mut provider.rows {
+                if let Some((_, rank)) = overlay.ranks.iter().find(|(n, _)| *n == row.account.name)
+                {
+                    row.account.priority = Some(*rank);
+                }
+            }
+        }
+        self.overlay = Some(overlay);
+    }
+
+    pub fn on_paste(&mut self, text: &str) {
+        if let Some(dialog) = &mut self.dialog {
+            dialog.on_paste(text);
+        }
+    }
+
+    pub fn on_mouse(&mut self, mouse: MouseEvent) -> Effect {
+        if self.dialog.is_some() || self.show_help {
+            return Effect::None;
+        }
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let area = self.list_area;
+                let inside = mouse.column >= area.x
+                    && mouse.column < area.x + area.width
+                    && mouse.row >= area.y
+                    && mouse.row < area.y + area.height;
+                // A click on an account or provider line selects it; a click
+                // anywhere else — blank space, the headings, outside the list —
+                // leaves nothing selected.
+                self.selected = if inside {
+                    self.hits
+                        .get(usize::from(mouse.row - area.y))
+                        .cloned()
+                        .flatten()
+                } else {
+                    None
+                };
+            }
+            MouseEventKind::ScrollDown => self.scroll = self.scroll.saturating_add(1),
+            MouseEventKind::ScrollUp => self.scroll = self.scroll.saturating_sub(1),
+            _ => {}
+        }
+        Effect::None
     }
 
     pub fn on_key(&mut self, key: KeyEvent) -> Effect {
@@ -163,17 +320,29 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Effect::Quit;
         }
+        if self.dialog.is_some() {
+            return self.dialog_key(key);
+        }
         if self.show_help {
             // Any key dismisses the overlay; it must not also act.
             self.show_help = false;
             return Effect::None;
         }
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => Effect::Quit,
-            KeyCode::Char('?') | KeyCode::F(1) => {
+            KeyCode::Char('q') => Effect::Quit,
+            KeyCode::Esc => {
+                self.selected = None;
+                Effect::None
+            }
+            KeyCode::Char('?') => {
                 self.show_help = true;
                 Effect::None
             }
+            KeyCode::Up if shift => self.move_rank(-1),
+            KeyCode::Down if shift => self.move_rank(1),
+            KeyCode::Char('K') => self.move_rank(-1),
+            KeyCode::Char('J') => self.move_rank(1),
             KeyCode::Down | KeyCode::Char('j') => {
                 self.move_by(1);
                 Effect::None
@@ -190,216 +359,210 @@ impl App {
                 self.move_by(-10);
                 Effect::None
             }
-            KeyCode::Home | KeyCode::Char('g') => {
-                self.select(0);
-                Effect::None
-            }
-            KeyCode::End | KeyCode::Char('G') => {
-                let last = self.rows().len().saturating_sub(1);
-                self.select(last);
-                Effect::None
-            }
-            KeyCode::Char('s') => {
-                self.sort = self.sort.next();
-                Effect::None
-            }
-            KeyCode::Char('r') => {
-                self.descending = !self.descending;
-                Effect::None
-            }
-            KeyCode::Tab => {
-                self.cycle_filter();
-                Effect::None
-            }
-            KeyCode::Char('R') | KeyCode::F(5) => Effect::Refresh,
             KeyCode::Char('p') | KeyCode::Char(' ') => self.toggle_pause(),
-            KeyCode::Char('t') => Effect::SetSortByReset(!self.snapshot.sort_by_reset),
+            KeyCode::Char('o') => self.toggle_provider(),
+            KeyCode::Char('m') => self.toggle_mode(),
+            KeyCode::Char('a') => self.open_dialog(),
             _ => Effect::None,
         }
     }
 
-    fn cycle_filter(&mut self) {
-        let count = self.snapshot.providers().len();
-        self.filter = match self.filter {
-            None if count > 0 => Some(0),
-            Some(at) if at + 1 < count => Some(at + 1),
-            _ => None,
-        };
+    fn need(&mut self, text: &str) -> Effect {
+        self.notify(Notice::Info(text.to_string()));
+        Effect::None
     }
 
     fn toggle_pause(&mut self) -> Effect {
-        let Some(row) = self.selected_row() else {
-            return Effect::None;
+        let Some((provider, row)) = self.selected_row() else {
+            return self.need(
+                "Select an account first (p pauses one account; o switches a whole provider)",
+            );
         };
-        let (provider, paused) = (row.provider.clone(), row.account.paused);
         let Some(account_ref) = row.account_ref().map(str::to_string) else {
-            self.notify(Notice::Error(
-                "this gateway does not report account_ref; pause needs a build with pool pause support"
-                    .into(),
-            ));
+            let text = "this gateway does not report account_ref; pause needs pool pause support";
+            self.notify(Notice::Error(text.into()));
             return Effect::None;
         };
         Effect::SetPaused {
-            provider,
+            provider: provider.name.clone(),
             account_ref,
-            paused: !paused,
+            label: row.account.name.clone(),
+            paused: !row.account.paused,
+        }
+    }
+
+    fn toggle_provider(&mut self) -> Effect {
+        let Some(provider) = self.selected_provider() else {
+            return self.need("Select a provider or one of its accounts first");
+        };
+        let name = provider.name.clone();
+        let is_on = provider.is_on();
+        let refs = |paused: bool| -> Vec<String> {
+            provider
+                .rows
+                .iter()
+                .filter(|r| !r.account.disabled && r.account.paused == paused)
+                .filter_map(|r| r.account_ref().map(str::to_string))
+                .collect()
+        };
+        let (live, paused) = (refs(false), refs(true));
+        if is_on {
+            if live.is_empty() {
+                return self.need("This provider has no accounts to switch off");
+            }
+            self.switched_off.insert(name.clone(), live.clone());
+            Effect::SetProvider {
+                provider: name,
+                on: false,
+                account_refs: live,
+            }
+        } else {
+            // Resume what the switch paused; with no memory of it (a restart of
+            // this program), resume everything that is paused.
+            let remembered = self.switched_off.remove(&name).unwrap_or_default();
+            let account_refs = if remembered.is_empty() {
+                paused
+            } else {
+                remembered
+            };
+            Effect::SetProvider {
+                provider: name,
+                on: true,
+                account_refs,
+            }
+        }
+    }
+
+    fn toggle_mode(&mut self) -> Effect {
+        let Some(provider) = self.selected_provider() else {
+            return self.need("Select a provider or one of its accounts first");
+        };
+        if provider.rows.len() < 2 {
+            return self.need("Ranking needs at least two accounts in the provider");
+        }
+        let provider_name = provider.name.clone();
+        match provider.mode() {
+            RankMode::Custom => {
+                let ranks = provider
+                    .rows
+                    .iter()
+                    .map(|r| (r.account.name.clone(), DEFAULT_PRIORITY))
+                    .collect();
+                self.set_overlay(&provider_name, ranks);
+                Effect::ClearRanks {
+                    provider: provider_name,
+                }
+            }
+            RankMode::Balanced => {
+                // Start from the order the gateway is using right now, so
+                // switching does not reshuffle anything.
+                let order = self.current_order(&provider_name);
+                self.write_order(&provider_name, order)
+            }
+        }
+    }
+
+    fn current_order(&self, provider: &str) -> Vec<String> {
+        self.snapshot
+            .provider(provider)
+            .map(|p| {
+                p.ordered(self.snapshot.sort_by_reset)
+                    .into_iter()
+                    .map(|(_, row)| row.account.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn write_order(&mut self, provider: &str, order: Vec<String>) -> Effect {
+        let ranks: Vec<(String, u32)> = order
+            .into_iter()
+            .enumerate()
+            .map(|(at, name)| (name, at as u32 + 1))
+            .collect();
+        let pool_names = self
+            .snapshot
+            .provider(provider)
+            .map(|p| p.rows.iter().map(|r| r.account.name.clone()).collect())
+            .unwrap_or_default();
+        self.set_overlay(provider, ranks.clone());
+        Effect::SetRanks {
+            provider: provider.to_string(),
+            ranks,
+            pool_names,
+        }
+    }
+
+    fn move_rank(&mut self, delta: isize) -> Effect {
+        let Some((provider, row)) = self.selected_row() else {
+            return self.need("Select an account to move it up or down the ranking");
+        };
+        if provider.mode() != RankMode::Custom {
+            return self.need(
+                "Balanced mode has no fixed order — press m to switch to custom order first",
+            );
+        }
+        let (provider_name, name) = (provider.name.clone(), row.account.name.clone());
+        let mut order = self.current_order(&provider_name);
+        let Some(at) = order.iter().position(|n| *n == name) else {
+            return Effect::None;
+        };
+        let to = at.saturating_add_signed(delta);
+        if to >= order.len() || to == at {
+            return Effect::None;
+        }
+        order.swap(at, to);
+        self.write_order(&provider_name, order)
+    }
+
+    fn open_dialog(&mut self) -> Effect {
+        let choices: Vec<Target> = self
+            .snapshot
+            .providers
+            .iter()
+            .filter_map(|p| {
+                p.account_kind().map(|kind| Target {
+                    provider: p.name.clone(),
+                    kind,
+                })
+            })
+            .collect();
+        let preferred = self.selected.as_ref().map(|s| s.provider.clone());
+        match AddFlow::new(choices, preferred.as_deref()) {
+            Some(flow) => {
+                self.dialog = Some(flow);
+                Effect::None
+            }
+            None => self.need("No provider here can add accounts from the admin API"),
+        }
+    }
+
+    fn dialog_key(&mut self, key: KeyEvent) -> Effect {
+        let Some(dialog) = &mut self.dialog else {
+            return Effect::None;
+        };
+        match dialog.on_key(key) {
+            add::Effect::Cancel => self.close_dialog(),
+            add::Effect::None => self.sync_mouse(),
+            add::Effect::CopyUrl(url) => Effect::CopyToClipboard(url),
+            other => Effect::Add(other),
+        }
+    }
+
+    pub fn close_dialog(&mut self) -> Effect {
+        self.dialog = None;
+        Effect::MouseCapture(true)
+    }
+
+    /// Mouse capture follows the dialog's step: off while an authorize URL is on
+    /// screen, so it can be selected and copied.
+    pub fn sync_mouse(&self) -> Effect {
+        match &self.dialog {
+            Some(d) => Effect::MouseCapture(!d.wants_text_selection()),
+            None => Effect::MouseCapture(true),
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::tui::model::{AccountDto, PoolResponse, ProviderDto};
-
-    fn key(c: char) -> KeyEvent {
-        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
-    }
-
-    fn account(name: &str, util: f64) -> AccountDto {
-        AccountDto {
-            name: name.into(),
-            account_ref: Some(format!("ref-{name}")),
-            has_state: true,
-            available: true,
-            utilization_5h: Some(util),
-            ..AccountDto::default()
-        }
-    }
-
-    fn app_with(accounts: Vec<AccountDto>) -> App {
-        let mut app = App::new("http://x".into(), Duration::from_secs(2));
-        app.on_poll(Ok(Snapshot::from_response(PoolResponse {
-            providers: vec![ProviderDto {
-                provider: "claude".into(),
-                accounts,
-            }],
-            sort_by_reset: false,
-        })));
-        app
-    }
-
-    #[test]
-    fn pause_targets_the_selected_account_and_flips_state() {
-        let mut app = app_with(vec![account("a", 0.1), account("b", 0.2)]);
-        app.on_key(key('j'));
-        assert_eq!(
-            app.on_key(key('p')),
-            Effect::SetPaused {
-                provider: "claude".into(),
-                account_ref: "ref-b".into(),
-                paused: true
-            }
-        );
-        // A paused account asks to resume.
-        let mut b = account("b", 0.2);
-        b.paused = true;
-        app.on_poll(Ok(Snapshot::from_response(PoolResponse {
-            providers: vec![ProviderDto {
-                provider: "claude".into(),
-                accounts: vec![account("a", 0.1), b],
-            }],
-            sort_by_reset: false,
-        })));
-        assert!(matches!(
-            app.on_key(key('p')),
-            Effect::SetPaused { paused: false, .. }
-        ));
-    }
-
-    #[test]
-    fn selection_follows_the_account_across_a_resort() {
-        let mut app = app_with(vec![account("a", 0.9), account("b", 0.1)]);
-        app.on_key(key('j')); // select "b"
-        app.on_key(key('s')); // name
-        app.on_key(key('s')); // state
-        app.on_key(key('s')); // 5h usage ascending: b first
-        assert_eq!(app.selected_row().unwrap().account.name, "b");
-        assert_eq!(app.selected_index(), Some(0));
-        app.on_key(key('r')); // descending: b moves to the bottom
-        assert_eq!(app.selected_row().unwrap().account.name, "b");
-        assert_eq!(app.selected_index(), Some(1));
-    }
-
-    #[test]
-    fn selection_survives_a_poll_that_reorders_the_pool() {
-        let mut app = app_with(vec![account("a", 0.1), account("b", 0.2)]);
-        app.on_key(key('j'));
-        app.on_poll(Ok(Snapshot::from_response(PoolResponse {
-            providers: vec![ProviderDto {
-                provider: "claude".into(),
-                accounts: vec![account("b", 0.2), account("a", 0.1)],
-            }],
-            sort_by_reset: false,
-        })));
-        assert_eq!(app.selected_row().unwrap().account.name, "b");
-    }
-
-    #[test]
-    fn missing_account_ref_blocks_pause_with_a_notice() {
-        let mut a = account("a", 0.1);
-        a.account_ref = None;
-        let mut app = app_with(vec![a]);
-        assert_eq!(app.on_key(key('p')), Effect::None);
-        assert!(matches!(app.current_notice(), Some(Notice::Error(_))));
-    }
-
-    #[test]
-    fn t_requests_the_opposite_of_the_current_policy() {
-        let mut app = app_with(vec![account("a", 0.1)]);
-        assert_eq!(app.on_key(key('t')), Effect::SetSortByReset(true));
-        app.snapshot.sort_by_reset = true;
-        assert_eq!(app.on_key(key('t')), Effect::SetSortByReset(false));
-    }
-
-    #[test]
-    fn quit_refresh_and_help_keys() {
-        let mut app = app_with(vec![account("a", 0.1)]);
-        assert_eq!(app.on_key(key('R')), Effect::Refresh);
-        assert_eq!(app.on_key(key('?')), Effect::None);
-        assert!(app.show_help);
-        // The key that dismisses help must not also act.
-        assert_eq!(app.on_key(key('q')), Effect::None);
-        assert!(!app.show_help);
-        assert_eq!(app.on_key(key('q')), Effect::Quit);
-        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert_eq!(app.on_key(ctrl_c), Effect::Quit);
-    }
-
-    #[test]
-    fn a_failed_poll_keeps_the_last_snapshot_and_records_the_error() {
-        let mut app = app_with(vec![account("a", 0.1)]);
-        app.on_poll(Err("gateway unreachable".into()));
-        assert_eq!(app.rows().len(), 1);
-        assert_eq!(app.poll_error.as_deref(), Some("gateway unreachable"));
-        app.on_poll(Ok(Snapshot::default()));
-        assert!(app.poll_error.is_none());
-    }
-
-    #[test]
-    fn tab_cycles_provider_filter_and_wraps_to_all() {
-        let mut app = App::new("http://x".into(), Duration::from_secs(2));
-        app.on_poll(Ok(Snapshot::from_response(PoolResponse {
-            providers: vec![
-                ProviderDto {
-                    provider: "claude".into(),
-                    accounts: vec![account("a", 0.1)],
-                },
-                ProviderDto {
-                    provider: "codex".into(),
-                    accounts: vec![account("b", 0.1)],
-                },
-            ],
-            sort_by_reset: false,
-        })));
-        let tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
-        app.on_key(tab);
-        assert_eq!(app.filter_name().as_deref(), Some("claude"));
-        app.on_key(tab);
-        assert_eq!(app.rows().len(), 1);
-        assert_eq!(app.rows()[0].provider, "codex");
-        app.on_key(tab);
-        assert_eq!(app.filter_name(), None);
-        assert_eq!(app.rows().len(), 2);
-    }
-}
+mod tests;

@@ -64,10 +64,11 @@ enum Command {
         #[arg(long)]
         config: Option<PathBuf>,
     },
-    /// Live terminal monitor for the managed account pool: usage per account,
-    /// sorting, and pause/resume. Talks to a running gateway's admin API
-    /// (needs a write-tier admin token to pause). Requires a build with
-    /// `--features tui`.
+    /// Live terminal view of the managed account pool, one section per
+    /// provider: usage and reset times, pause/resume, a provider on/off switch,
+    /// an explicit account ranking, and adding accounts (saved to shunt.toml).
+    /// Talks to a running gateway's admin API and needs a write-tier admin
+    /// token. Requires a build with `--features tui`.
     Top {
         /// Gateway base URL. Default: derived from `[server].bind` in the config.
         #[arg(long)]
@@ -82,6 +83,8 @@ enum Command {
         /// Poll interval in milliseconds (minimum 500).
         #[arg(long, default_value_t = 2000)]
         interval_ms: u64,
+        /// The config file the gateway runs; `shunt top` edits it to save
+        /// rankings and added accounts.
         #[arg(long)]
         config: Option<PathBuf>,
     },
