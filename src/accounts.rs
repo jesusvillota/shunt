@@ -126,6 +126,11 @@ const REPROBE_DEFAULT_SECS: u64 = 900;
 /// Minimum positive opportunistic-reprobe interval.
 pub(crate) const REPROBE_FLOOR_SECS: u64 = 60;
 
+/// Bound the process-lifetime session-affinity cache. Entries are refreshed on
+/// every selection for that session; when the cap is reached, the least-recently
+/// seen binding is evicted before a new one is inserted.
+const SESSION_AFFINITY_CAP: usize = 4096;
+
 /// The effective opportunistic-reprobe interval, or `None` when re-probing is
 /// disabled. Disabled when `[server.pool]` itself is absent (preserves the
 /// documented pre-#135 behavior: no pool config, no probing), or when
@@ -543,11 +548,21 @@ impl AccountSnapshot {
     }
 }
 
+#[derive(Debug, Clone)]
+struct SessionAffinity {
+    account: AccountKey,
+    last_seen: Instant,
+}
+
 /// Process-lifetime health and scheduling state for configured accounts.
 #[derive(Debug, Default)]
 pub struct AccountPool {
     entries: Mutex<HashMap<AccountKey, AccountHealth>>,
     rr: Mutex<HashMap<String, usize>>,
+    /// Sticky account chosen for a real conversation after its first routing
+    /// decision. The key stores a SHA-256 digest of the opaque session id rather
+    /// than the raw client value.
+    session_affinity: Mutex<HashMap<(String, [u8; 32]), SessionAffinity>>,
     refresh_locks: Mutex<HashMap<AccountKey, RefreshLock>>,
     memberships: Mutex<HashMap<String, HashMap<AccountKey, bool>>>,
     /// Monotonic source for opaque in-flight reprobe reservations. Tokens are
@@ -700,6 +715,78 @@ impl AccountPool {
         Self::default()
     }
 
+    fn session_affinity_key(provider: &str, session_id: &str) -> (String, [u8; 32]) {
+        let digest = Sha256::digest(session_id.as_bytes());
+        let mut bytes = [0_u8; 32];
+        bytes.copy_from_slice(&digest);
+        (provider.to_string(), bytes)
+    }
+
+    fn session_affinity_index(
+        &self,
+        provider: &str,
+        session_id: &str,
+        accounts: &[AccountConfig],
+        candidates: &[usize],
+    ) -> Option<usize> {
+        let key = Self::session_affinity_key(provider, session_id);
+        let mut affinities = self
+            .session_affinity
+            .lock()
+            .expect("session affinity lock poisoned");
+        let bound_account = {
+            let binding = affinities.get_mut(&key)?;
+            binding.last_seen = Instant::now();
+            binding.account.clone()
+        };
+        let index = candidates
+            .iter()
+            .copied()
+            .find(|&index| account_key(provider, &accounts[index]) == bound_account);
+        if index.is_none() {
+            affinities.remove(&key);
+        }
+        index
+    }
+
+    fn clear_session_affinity(&self, provider: &str, session_id: &str) {
+        self.session_affinity
+            .lock()
+            .expect("session affinity lock poisoned")
+            .remove(&Self::session_affinity_key(provider, session_id));
+    }
+
+    fn remember_session_affinity(
+        &self,
+        provider: &str,
+        session_id: &str,
+        account: &AccountConfig,
+    ) {
+        let key = Self::session_affinity_key(provider, session_id);
+        let mut affinities = self
+            .session_affinity
+            .lock()
+            .expect("session affinity lock poisoned");
+
+        if !affinities.contains_key(&key) && affinities.len() >= SESSION_AFFINITY_CAP {
+            if let Some(oldest) = affinities
+                .iter()
+                .min_by_key(|(_, binding)| binding.last_seen)
+                .map(|(key, _)| key.clone())
+            {
+                affinities.remove(&oldest);
+            }
+        }
+
+        affinities.insert(
+            key,
+            SessionAffinity {
+                account: account_key(provider, account),
+                last_seen: Instant::now(),
+            },
+        );
+    }
+
     /// Synchronize the upstream's current configured identities before an
     /// out-of-band usage poll updates individual accounts. Membership remains
     /// upstream-scoped even though each identity's health is global.
@@ -719,15 +806,20 @@ impl AccountPool {
     /// Return account indices in the order an adapter should try them.
     ///
     /// A `session_id` of `Some("")` is treated as absent: a blank header is not
-    /// a conversation, so such requests round-robin rather than sharing one
-    /// sticky slot (issue #566).
+    /// a conversation, so such requests use the normal per-request tiebreak
+    /// rotation rather than creating a sticky binding (issue #566).
+    ///
+    /// A non-empty session is sticky *after its first routing decision*: the
+    /// first turn follows the live pool order, then later turns keep that
+    /// account at the front while it remains healthy. This lets equal-priority
+    /// ("balanced") pools choose by live headroom/reset state and lets distinct
+    /// priorities implement a strict waterfall for new conversations.
     ///
     /// `pool` is the optional `[server.pool]` tuning (issue #135). When
-    /// absent, selection is the pre-#135 behavior: a single 0.98 hard
-    /// threshold and weekly-reset ordering. When present, available accounts
-    /// order by `priority` then burn-rate headroom, soft-threshold-near
-    /// accounts fall back to headroom order (the all-near guard), and
-    /// accounts past `hard_threshold` sort last among the available.
+    /// absent, selection uses the legacy 0.98 hard threshold and weekly-reset
+    /// tiebreak. When present, available accounts order by `priority` then
+    /// burn-rate headroom (or soonest reset), soft-threshold-near accounts fall
+    /// behind healthy ones, and accounts past `hard_threshold` sort last.
     /// Per-account `priority`/`disabled` apply in both modes.
     pub fn select_order(
         &self,
@@ -1004,16 +1096,14 @@ impl AccountPool {
             order
         };
 
-        let sticky = ident_reps[start_slot];
-        let (sticky_cooldown, ref sticky_quota, _, _) = snapshots[sticky];
-        // `rotation` already excludes a disabled or paused sticky account, so
-        // membership in it covers both checks the fast path needs.
-        if rotation.contains(&sticky)
-            && sticky_cooldown.is_none_or(|until| until <= now)
-            && !sticky_quota.near
-        {
-            return (promote(rotation), pending_reprobe);
-        }
+        // A session that has already been assigned keeps that account while it
+        // remains healthy. New sessions deliberately do *not* get the old
+        // hash-first fast path: they fall through to the live ordering below,
+        // which is what makes balanced mode genuinely headroom-driven and
+        // custom priorities a strict waterfall.
+        let bound_session_index = session_id.and_then(|session_id| {
+            self.session_affinity_index(&provider, session_id, accounts, &rotation)
+        });
 
         let is_available =
             |index: usize| snapshots[index].0.is_none_or(|until: Instant| until <= now);
@@ -1102,17 +1192,36 @@ impl AccountPool {
             .collect::<Vec<_>>();
         cooled.sort_by_key(|&index| snapshots[index].0);
 
-        (
-            promote(
-                available_under
-                    .into_iter()
-                    .chain(near_soft)
-                    .chain(over_hard)
-                    .chain(cooled)
-                    .collect(),
-            ),
-            pending_reprobe,
-        )
+        let mut order: Vec<usize> = available_under
+            .into_iter()
+            .chain(near_soft)
+            .chain(over_hard)
+            .chain(cooled)
+            .collect();
+
+        if let Some(bound) = bound_session_index {
+            if is_available(bound) && !snapshots[bound].1.near {
+                if let Some(position) = order.iter().position(|&index| index == bound) {
+                    order.remove(position);
+                    order.insert(0, bound);
+                }
+            } else if let Some(session_id) = session_id {
+                self.clear_session_affinity(&provider, session_id);
+            }
+        }
+
+        // Re-probes are intentionally transient and may temporarily override a
+        // sticky account. Do not establish a new binding from such a request;
+        // the next turn will make a normal routing decision.
+        if pending_reprobe.is_none() {
+            if let (Some(session_id), Some(&first)) = (session_id, order.first()) {
+                if is_available(first) && !snapshots[first].1.near {
+                    self.remember_session_affinity(&provider, session_id, &accounts[first]);
+                }
+            }
+        }
+
+        (promote(order), pending_reprobe)
     }
 
     pub fn note_quota(&self, provider: &str, account: &AccountConfig, headers: &HeaderMap) {
