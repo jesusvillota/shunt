@@ -38,6 +38,11 @@ fn snapshot(
         status: None,
         quota_buckets: Vec::new(),
         needs_relogin: false,
+        requests_attempted: 0,
+        requests_succeeded: 0,
+        requests_failed: 0,
+        requests_cancelled: 0,
+        mean_latency_ms: None,
     }
 }
 
@@ -188,6 +193,7 @@ fn state_with_claude_and_codex_accounts(
     let mut config = crate::config::Config::default();
     config.server.bind = bind.to_string();
     config.server.auth = Some(InboundAuthConfig {
+        jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: env.clone(),
     });

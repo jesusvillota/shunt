@@ -14,6 +14,12 @@ use tokio::sync::Mutex as AsyncMutex;
 
 use crate::config::{AccountConfig, PoolConfig};
 
+mod request_stats;
+
+pub use request_stats::AttemptOutcome;
+pub(crate) use request_stats::CountAttempt;
+use request_stats::RequestStats;
+
 /// Credential-store namespace. Stable account ids only coalesce inside their
 /// own store family, so a Claude UUID can never collide with a ChatGPT account id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -351,6 +357,10 @@ impl ReloginCause {
 
 #[derive(Debug, Default)]
 struct AccountHealth {
+    /// Stamped by [`AccountPool::health_entry`] when the entry is created, so
+    /// an in-flight attempt can tell the entry it dispatched against from an
+    /// entry re-created for the same identity after a forget.
+    generation: u64,
     cooldown_until: Option<Instant>,
     cooldown_until_fable: Option<Instant>,
     quota: QuotaState,
@@ -421,6 +431,9 @@ struct AccountHealth {
     /// Memory-only, like
     /// `cooldown_until`.
     model_cooldowns: HashMap<String, Instant>,
+    /// Upstream attempts against this identity, recorded by
+    /// [`AccountPool::note_attempt`]. Memory-only, like `cooldown_until`.
+    requests: RequestStats,
 }
 
 /// Token-free, serializable view of one account's pool health for the admin
@@ -469,15 +482,38 @@ pub struct AccountSnapshot {
     /// into — `available` and the cooldown fields, so the dashboard can tell
     /// "cooling down, will retry" apart from "cooling down forever".
     pub needs_relogin: bool,
+    /// Upstream attempts against this account since the process started:
+    /// `requests_succeeded + requests_failed + requests_cancelled`. The five
+    /// request fields are reported whether or not `has_state` is set: an
+    /// attempt that timed out before any response headers leaves no other
+    /// trace on the account.
+    pub requests_attempted: u64,
+    /// Attempts answered with a `2xx` status.
+    pub requests_succeeded: u64,
+    /// Attempts answered with any other status, or that ended before any
+    /// response headers.
+    pub requests_failed: u64,
+    /// Attempts dropped before they resolved: the client went away or a
+    /// deadline above the adapter cut the send.
+    pub requests_cancelled: u64,
+    /// Mean time from dispatch to response headers in milliseconds, over the
+    /// attempts that received headers; `None` until one has.
+    pub mean_latency_ms: Option<f64>,
 }
 
 impl AccountSnapshot {
-    /// A clean slot for an account the pool has never selected. `needs_relogin`
+    /// A clean slot for an account the pool has not observed yet. `needs_relogin`
     /// is passed in rather than defaulted to `false`: the admin refresh probe
     /// records a terminal verdict by store name in the pool's side table, and
     /// such an account has no health entry to carry it (see
-    /// [`AccountPool::store_relogin`]).
-    fn unseen(account: &AccountConfig, needs_relogin: bool, paused: bool) -> Self {
+    /// [`AccountPool::store_relogin`]). `requests` is passed in because an
+    /// attempt can land before any response is observed.
+    fn unseen(
+        account: &AccountConfig,
+        needs_relogin: bool,
+        paused: bool,
+        requests: RequestStats,
+    ) -> Self {
         Self {
             name: account.name.clone(),
             has_state: false,
@@ -498,6 +534,11 @@ impl AccountSnapshot {
             status: None,
             quota_buckets: Vec::new(),
             needs_relogin,
+            requests_attempted: requests.attempted(),
+            requests_succeeded: requests.succeeded(),
+            requests_failed: requests.failed(),
+            requests_cancelled: requests.cancelled(),
+            mean_latency_ms: requests.mean_latency_ms(),
         }
     }
 }
@@ -545,6 +586,12 @@ pub struct AccountPool {
     /// only pattern needed; `forget_identity` takes this one alone, after it has
     /// released `entries`, which is still consistent with that order.
     store_relogin: Mutex<HashSet<StoreAccountRef>>,
+    /// Monotonic source for [`AccountHealth::generation`], stamped when an
+    /// entry is created. In-flight attempts capture the generation of the key
+    /// they dispatch against and only record onto an entry whose generation
+    /// still matches, so a delete-and-re-add of the same identity cannot hand
+    /// the old attempt's counters to the replacement entry.
+    next_entry_generation: AtomicU64,
     /// Runtime override for `[server.pool] sort_by_reset`, set via
     /// `PATCH /admin/api/pool`. `[server.pool]` is process-wide (there is one,
     /// not one per provider), so this override is too. `None` defers to the
@@ -817,7 +864,7 @@ impl AccountPool {
             let mut paused = vec![false; accounts.len()];
             let mut quota_expired = false;
             for (index, account) in accounts.iter().enumerate() {
-                let health = entries.entry(account_key(&provider, account)).or_default();
+                let health = self.health_entry(&mut entries, account_key(&provider, account));
                 health.enabled |= !account.disabled;
                 paused[index] = health.paused_providers.contains(&provider);
                 quota_expired |= expire_stale_quota(&mut health.quota, unix_now);
@@ -1071,7 +1118,7 @@ impl AccountPool {
     pub fn note_quota(&self, provider: &str, account: &AccountConfig, headers: &HeaderMap) {
         {
             let mut entries = self.entries.lock().expect("account health lock poisoned");
-            let health = entries.entry(account_key(provider, account)).or_default();
+            let health = self.health_entry(&mut entries, account_key(provider, account));
             health.observed = true;
             let quota = &mut health.quota;
             let now = unix_now();
@@ -1171,7 +1218,7 @@ impl AccountPool {
     pub fn note_codex_quota(&self, provider: &str, account: &AccountConfig, headers: &HeaderMap) {
         {
             let mut entries = self.entries.lock().expect("account health lock poisoned");
-            let health = entries.entry(account_key(provider, account)).or_default();
+            let health = self.health_entry(&mut entries, account_key(provider, account));
             health.observed = true;
             let quota = &mut health.quota;
             let now = unix_now();
@@ -1236,7 +1283,7 @@ impl AccountPool {
     ) {
         {
             let mut entries = self.entries.lock().expect("account health lock poisoned");
-            let health = entries.entry(account_key(provider, account)).or_default();
+            let health = self.health_entry(&mut entries, account_key(provider, account));
             health.observed = true;
             let quota = &mut health.quota;
             let now = unix_now();
@@ -1317,7 +1364,7 @@ impl AccountPool {
     ) {
         {
             let mut entries = self.entries.lock().expect("account health lock poisoned");
-            let health = entries.entry(account_key(provider, account)).or_default();
+            let health = self.health_entry(&mut entries, account_key(provider, account));
             health.observed = true;
             let now = unix_now();
             {
@@ -1377,7 +1424,7 @@ impl AccountPool {
         buckets: Vec<QuotaBucketSnapshot>,
     ) {
         let mut entries = self.entries.lock().expect("account health lock poisoned");
-        let health = entries.entry(account_key(provider, account)).or_default();
+        let health = self.health_entry(&mut entries, account_key(provider, account));
         health.observed = true;
         health.quota_buckets = buckets;
     }
@@ -1392,7 +1439,7 @@ impl AccountPool {
     ) {
         {
             let mut entries = self.entries.lock().expect("account health lock poisoned");
-            let health = entries.entry(account_key(provider, account)).or_default();
+            let health = self.health_entry(&mut entries, account_key(provider, account));
             health.observed = true;
             let quota = &mut health.quota;
             let now = unix_now();
@@ -1452,7 +1499,7 @@ impl AccountPool {
         scope: CooldownScope,
     ) {
         let mut entries = self.entries.lock().expect("account health lock poisoned");
-        let health = entries.entry(account_key(provider, account)).or_default();
+        let health = self.health_entry(&mut entries, account_key(provider, account));
         health.observed = true;
         health.enabled = !account.disabled;
         match scope {
@@ -1483,7 +1530,7 @@ impl AccountPool {
     ) {
         let now = Instant::now();
         let mut entries = self.entries.lock().expect("account health lock poisoned");
-        let health = entries.entry(account_key(provider, account)).or_default();
+        let health = self.health_entry(&mut entries, account_key(provider, account));
         health.observed = true;
         health.enabled = !account.disabled;
         // Prune on insert so expired refusals do not accumulate. On the inbound
@@ -1534,7 +1581,7 @@ impl AccountPool {
                 health.needs_relogin = Some(ReloginCause::strongest(health.needs_relogin, cause));
             }
         }
-        let health = entries.entry(key).or_default();
+        let health = self.health_entry(&mut entries, key);
         health.observed = true;
         health.enabled = !account.disabled;
         health.needs_relogin = Some(ReloginCause::strongest(health.needs_relogin, cause));
@@ -1577,7 +1624,7 @@ impl AccountPool {
     pub fn set_paused(&self, provider: &str, account: &AccountConfig, paused: bool) {
         let mut entries = self.entries.lock().expect("account health lock poisoned");
         let key = account_key(provider, account);
-        let health = entries.entry(key).or_default();
+        let health = self.health_entry(&mut entries, key);
         if paused {
             health.paused_providers.insert(provider.to_string());
         } else {
@@ -1868,7 +1915,7 @@ impl AccountPool {
             self.any_needs_relogin
                 .store(still_marked, Ordering::Relaxed);
         }
-        let health = entries.entry(key).or_default();
+        let health = self.health_entry(&mut entries, key);
         health.observed = true;
         health.enabled = !account.disabled;
         health.cooldown_until = None;
@@ -1886,6 +1933,53 @@ impl AccountPool {
         if turn_succeeded && health.ramp_allowance > 0 {
             health.ramp_allowance = health.ramp_allowance.saturating_mul(2);
         }
+    }
+
+    /// Record one upstream attempt against this account for the admin
+    /// snapshot. The adapters reach this through [`CountAttempt`], which times
+    /// the send; `request_stats` defines what one attempt is.
+    ///
+    /// Unlike [`Self::note_quota`] and [`Self::cooldown`], this never creates
+    /// an entry: selection has already created one for every candidate, so a
+    /// missing entry means the account was forgotten while the attempt was in
+    /// flight, and its outcome is discarded. The same discard covers an entry
+    /// re-created for the identity after that forget: `CountAttempt` captures
+    /// the entry's [`AccountHealth::generation`] at dispatch and the record
+    /// only lands while it is unchanged, so a delete-and-re-add mid-flight
+    /// cannot hand the old attempt's counters to the replacement entry. A
+    /// forget of a different identity leaves this entry's generation alone.
+    pub fn note_attempt(&self, provider: &str, account: &AccountConfig, outcome: AttemptOutcome) {
+        let key = account_key(provider, account);
+        let mut entries = self.entries.lock().expect("account health lock poisoned");
+        if let Some(health) = entries.get_mut(&key) {
+            health.requests.record(outcome);
+        }
+    }
+
+    /// The generation of the entry under `provider`/`account`, or `0` when
+    /// the pool holds no entry for it. Captured by an in-flight attempt at
+    /// dispatch and re-checked when its outcome records.
+    pub(crate) fn entry_generation(&self, provider: &str, account: &AccountConfig) -> u64 {
+        let key = account_key(provider, account);
+        let entries = self.entries.lock().expect("account health lock poisoned");
+        entries
+            .get(&key)
+            .map(|health| health.generation)
+            .unwrap_or(0)
+    }
+
+    /// The pool's health entry for `key`, stamping a fresh generation when it
+    /// is created.
+    fn health_entry<'a>(
+        &self,
+        entries: &'a mut HashMap<AccountKey, AccountHealth>,
+        key: AccountKey,
+    ) -> &'a mut AccountHealth {
+        let health = entries.entry(key).or_default();
+        if health.generation == 0 {
+            health.generation = self.next_entry_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        }
+        health
     }
 
     /// Storm-control admission gate (issue #195): admit a request to this
@@ -1913,7 +2007,7 @@ impl AccountPool {
             // Captured under the lock so `ramp_last_activity` (only ever
             // written under this same lock) can never be later than `now`.
             let now = Instant::now();
-            let health = entries.entry(key.clone()).or_default();
+            let health = self.health_entry(&mut entries, key.clone());
             let idle = health.in_flight == 0
                 && health
                     .ramp_last_activity
@@ -2138,22 +2232,27 @@ impl AccountPool {
                                 account_uuid,
                             )
                         });
-                    let Some(health) = entries.get_mut(&key).filter(|health| health.observed)
-                    else {
+                    let entry = entries.get_mut(&key);
+                    let requests = entry
+                        .as_ref()
+                        .map(|health| health.requests)
+                        .unwrap_or_default();
+                    // `paused` is read from any entry that exists regardless of
+                    // `observed`, so an operator's pause shows up immediately even
+                    // before the account is ever selected.
+                    let paused = entry
+                        .as_ref()
+                        .is_some_and(|health| health.paused_providers.contains(provider));
+                    let Some(health) = entry.filter(|health| health.observed) else {
                         // Never selected, or selected but not yet answered (a default
                         // entry from `select_order`): report a clean, available slot —
                         // except for the one thing that can be known about an account
-                        // with no entry at all, the side table's verdict. `has_state`
+                        // with no entry at all, the side table's verdict, and the
+                        // attempts an unanswered entry has already counted. `has_state`
                         // stays `false`, which is still true and which both dashboard
                         // tables already read *after* `needs_relogin`, so the row
-                        // renders "needs re-login" rather than "unseen". `paused` is
-                        // read from any entry that exists regardless of `observed`, so
-                        // an operator's pause shows up immediately even before the
-                        // account is ever selected.
-                        let paused = entries
-                            .get(&key)
-                            .is_some_and(|health| health.paused_providers.contains(provider));
-                        return AccountSnapshot::unseen(account, store_condemned, paused);
+                        // renders "needs re-login" rather than "unseen".
+                        return AccountSnapshot::unseen(account, store_condemned, paused, requests);
                     };
                     quota_expired |= expire_stale_quota(&mut health.quota, unix_now);
                     let quota = assess_quota(&health.quota, account, is_fable, pool, unix_now);
@@ -2209,6 +2308,11 @@ impl AccountPool {
                         // response on any row backed by that store account lifts
                         // it here as well.
                         needs_relogin: health.needs_relogin.is_some() || store_condemned,
+                        requests_attempted: requests.attempted(),
+                        requests_succeeded: requests.succeeded(),
+                        requests_failed: requests.failed(),
+                        requests_cancelled: requests.cancelled(),
+                        mean_latency_ms: requests.mean_latency_ms(),
                     }
                 })
                 .collect();
@@ -2330,7 +2434,7 @@ impl AccountPool {
             corrected |= clamp_future_observation(&mut quota.observed_at_status_7d, now);
             corrected |= clamp_future_observation(&mut quota.observed_at_status_7d_oi, now);
             corrected |= clamp_future_observation(&mut quota.observed_at_status, now);
-            let health = entries.entry(key).or_default();
+            let health = self.health_entry(&mut entries, key);
             health.observed = true;
             health.quota = quota;
         }

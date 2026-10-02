@@ -12,7 +12,7 @@ use futures_util::{stream, Stream, StreamExt};
 use serde_json::Value;
 
 use crate::{
-    accounts::{self, FailoverAction, ReprobeReservation},
+    accounts::{self, CountAttempt, FailoverAction, ReprobeReservation},
     adapters::AdapterError,
     auth::{self, codex::auth::CodexAuthStore, resolve_chatgpt_account, Credential},
     config::{AccountConfig, AuthMode},
@@ -610,6 +610,7 @@ pub(super) fn pool_events_stream(
                                 window,
                                 body.clone(),
                             )
+                            .count_attempt(&state.accounts, &route.provider, account)
                             .await
                             {
                                 Ok(response) => response,
@@ -768,6 +769,7 @@ pub(super) fn pool_events_stream(
                                         window,
                                         body.clone(),
                                     )
+                                    .count_attempt(&state.accounts, &route.provider, account)
                                     .await
                                     {
                                         Ok(response) => response,
@@ -1175,7 +1177,8 @@ pub(super) async fn forward_chatgpt_oauth(
                 delegation.as_ref(),
                 window,
                 body.clone(),
-            ),
+            )
+            .count_attempt(&state.accounts, &route.provider, account),
         )
         .await
         .map_err(crate::adapters::idle_error)?
@@ -1276,7 +1279,8 @@ pub(super) async fn forward_chatgpt_oauth(
                         delegation.as_ref(),
                         window,
                         body.clone(),
-                    ),
+                    )
+                    .count_attempt(&state.accounts, &route.provider, account),
                 )
                 .await
                 .map_err(crate::adapters::idle_error)?
