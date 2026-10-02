@@ -220,6 +220,14 @@ async fn forward_codex_passthrough(
                 state
                     .accounts
                     .mark_healthy(&route.provider, account, status.is_success());
+                if status.is_success() {
+                    state.accounts.remember_session_assignment(
+                        &route.provider,
+                        pool_key.as_deref(),
+                        Some(route.upstream_model.as_str()),
+                        account,
+                    );
+                }
                 return Ok((
                     status,
                     crate::adapters::with_admission(
@@ -283,6 +291,14 @@ async fn forward_codex_passthrough(
                             account,
                             retry_status.is_success(),
                         );
+                        if retry_status.is_success() {
+                            state.accounts.remember_session_assignment(
+                                &route.provider,
+                                pool_key.as_deref(),
+                                Some(route.upstream_model.as_str()),
+                                account,
+                            );
+                        }
                         return Ok((
                             retry_status,
                             crate::adapters::with_admission(
