@@ -272,3 +272,15 @@ fn help_and_tiny_terminals_do_not_panic() {
     app.reveal = true;
     draw(&mut app, 20, 2);
 }
+
+#[test]
+fn requests_cell_shows_ok_fail_and_latency_once_attempted() {
+    let mut a = acct("a");
+    assert_eq!(requests_cell(&a), "–");
+    a.requests_attempted = 12;
+    a.requests_succeeded = 10;
+    a.requests_failed = 2;
+    assert_eq!(requests_cell(&a), "10/2");
+    a.mean_latency_ms = Some(419.6);
+    assert_eq!(requests_cell(&a), "10/2 · 420ms");
+}
