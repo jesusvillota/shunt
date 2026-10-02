@@ -386,7 +386,9 @@ fn delete_requires_a_selected_managed_account_and_confirmation() {
 
     assert_eq!(app.on_key(key('d')), Effect::None);
     assert!(app.delete_confirm.is_none());
-    assert!(matches!(app.current_notice(), Some(Notice::Info(t)) if t.contains("Select an account")));
+    assert!(
+        matches!(app.current_notice(), Some(Notice::Info(t)) if t.contains("Select an account"))
+    );
 
     app.on_key(key('j')); // provider header
     assert_eq!(app.on_key(key('d')), Effect::None);
@@ -432,7 +434,9 @@ fn delete_is_not_offered_for_provider_families_without_a_delete_endpoint() {
     app.on_key(key('j'));
     assert_eq!(app.on_key(key('d')), Effect::None);
     assert!(app.delete_confirm.is_none());
-    assert!(matches!(app.current_notice(), Some(Notice::Info(t)) if t.contains("cannot be deleted")));
+    assert!(
+        matches!(app.current_notice(), Some(Notice::Info(t)) if t.contains("cannot be deleted"))
+    );
 }
 
 #[test]
