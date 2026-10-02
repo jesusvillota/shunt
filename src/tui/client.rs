@@ -101,6 +101,22 @@ impl Client {
             .context("the gateway did not return an authorize URL")
     }
 
+    /// Delete one managed account credential from the gateway's store.
+    pub async fn delete_account(&self, kind: &str, name: &str) -> anyhow::Result<()> {
+        let mut url = reqwest::Url::parse(&self.url("/accounts"))?;
+        url.path_segments_mut()
+            .map_err(|()| anyhow::anyhow!("base URL cannot carry a path"))?
+            .extend([kind, name]);
+        let response = self
+            .http
+            .delete(url)
+            .header(&self.header, &self.token)
+            .send()
+            .await
+            .context("gateway unreachable")?;
+        ok_empty(response).await
+    }
+
     /// Finish provisioning with the code (or callback URL) the operator pasted.
     /// The completion exchanges the code upstream, so it gets a longer timeout
     /// than the polling calls.
