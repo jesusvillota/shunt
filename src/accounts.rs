@@ -816,9 +816,9 @@ impl AccountPool {
     /// priorities implement a strict waterfall for new conversations.
     ///
     /// `pool` is the optional `[server.pool]` tuning (issue #135). When
-    /// absent, selection uses the legacy 0.98 hard threshold and weekly-reset
-    /// tiebreak. When present, available accounts order by `priority` then
-    /// burn-rate headroom (or soonest reset), soft-threshold-near accounts fall
+    /// absent, selection uses the legacy 0.98 hard threshold but still applies
+    /// balanced headroom ordering. When present, the configured thresholds and
+    /// optional soonest-reset ranking apply. Soft-threshold-near accounts fall
     /// behind healthy ones, and accounts past `hard_threshold` sort last.
     /// Per-account `priority`/`disabled` apply in both modes.
     pub fn select_order(
@@ -10528,10 +10528,9 @@ mod tests {
 
     #[test]
     fn effective_sort_by_reset_is_false_without_pool_config_even_if_overridden() {
-        // `[server.pool]` absent means the legacy branch of `select_order_inner`
-        // runs, which never consults `sort_by_reset` at all. Reporting the
-        // runtime override as active in that state (e.g. on `GET
-        // /admin/api/pool`) would claim an effect selection does not have.
+        // `sort_by_reset` is a [server.pool] feature. Without that section,
+        // balanced selection still uses headroom, but a runtime reset-order
+        // override remains inert and must not be reported as active.
         let pool = AccountPool::new();
         pool.set_sort_by_reset_override(Some(true));
         assert!(!pool.effective_sort_by_reset(None));
