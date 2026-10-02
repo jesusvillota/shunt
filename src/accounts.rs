@@ -5160,6 +5160,7 @@ mod tests {
             pool.select_order("anthropic", &accounts, Some(session), None, None)[0],
             0
         );
+        pool.remember_session_assignment("anthropic", Some(session), None, &accounts[0]);
         pool.note_quota(
             "anthropic",
             &accounts[0],
@@ -5218,6 +5219,7 @@ mod tests {
             )[0],
             0
         );
+        pool.remember_session_assignment("anthropic", Some(existing), None, &accounts[0]);
 
         // Flip the live ranking while A is still healthy. The existing
         // conversation stays on A, while a new conversation follows the new
@@ -5268,6 +5270,7 @@ mod tests {
         let session = "healthy-sticky";
         let first = pool.select_order("anthropic", &accounts, Some(session), None, None);
         let sticky = first[0];
+        pool.remember_session_assignment("anthropic", Some(session), None, &accounts[sticky]);
         pool.note_quota(
             "anthropic",
             &accounts[sticky],
@@ -5289,6 +5292,7 @@ mod tests {
         let session = "quota-sticky";
         let original = pool.select_order("anthropic", &accounts, Some(session), None, None);
         let sticky = original[0];
+        pool.remember_session_assignment("anthropic", Some(session), None, &accounts[sticky]);
         pool.note_quota(
             "anthropic",
             &accounts[sticky],
@@ -6048,6 +6052,7 @@ mod tests {
         let session = "reenter-reset-passes";
         let initial = pool.select_order("codex", &accounts, Some(session), None, None);
         let sticky = initial[0];
+        pool.remember_session_assignment("codex", Some(session), None, &accounts[sticky]);
         let reset = unix_now() + 3_600;
         pool.note_codex_quota(
             "codex",
@@ -6063,6 +6068,8 @@ mod tests {
             yielded[0], sticky,
             "an exhausted account yields while its reset is still future"
         );
+        let failover = yielded[0];
+        pool.remember_session_assignment("codex", Some(session), None, &accounts[failover]);
 
         // Rewind the reset into the past directly — this is the state the
         // account would be in once upstream's window has actually reset, with
@@ -6077,8 +6084,8 @@ mod tests {
 
         let recovered = pool.select_order("codex", &accounts, Some(session), None, None);
         assert_eq!(
-            recovered[0], sticky,
-            "the account re-enters selection once its reset has passed"
+            recovered[0], failover,
+            "the conversation stays on the successful failover account after the old primary recovers"
         );
         let snaps = pool.snapshot("codex", &accounts, None, None);
         let sticky_snap = snaps
@@ -6106,6 +6113,7 @@ mod tests {
         let session = "reenter-reset-less";
         let initial = pool.select_order("codex", &accounts, Some(session), None, Some(&pool_cfg));
         let sticky = initial[0];
+        pool.remember_session_assignment("codex", Some(session), None, &accounts[sticky]);
         pool.note_codex_quota(
             "codex",
             &accounts[sticky],
@@ -6120,6 +6128,8 @@ mod tests {
             yielded[0], sticky,
             "the near-quota account yields immediately"
         );
+        let failover = yielded[0];
+        pool.remember_session_assignment("codex", Some(session), None, &accounts[failover]);
 
         // Rewind the observation past the 5h window length — no restart and no
         // real time passage needed, just the state one window length later
@@ -6134,8 +6144,15 @@ mod tests {
 
         let recovered = pool.select_order("codex", &accounts, Some(session), None, Some(&pool_cfg));
         assert_eq!(
-            recovered[0], sticky,
-            "the reset-less mark ages out and the account re-enters selection"
+            recovered[0], failover,
+            "the reset-less mark ages out without stealing an established conversation back"
+        );
+        let snaps = pool.snapshot("codex", &accounts, None, Some(&pool_cfg));
+        assert!(
+            snaps.iter()
+                .find(|snap| snap.name == accounts[sticky].name)
+                .is_some_and(|snap| snap.available),
+            "the recovered account is available for new conversations"
         );
     }
 
@@ -6525,6 +6542,18 @@ mod tests {
         let session = "model-cooldown";
         let sticky = pool.select_order("codex", &accounts, Some(session), Some("gpt-x"), None)[0];
         let other = 1 - sticky;
+        pool.remember_session_assignment(
+            "codex",
+            Some(session),
+            Some("gpt-x"),
+            &accounts[sticky],
+        );
+        pool.remember_session_assignment(
+            "codex",
+            Some(session),
+            Some("gpt-y"),
+            &accounts[sticky],
+        );
         let key = account_key("codex", &accounts[sticky]);
         pool.entries
             .lock()
@@ -10524,13 +10553,19 @@ mod tests {
             );
         }
 
-        // Sanity: while the sticky account is healthy and un-paused, it still
-        // takes the fast path, so `others` stay in raw rotation order.
-        let baseline = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
-        assert_eq!(
-            baseline, rotation,
-            "a healthy sticky account takes the fast path"
+        // Simulate the first turn having succeeded on the original account.
+        // Its affinity keeps it first, while the remaining candidates still
+        // follow the live headroom ranking.
+        pool.remember_session_assignment(
+            "anthropic",
+            Some(session),
+            None,
+            &accounts[sticky],
         );
+        let baseline = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let mut expected_baseline = vec![sticky];
+        expected_baseline.extend(others.iter().rev().copied());
+        assert_eq!(baseline, expected_baseline);
 
         pool.set_paused("anthropic", &accounts[sticky], true);
         let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
