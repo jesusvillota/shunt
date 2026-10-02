@@ -177,6 +177,27 @@ pub fn remove_account(text: &str, provider: &str, name: &str) -> anyhow::Result<
     if matching == 0 {
         return Ok(None);
     }
+
+    let uses_inline_credentials = match accounts {
+        Item::ArrayOfTables(tables) => tables.iter().any(|entry| {
+            entry.get("name").and_then(Item::as_str) == Some(name)
+                && (entry.contains_key("credentials") || entry.contains_key("token_env"))
+        }),
+        Item::Value(Value::Array(array)) => array.iter().any(|entry| {
+            entry.as_inline_table().is_some_and(|table| {
+                table.get("name").and_then(Value::as_str) == Some(name)
+                    && (table.contains_key("credentials") || table.contains_key("token_env"))
+            })
+        }),
+        _ => false,
+    };
+    if uses_inline_credentials {
+        bail!(
+            "account {name:?} in provider {provider:?} uses an inline credential source; \
+             d only deletes shunt-managed store accounts"
+        );
+    }
+
     if matching == listed.len() {
         bail!(
             "cannot remove the last explicitly listed account {name:?} from provider {provider:?}: \
@@ -375,6 +396,21 @@ auth = "chatgpt_oauth"
             .to_string();
         assert!(error.contains("last explicitly listed account"), "{error}");
         assert!(error.contains("scan every stored account"), "{error}");
+    }
+
+    #[test]
+    fn remove_refuses_inline_credential_sources() {
+        let path = "[providers.anthropic]\nauth = \"claude_oauth\"\naccounts = [{ name = \"custom\", credentials = \"/tmp/custom.json\" }, { name = \"other\" }]\n";
+        let error = remove_account(path, "anthropic", "custom")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("inline credential source"), "{error}");
+
+        let env = "[providers.anthropic]\nauth = \"claude_oauth\"\n[[providers.anthropic.accounts]]\nname = \"custom\"\ntoken_env = \"TOKEN\"\n[[providers.anthropic.accounts]]\nname = \"other\"\n";
+        let error = remove_account(env, "anthropic", "custom")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("shunt-managed store accounts"), "{error}");
     }
 
     #[test]
