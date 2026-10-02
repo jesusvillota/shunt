@@ -772,7 +772,8 @@ impl AccountPool {
             if let Some(oldest) = affinities
                 .iter()
                 .min_by_key(|(_, binding)| binding.last_seen)
-                .map(|(key, _)| key.clone())
+                .map(|(key, _)| key)
+                .cloned()
             {
                 affinities.remove(&oldest);
             }
