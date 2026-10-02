@@ -5112,6 +5112,150 @@ mod tests {
     }
 
     #[test]
+    fn custom_priority_is_a_strict_waterfall_for_new_routing_decisions() {
+        let pool = AccountPool::new();
+        let mut primary = account("primary");
+        primary.priority = 1;
+        let mut backup = account("backup");
+        backup.priority = 2;
+        let accounts = vec![primary, backup];
+
+        // Session hashing and the session-less round-robin are only tiebreaks
+        // now: a lower-priority healthy account must never receive a new
+        // assignment while the primary is still eligible.
+        for session in ["custom-a", "custom-b", "custom-c", "custom-d"] {
+            assert_eq!(
+                pool.select_order("anthropic", &accounts, Some(session), None, None)[0],
+                0
+            );
+        }
+        for _ in 0..4 {
+            assert_eq!(
+                pool.select_order("anthropic", &accounts, None, None, None)[0],
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn custom_waterfall_moves_to_backup_when_primary_is_near_quota() {
+        let pool = AccountPool::new();
+        let mut primary = account("primary");
+        primary.priority = 1;
+        let mut backup = account("backup");
+        backup.priority = 2;
+        let accounts = vec![primary, backup];
+        let session = "custom-failover";
+
+        assert_eq!(
+            pool.select_order("anthropic", &accounts, Some(session), None, None)[0],
+            0
+        );
+        pool.note_quota(
+            "anthropic",
+            &accounts[0],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.98".to_string(),
+            )]),
+        );
+
+        assert_eq!(
+            pool.select_order("anthropic", &accounts, Some(session), None, None)[0],
+            1,
+            "a sticky primary must yield once it is quota-ineligible"
+        );
+        assert_eq!(
+            pool.select_order("anthropic", &accounts, None, None, None)[0],
+            1,
+            "new session-less traffic must also flow to the backup"
+        );
+    }
+
+    #[test]
+    fn balanced_new_sessions_follow_live_order_then_remain_sticky() {
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b")];
+        let pool_cfg = PoolConfig {
+            sort_by_reset: true,
+            ..Default::default()
+        };
+        let now = unix_now();
+
+        // Equal priorities are balanced mode. Initially A has the sooner reset,
+        // so the live ranking should assign a brand-new session to A.
+        for (index, reset) in [(0, now + 300), (1, now + 600)] {
+            pool.note_quota(
+                "anthropic",
+                &accounts[index],
+                &quota_headers(&[
+                    (
+                        "anthropic-ratelimit-unified-5h-utilization",
+                        "0.10".to_string(),
+                    ),
+                    (
+                        "anthropic-ratelimit-unified-5h-reset",
+                        reset.to_string(),
+                    ),
+                ]),
+            );
+        }
+
+        let existing = "balanced-existing";
+        assert_eq!(
+            pool.select_order(
+                "anthropic",
+                &accounts,
+                Some(existing),
+                None,
+                Some(&pool_cfg),
+            )[0],
+            0
+        );
+
+        // Flip the live ranking while A is still healthy. The existing
+        // conversation stays on A, while a new conversation follows the new
+        // balanced order and starts on B.
+        pool.note_quota(
+            "anthropic",
+            &accounts[0],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.10".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 900).to_string(),
+                ),
+            ]),
+        );
+
+        assert_eq!(
+            pool.select_order(
+                "anthropic",
+                &accounts,
+                Some(existing),
+                None,
+                Some(&pool_cfg),
+            )[0],
+            0,
+            "an existing healthy session keeps its assigned account"
+        );
+        assert_eq!(
+            pool.select_order(
+                "anthropic",
+                &accounts,
+                Some("balanced-new"),
+                None,
+                Some(&pool_cfg),
+            )[0],
+            1,
+            "a new session follows the current balanced ranking"
+        );
+    }
+
+    #[test]
     fn healthy_under_threshold_sticky_account_stays_first() {
         let pool = AccountPool::new();
         let accounts = accounts();
