@@ -697,6 +697,12 @@ pub(super) fn pool_events_stream(
                                         status.is_success(),
                                     );
                                     if status.is_success() {
+                                        state.accounts.remember_session_assignment(
+                                            &route.provider,
+                                            session_id.as_deref(),
+                                            Some(route.upstream_model.as_str()),
+                                            account,
+                                        );
                                         record(StatusCode::OK);
                                         let parsed: Parsed =
                                             Box::pin(parsed_events(upstream.bytes_stream()));
@@ -857,6 +863,12 @@ pub(super) fn pool_events_stream(
                                                     &route.provider,
                                                     account,
                                                     true,
+                                                );
+                                                state.accounts.remember_session_assignment(
+                                                    &route.provider,
+                                                    session_id.as_deref(),
+                                                    Some(route.upstream_model.as_str()),
+                                                    account,
                                                 );
                                                 record(StatusCode::OK);
                                                 let parsed: Parsed =
@@ -1107,6 +1119,14 @@ pub(super) async fn forward_chatgpt_oauth(
                     state
                         .accounts
                         .mark_healthy(&route.provider, account, status.is_success());
+                    if status.is_success() {
+                        state.accounts.remember_session_assignment(
+                            &route.provider,
+                            session_id.as_deref(),
+                            Some(route.upstream_model.as_str()),
+                            account,
+                        );
+                    }
                     let response = crate::adapters::with_admission(response, admission);
                     return Ok((status, with_account_header(response, &account.name)));
                 }
@@ -1218,6 +1238,12 @@ pub(super) async fn forward_chatgpt_oauth(
                     .accounts
                     .mark_healthy(&route.provider, account, status.is_success());
                 if status.is_success() {
+                    state.accounts.remember_session_assignment(
+                        &route.provider,
+                        session_id.as_deref(),
+                        Some(route.upstream_model.as_str()),
+                        account,
+                    );
                     let input_tokens_estimate = take_estimate(&mut estimate_handle);
                     let response = relay_success(
                         &state,
@@ -1316,6 +1342,12 @@ pub(super) async fn forward_chatgpt_oauth(
                         let retry_status = retry.status();
                         if retry_status.is_success() {
                             state.accounts.mark_healthy(&route.provider, account, true);
+                            state.accounts.remember_session_assignment(
+                                &route.provider,
+                                session_id.as_deref(),
+                                Some(route.upstream_model.as_str()),
+                                account,
+                            );
                             let input_tokens_estimate = take_estimate(&mut estimate_handle);
                             let response = relay_success(
                                 &state,
