@@ -34,6 +34,20 @@ Config files may be TOML or YAML, chosen by extension (`.toml`, or `.yaml`/`.yml
 
 Installed via Homebrew, run it as a background service instead: `brew services start shunt`. See [Installation](/getting-started/installation/#run-as-a-background-service).
 
+## `shunt top`
+
+Open the live terminal monitor for the managed account pool. It polls the running gateway's admin API, so the rows and quota state match what the scheduler is using.
+
+```bash
+shunt top --config /path/to/shunt.toml
+```
+
+Select rows with the arrow keys or `j`/`k`. Press `a` to add an account. With an account selected, press `d` to delete it: Shunt opens a confirmation dialog and deletes only after `y`; `n` or `Esc` cancels, and unrelated keys do nothing while the confirmation is open.
+
+Deletion removes the managed Claude, Codex, or Antigravity credential through the admin API and removes its explicit pool entry from `shunt.toml` when that edit is safe. Before deleting anything, the TUI dry-runs the config cleanup. It refuses the operation if the cleanup cannot be made safely—for example, deleting the last explicitly listed account would turn an empty list into "scan every stored account". The same safety check means deletion is unavailable for YAML configs or providers defined through `[[upstreams]]`.
+
+Pause/provider switches are runtime-only. Ranking changes and explicit account membership edits are persisted to the TOML config and picked up by hot reload.
+
 ## `shunt check`
 
 Validate the resolved configuration and exit (`shunt --check` also works):
