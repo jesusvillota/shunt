@@ -6149,7 +6149,8 @@ mod tests {
         );
         let snaps = pool.snapshot("codex", &accounts, None, Some(&pool_cfg));
         assert!(
-            snaps.iter()
+            snaps
+                .iter()
                 .find(|snap| snap.name == accounts[sticky].name)
                 .is_some_and(|snap| snap.available),
             "the recovered account is available for new conversations"
@@ -6542,18 +6543,8 @@ mod tests {
         let session = "model-cooldown";
         let sticky = pool.select_order("codex", &accounts, Some(session), Some("gpt-x"), None)[0];
         let other = 1 - sticky;
-        pool.remember_session_assignment(
-            "codex",
-            Some(session),
-            Some("gpt-x"),
-            &accounts[sticky],
-        );
-        pool.remember_session_assignment(
-            "codex",
-            Some(session),
-            Some("gpt-y"),
-            &accounts[sticky],
-        );
+        pool.remember_session_assignment("codex", Some(session), Some("gpt-x"), &accounts[sticky]);
+        pool.remember_session_assignment("codex", Some(session), Some("gpt-y"), &accounts[sticky]);
         let key = account_key("codex", &accounts[sticky]);
         pool.entries
             .lock()
@@ -10556,12 +10547,7 @@ mod tests {
         // Simulate the first turn having succeeded on the original account.
         // Its affinity keeps it first, while the remaining candidates still
         // follow the live headroom ranking.
-        pool.remember_session_assignment(
-            "anthropic",
-            Some(session),
-            None,
-            &accounts[sticky],
-        );
+        pool.remember_session_assignment("anthropic", Some(session), None, &accounts[sticky]);
         let baseline = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
         let mut expected_baseline = vec![sticky];
         expected_baseline.extend(others.iter().rev().copied());
