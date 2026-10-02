@@ -173,7 +173,10 @@ pub fn remove_account(text: &str, provider: &str, name: &str) -> anyhow::Result<
         return Ok(None);
     };
     let listed = names_of(accounts);
-    let matching = listed.iter().filter(|existing| existing.as_str() == name).count();
+    let matching = listed
+        .iter()
+        .filter(|existing| existing.as_str() == name)
+        .count();
     if matching == 0 {
         return Ok(None);
     }
@@ -378,9 +381,7 @@ auth = "chatgpt_oauth"
 
     #[test]
     fn remove_drops_an_explicit_account_but_never_turns_the_list_into_scan_all() {
-        let out = remove_account(AOT, "anthropic", "alpha")
-            .unwrap()
-            .unwrap();
+        let out = remove_account(AOT, "anthropic", "alpha").unwrap().unwrap();
         assert_eq!(names(&out, "anthropic"), ["beta"]);
         assert!(out.contains("# my config"));
         assert_eq!(remove_account(AOT, "anthropic", "missing").unwrap(), None);
@@ -390,7 +391,8 @@ auth = "chatgpt_oauth"
             "a store-scanned provider needs no config edit"
         );
 
-        let one = "[providers.anthropic]\nauth = \"claude_oauth\"\naccounts = [{ name = \"only\" }]\n";
+        let one =
+            "[providers.anthropic]\nauth = \"claude_oauth\"\naccounts = [{ name = \"only\" }]\n";
         let error = remove_account(one, "anthropic", "only")
             .unwrap_err()
             .to_string();
