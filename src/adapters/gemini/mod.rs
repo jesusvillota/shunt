@@ -11,6 +11,7 @@ use futures_util::StreamExt;
 use serde_json::Value;
 
 use crate::{
+    accounts::CountAttempt,
     adapters::{Adapter, AdapterError, AdapterFuture},
     auth::{
         antigravity::{auth::inference_base_url, catalog::catalog_ids},
@@ -653,7 +654,7 @@ async fn forward_single(
 
     let ttfb_ms = state.config.server.timeouts.upstream_ttfb_ms;
     let retry_safety = retry_safety_for_auth(provider.auth);
-    let response =
+    let send =
         crate::retry::send_with_retry_with_safety(policy, &route.provider, retry_safety, || {
             let client = http_client.clone();
             let payload = payload_clone.clone();
@@ -677,23 +678,32 @@ async fn forward_single(
 
                 crate::upstream_timeout::wait(ttfb_ms, req.json(&payload).send()).await
             }
+        });
+    let response = match account {
+        // One attempt per `send_with_retry_with_safety` run holds only because
+        // a pool account's policy is `DISABLED` above; enabling pool retries
+        // would count several dispatches as one.
+        Some(account) => {
+            send.count_attempt(&state.accounts, &route.provider, account)
+                .await
+        }
+        None => send.await,
+    }
+    .map_err(|error| {
+        if let Some(account) = account {
+            state.accounts.cooldown(
+                &route.provider,
+                account,
+                std::time::Duration::from_secs(30),
+                "transport",
+            );
+        }
+        error.into_adapter_error(|error| AdapterError {
+            message: format!("network error calling Gemini backend: {error}"),
+            response: Box::new(StatusCode::BAD_GATEWAY.into_response()),
+            failure: None,
         })
-        .await
-        .map_err(|error| {
-            if let Some(account) = account {
-                state.accounts.cooldown(
-                    &route.provider,
-                    account,
-                    std::time::Duration::from_secs(30),
-                    "transport",
-                );
-            }
-            error.into_adapter_error(|error| AdapterError {
-                message: format!("network error calling Gemini backend: {error}"),
-                response: Box::new(StatusCode::BAD_GATEWAY.into_response()),
-                failure: None,
-            })
-        })?;
+    })?;
 
     let status = response.status();
     if !status.is_success() {
