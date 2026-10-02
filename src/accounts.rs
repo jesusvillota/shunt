@@ -929,10 +929,12 @@ impl AccountPool {
             }
         };
 
-        // The sticky/round-robin slot is computed over distinct identities so
-        // adding or removing an alias cannot move an existing session. Disabled
-        // aliases yield to an enabled representative; fully disabled identities
-        // are then dropped from the rotation entirely. `collapse_representatives`
+        // The hash/round-robin start slot is only the final tiebreak for a
+        // brand-new routing decision; established sessions use the affinity
+        // cache below. It is still computed over distinct identities so aliases
+        // do not distort tie distribution. Disabled aliases yield to an enabled
+        // representative; fully disabled identities are dropped entirely.
+        // `collapse_representatives`
         // needs no lock, so it is computed before the entries lock below.
         // `rotation` also needs each account's `paused` bit, which only the
         // lock guards; it is built just inside the lock, right after the
@@ -1078,9 +1080,9 @@ impl AccountPool {
             self.mark_dirty();
         }
 
-        // Promotes the re-probe candidate, if any, to the front of a final
-        // selection order — including the sticky fast path below, so a probe
-        // is never starved by a healthy sticky account.
+        // Promotes the re-probe candidate, if any, to the front of the final
+        // selection order, so a stale quota observation can be refreshed even
+        // when a healthy session binding would otherwise stay first.
         let promote = |mut order: Vec<usize>| -> Vec<usize> {
             if let Some(probe) = pending_reprobe.as_ref().map(|pending| pending.index) {
                 let position = order.iter().position(|&index| index == probe);
