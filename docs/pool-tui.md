@@ -4,10 +4,11 @@ A keyboard-and-mouse terminal view of the managed account pool, one section per
 provider. It is a client of a **running** gateway's admin API, not a second copy
 of pool state: it polls `GET /admin/api/pool` (every 2 s) and acts through the
 admin API (`PATCH /admin/api/pool/{provider}/accounts/{account_ref}` to pause,
-`POST /admin/api/accounts/{claude,codex,antigravity}` to add accounts), so what it
-shows is what the web dashboard shows and what the scheduler acts on. Two things it
-saves to the **config file** the gateway runs — added accounts and the ranking —
-which the gateway hot-reloads.
+`POST /admin/api/accounts/{claude,codex,antigravity}` to add accounts, and
+`DELETE /admin/api/accounts/{claude,codex,antigravity}/{name}` to delete them),
+so what it shows is what the web dashboard shows and what the scheduler acts on.
+Pool membership edits and ranking changes are saved to the **config file** the
+gateway runs, which the gateway hot-reloads.
 
 ## Build and run
 
@@ -68,6 +69,7 @@ States: `disabled` (config) · `paused` · `needs re-login` · `unseen` (no traf
 | `m` | Switch the provider between **balanced** and **custom order** |
 | `Shift+↑`/`Shift+↓` (or `K`/`J`) | Move the chosen account up or down a custom order |
 | `a` | Add an account |
+| `d` | Delete the selected account (asks for `y`/`n` confirmation first) |
 | `?` | Help |
 | `q` / `Ctrl-C` | Quit |
 
@@ -119,6 +121,29 @@ dashboard stores the credential but leaves the file alone. A provider that lists
 writing; one that lists accounts gets a name-only entry appended. Kimi accounts cannot
 be added this way (the admin API has no Kimi provisioning).
 
+## Deleting an account
+
+Select an account row and press `d`. The confirmation dialog names the account
+and provider; **only `y` deletes it**. Press `n` or `Esc` to cancel, and
+unrelated keys do nothing while the confirmation is open. Deletion is available
+for the managed Claude, Codex and Antigravity account stores; providers without
+the corresponding admin delete endpoint are refused.
+
+Before sending the destructive API request, `shunt top` dry-runs the matching
+`shunt.toml` cleanup. That is a second safety boundary after the `y` prompt:
+if the config cannot be updated safely, nothing is deleted. In particular, the
+last entry of an explicitly listed account pool is refused because an empty list
+does **not** mean an empty pool in shunt — it means scan every account in the
+store, which could silently activate other credentials. A provider that already
+scans the whole store needs no config change; when several accounts are listed
+explicitly, the deleted name is removed from that list after the credential is
+deleted.
+
+The same config-edit limitations as adding/ranking apply. A non-TOML config or a
+provider defined through `[[upstreams]]` cannot pass the safe cleanup check, so
+`d` refuses rather than deleting the credential and leaving stale pool
+configuration.
+
 ## Config edits: what is and is not touched
 
 Edits are made with a format-preserving TOML editor — comments and layout stay. Only
@@ -132,7 +157,7 @@ edited.
 ## Tests
 
 `src/tui/` unit tests cover the state ladder, balanced and custom ordering, cursor and
-mouse behaviour, every keybinding as a pure reducer, the TOML edits, the add dialog's
-state machine, and rendering through a `TestBackend`; `tests/tui_client.rs` drives
-poll / pause / resume / provisioning start and its refusals against an in-process
-gateway.
+mouse behaviour, every keybinding as a pure reducer, the TOML edits, the add and
+delete confirmation state machines, and rendering through a `TestBackend`;
+`tests/tui_client.rs` drives poll / pause / resume / provisioning / deletion and
+its refusals against an in-process gateway.
