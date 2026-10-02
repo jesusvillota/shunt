@@ -15,13 +15,14 @@ use ratatui::{
 use super::{
     add::{AddFlow, Step},
     app::{App, Entry, Notice, Sel},
-    model::{AccountState, RankMode},
+    model::{AccountDto, AccountState, RankMode},
 };
 
 const BAR_WIDTH: usize = 8;
 const NAME_W: usize = 20;
 const PLAN_W: usize = 7;
 const STATE_W: usize = 16;
+const REQUESTS_W: usize = 22;
 const WINDOW_W: usize = BAR_WIDTH + 1 + 4 + 3 + 7;
 
 pub fn now_secs() -> u64 {
@@ -146,6 +147,15 @@ fn account_line(entry: &Entry<'_>, now: u64) -> Line<'static> {
     spans.extend(window_cell(a.utilization_5h, a.reset_5h, now));
     spans.push(Span::raw("  "));
     spans.extend(window_cell(a.utilization_7d, a.reset_7d, now));
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled(
+        fit(&requests_cell(a), REQUESTS_W),
+        if a.requests_failed > 0 {
+            Style::new().fg(Color::LightRed)
+        } else {
+            Style::new()
+        },
+    ));
     let mut line = Line::from(spans);
     if !entry.provider.is_on() || matches!(row.state, AccountState::Disabled | AccountState::Paused)
     {
@@ -154,15 +164,28 @@ fn account_line(entry: &Entry<'_>, now: u64) -> Line<'static> {
     line
 }
 
+/// `ok/failed · mean latency` for the attempts this gateway process has sent
+/// to the account; `–` before the first one.
+fn requests_cell(a: &AccountDto) -> String {
+    if a.requests_attempted == 0 {
+        return "–".to_string();
+    }
+    let latency = a
+        .mean_latency_ms
+        .map_or_else(String::new, |ms| format!(" · {ms:.0}ms"));
+    format!("{}/{}{latency}", a.requests_succeeded, a.requests_failed)
+}
+
 fn column_heading() -> Line<'static> {
     let head = format!(
-        "{:>3} {:<n$} {:<p$} {:<s$} {:<w$}  {:<w$}",
+        "{:>3} {:<n$} {:<p$} {:<s$} {:<w$}  {:<w$}  {}",
         "#",
         "Account",
         "Plan",
         "State",
         "5h limit (used · resets in)",
         "7d limit (used · resets in)",
+        "Requests ok/fail · avg",
         n = NAME_W,
         p = PLAN_W,
         s = STATE_W,

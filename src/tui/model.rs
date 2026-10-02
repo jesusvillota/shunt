@@ -49,6 +49,12 @@ pub struct AccountDto {
     pub utilization_7d: Option<f64>,
     pub reset_7d: Option<u64>,
     pub reset_7d_oi: Option<u64>,
+    /// Upstream attempts since the gateway started; absent (0) on a gateway
+    /// that predates the counters.
+    pub requests_attempted: u64,
+    pub requests_succeeded: u64,
+    pub requests_failed: u64,
+    pub mean_latency_ms: Option<f64>,
 }
 
 /// The one state an account displays, mirroring the dashboard's ladder
