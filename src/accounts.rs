@@ -126,6 +126,11 @@ const REPROBE_DEFAULT_SECS: u64 = 900;
 /// Minimum positive opportunistic-reprobe interval.
 pub(crate) const REPROBE_FLOOR_SECS: u64 = 60;
 
+/// Bound the process-lifetime session-affinity cache. Entries are refreshed on
+/// every selection for that session; when the cap is reached, the least-recently
+/// seen binding is evicted before a new one is inserted.
+const SESSION_AFFINITY_CAP: usize = 4096;
+
 /// The effective opportunistic-reprobe interval, or `None` when re-probing is
 /// disabled. Disabled when `[server.pool]` itself is absent (preserves the
 /// documented pre-#135 behavior: no pool config, no probing), or when
@@ -543,11 +548,21 @@ impl AccountSnapshot {
     }
 }
 
+#[derive(Debug, Clone)]
+struct SessionAffinity {
+    account: AccountKey,
+    last_seen: Instant,
+}
+
 /// Process-lifetime health and scheduling state for configured accounts.
 #[derive(Debug, Default)]
 pub struct AccountPool {
     entries: Mutex<HashMap<AccountKey, AccountHealth>>,
     rr: Mutex<HashMap<String, usize>>,
+    /// Sticky account chosen for a real conversation after its first routing
+    /// decision. The key stores a SHA-256 digest of the opaque session id rather
+    /// than the raw client value.
+    session_affinity: Mutex<HashMap<(String, [u8; 32]), SessionAffinity>>,
     refresh_locks: Mutex<HashMap<AccountKey, RefreshLock>>,
     memberships: Mutex<HashMap<String, HashMap<AccountKey, bool>>>,
     /// Monotonic source for opaque in-flight reprobe reservations. Tokens are
@@ -700,6 +715,98 @@ impl AccountPool {
         Self::default()
     }
 
+    fn session_affinity_key(
+        provider: &str,
+        session_id: &str,
+        model: Option<&str>,
+    ) -> (String, [u8; 32]) {
+        let mut hasher = Sha256::new();
+        hasher.update(session_id.as_bytes());
+        hasher.update([0]);
+        if let Some(model) = model {
+            hasher.update(model.to_ascii_lowercase().as_bytes());
+        }
+        let digest = hasher.finalize();
+        let mut bytes = [0_u8; 32];
+        bytes.copy_from_slice(&digest);
+        (provider.to_string(), bytes)
+    }
+
+    fn session_affinity_index(
+        &self,
+        provider: &str,
+        session_id: &str,
+        model: Option<&str>,
+        accounts: &[AccountConfig],
+        candidates: &[usize],
+    ) -> Option<usize> {
+        let key = Self::session_affinity_key(provider, session_id, model);
+        let mut affinities = self
+            .session_affinity
+            .lock()
+            .expect("session affinity lock poisoned");
+        let bound_account = {
+            let binding = affinities.get_mut(&key)?;
+            binding.last_seen = Instant::now();
+            binding.account.clone()
+        };
+        let index = candidates
+            .iter()
+            .copied()
+            .find(|&index| account_key(provider, &accounts[index]) == bound_account);
+        if index.is_none() {
+            affinities.remove(&key);
+        }
+        index
+    }
+
+    fn clear_session_affinity(&self, provider: &str, session_id: &str, model: Option<&str>) {
+        self.session_affinity
+            .lock()
+            .expect("session affinity lock poisoned")
+            .remove(&Self::session_affinity_key(provider, session_id, model));
+    }
+
+    /// Record the account that actually served a conversation turn. Selection
+    /// itself never creates affinity: an account that merely ranked first can
+    /// still fail admission, credential resolution, transport, or failover.
+    /// Callers commit only after a real successful upstream response.
+    pub(crate) fn remember_session_assignment(
+        &self,
+        provider: &str,
+        session_id: Option<&str>,
+        model: Option<&str>,
+        account: &AccountConfig,
+    ) {
+        let Some(session_id) = session_id.filter(|session_id| !session_id.is_empty()) else {
+            return;
+        };
+        let key = Self::session_affinity_key(provider, session_id, model);
+        let mut affinities = self
+            .session_affinity
+            .lock()
+            .expect("session affinity lock poisoned");
+
+        if !affinities.contains_key(&key) && affinities.len() >= SESSION_AFFINITY_CAP {
+            if let Some(oldest) = affinities
+                .iter()
+                .min_by_key(|(_, binding)| binding.last_seen)
+                .map(|(key, _)| key)
+                .cloned()
+            {
+                affinities.remove(&oldest);
+            }
+        }
+
+        affinities.insert(
+            key,
+            SessionAffinity {
+                account: account_key(provider, account),
+                last_seen: Instant::now(),
+            },
+        );
+    }
+
     /// Synchronize the upstream's current configured identities before an
     /// out-of-band usage poll updates individual accounts. Membership remains
     /// upstream-scoped even though each identity's health is global.
@@ -719,15 +826,20 @@ impl AccountPool {
     /// Return account indices in the order an adapter should try them.
     ///
     /// A `session_id` of `Some("")` is treated as absent: a blank header is not
-    /// a conversation, so such requests round-robin rather than sharing one
-    /// sticky slot (issue #566).
+    /// a conversation, so such requests use the normal per-request tiebreak
+    /// rotation rather than creating a sticky binding (issue #566).
+    ///
+    /// A non-empty session is sticky *after its first routing decision*: the
+    /// first turn follows the live pool order, then later turns keep that
+    /// account at the front while it remains healthy. This lets equal-priority
+    /// ("balanced") pools choose by live headroom/reset state and lets distinct
+    /// priorities implement a strict waterfall for new conversations.
     ///
     /// `pool` is the optional `[server.pool]` tuning (issue #135). When
-    /// absent, selection is the pre-#135 behavior: a single 0.98 hard
-    /// threshold and weekly-reset ordering. When present, available accounts
-    /// order by `priority` then burn-rate headroom, soft-threshold-near
-    /// accounts fall back to headroom order (the all-near guard), and
-    /// accounts past `hard_threshold` sort last among the available.
+    /// absent, selection uses the legacy 0.98 hard threshold but still applies
+    /// balanced headroom ordering. When present, the configured thresholds and
+    /// optional soonest-reset ranking apply. Soft-threshold-near accounts fall
+    /// behind healthy ones, and accounts past `hard_threshold` sort last.
     /// Per-account `priority`/`disabled` apply in both modes.
     pub fn select_order(
         &self,
@@ -837,10 +949,12 @@ impl AccountPool {
             }
         };
 
-        // The sticky/round-robin slot is computed over distinct identities so
-        // adding or removing an alias cannot move an existing session. Disabled
-        // aliases yield to an enabled representative; fully disabled identities
-        // are then dropped from the rotation entirely. `collapse_representatives`
+        // The hash/round-robin start slot is only the final tiebreak for a
+        // brand-new routing decision; established sessions use the affinity
+        // cache below. It is still computed over distinct identities so aliases
+        // do not distort tie distribution. Disabled aliases yield to an enabled
+        // representative; fully disabled identities are dropped entirely.
+        // `collapse_representatives`
         // needs no lock, so it is computed before the entries lock below.
         // `rotation` also needs each account's `paused` bit, which only the
         // lock guards; it is built just inside the lock, right after the
@@ -986,9 +1100,9 @@ impl AccountPool {
             self.mark_dirty();
         }
 
-        // Promotes the re-probe candidate, if any, to the front of a final
-        // selection order — including the sticky fast path below, so a probe
-        // is never starved by a healthy sticky account.
+        // Promotes the re-probe candidate, if any, to the front of the final
+        // selection order, so a stale quota observation can be refreshed even
+        // when a healthy session binding would otherwise stay first.
         let promote = |mut order: Vec<usize>| -> Vec<usize> {
             if let Some(probe) = pending_reprobe.as_ref().map(|pending| pending.index) {
                 let position = order.iter().position(|&index| index == probe);
@@ -1004,16 +1118,20 @@ impl AccountPool {
             order
         };
 
-        let sticky = ident_reps[start_slot];
-        let (sticky_cooldown, ref sticky_quota, _, _) = snapshots[sticky];
-        // `rotation` already excludes a disabled or paused sticky account, so
-        // membership in it covers both checks the fast path needs.
-        if rotation.contains(&sticky)
-            && sticky_cooldown.is_none_or(|until| until <= now)
-            && !sticky_quota.near
-        {
-            return (promote(rotation), pending_reprobe);
-        }
+        // A session that has already been assigned keeps that account while it
+        // remains healthy. New sessions deliberately do *not* get the old
+        // hash-first fast path: they fall through to the live ordering below,
+        // which is what makes balanced mode genuinely headroom-driven and
+        // custom priorities a strict waterfall.
+        let bound_session_index = session_id.and_then(|session_id| {
+            self.session_affinity_index(
+                &provider,
+                session_id,
+                model_key.as_deref(),
+                accounts,
+                &rotation,
+            )
+        });
 
         let is_available =
             |index: usize| snapshots[index].0.is_none_or(|until: Instant| until <= now);
@@ -1023,45 +1141,35 @@ impl AccountPool {
             .copied()
             .filter(|&index| is_available(index) && !snapshots[index].1.near)
             .collect::<Vec<_>>();
-        // The stable sorts below preserve rotation order as the final tiebreak.
-        match pool {
-            // Priority beats headroom; ties prefer the account projected to
-            // keep the most margin before its tightest window resets.
-            Some(pool_cfg) => {
-                let sort_by_reset = self.effective_sort_by_reset(Some(pool_cfg));
-                available_under.sort_by(|&left, &right| {
-                    accounts[left]
-                        .priority
-                        .cmp(&accounts[right].priority)
-                        .then_with(|| {
-                            if sort_by_reset {
-                                // Soonest reset first; None (unknown) sorts last.
-                                let l = snapshots[left].3;
-                                let r = snapshots[right].3;
-                                match (l, r) {
-                                    (Some(lt), Some(rt)) => lt.cmp(&rt),
-                                    (Some(_), None) => std::cmp::Ordering::Less,
-                                    (None, Some(_)) => std::cmp::Ordering::Greater,
-                                    (None, None) => std::cmp::Ordering::Equal,
-                                }
-                            } else {
-                                snapshots[right]
-                                    .1
-                                    .headroom
-                                    .total_cmp(&snapshots[left].1.headroom)
-                            }
-                        })
+        // Priority defines custom-order tiers. Within a tier, balanced mode
+        // prefers the account with the most projected headroom. The explicit
+        // sort-by-reset setting replaces that tiebreak with soonest reset.
+        // Stable sorting preserves the hash/round-robin rotation as the final
+        // tiebreak when the live quota signals are identical or unknown.
+        let sort_by_reset = self.effective_sort_by_reset(pool);
+        available_under.sort_by(|&left, &right| {
+            accounts[left]
+                .priority
+                .cmp(&accounts[right].priority)
+                .then_with(|| {
+                    if sort_by_reset {
+                        // Soonest reset first; None (unknown) sorts last.
+                        let l = snapshots[left].3;
+                        let r = snapshots[right].3;
+                        match (l, r) {
+                            (Some(lt), Some(rt)) => lt.cmp(&rt),
+                            (Some(_), None) => std::cmp::Ordering::Less,
+                            (None, Some(_)) => std::cmp::Ordering::Greater,
+                            (None, None) => std::cmp::Ordering::Equal,
+                        }
+                    } else {
+                        snapshots[right]
+                            .1
+                            .headroom
+                            .total_cmp(&snapshots[left].1.headroom)
+                    }
                 })
-            }
-            // Legacy: `Option` orders `None` before `Some`, so accounts with
-            // an unknown weekly reset sort first.
-            None => available_under.sort_by(|&left, &right| {
-                accounts[left]
-                    .priority
-                    .cmp(&accounts[right].priority)
-                    .then_with(|| snapshots[left].2.cmp(&snapshots[right].2))
-            }),
-        }
+        });
 
         // Available accounts past a threshold. With `[server.pool]` set, the
         // soft-near ones (under the hard backstop) order by priority then
@@ -1102,17 +1210,28 @@ impl AccountPool {
             .collect::<Vec<_>>();
         cooled.sort_by_key(|&index| snapshots[index].0);
 
-        (
-            promote(
-                available_under
-                    .into_iter()
-                    .chain(near_soft)
-                    .chain(over_hard)
-                    .chain(cooled)
-                    .collect(),
-            ),
-            pending_reprobe,
-        )
+        let mut order: Vec<usize> = available_under
+            .into_iter()
+            .chain(near_soft)
+            .chain(over_hard)
+            .chain(cooled)
+            .collect();
+
+        if let Some(bound) = bound_session_index {
+            if is_available(bound) && !snapshots[bound].1.near {
+                if let Some(position) = order.iter().position(|&index| index == bound) {
+                    order.remove(position);
+                    order.insert(0, bound);
+                }
+            } else if let Some(session_id) = session_id {
+                self.clear_session_affinity(&provider, session_id, model_key.as_deref());
+            }
+        }
+
+        // Selection is intentionally side-effect-free with respect to session
+        // affinity. The adapter records the account only after it actually
+        // serves a successful upstream response.
+        (promote(order), pending_reprobe)
     }
 
     pub fn note_quota(&self, provider: &str, account: &AccountConfig, headers: &HeaderMap) {
@@ -2279,8 +2398,7 @@ impl AccountPool {
                         priority: account.priority,
                         disabled: account.disabled,
                         paused: health.paused_providers.contains(provider),
-                        headroom_secs: (pool.is_some() && quota.headroom.is_finite())
-                            .then_some(quota.headroom as i64),
+                        headroom_secs: quota.headroom.is_finite().then_some(quota.headroom as i64),
                         utilization_5h: health.quota.utilization_5h,
                         reset_5h: health.quota.reset_5h,
                         utilization_7d: health.quota.utilization_7d,
@@ -5003,12 +5121,156 @@ mod tests {
     }
 
     #[test]
+    fn custom_priority_is_a_strict_waterfall_for_new_routing_decisions() {
+        let pool = AccountPool::new();
+        let mut primary = account("primary");
+        primary.priority = 1;
+        let mut backup = account("backup");
+        backup.priority = 2;
+        let accounts = vec![primary, backup];
+
+        // Session hashing and the session-less round-robin are only tiebreaks
+        // now: a lower-priority healthy account must never receive a new
+        // assignment while the primary is still eligible.
+        for session in ["custom-a", "custom-b", "custom-c", "custom-d"] {
+            assert_eq!(
+                pool.select_order("anthropic", &accounts, Some(session), None, None)[0],
+                0
+            );
+        }
+        for _ in 0..4 {
+            assert_eq!(
+                pool.select_order("anthropic", &accounts, None, None, None)[0],
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn custom_waterfall_moves_to_backup_when_primary_is_near_quota() {
+        let pool = AccountPool::new();
+        let mut primary = account("primary");
+        primary.priority = 1;
+        let mut backup = account("backup");
+        backup.priority = 2;
+        let accounts = vec![primary, backup];
+        let session = "custom-failover";
+
+        assert_eq!(
+            pool.select_order("anthropic", &accounts, Some(session), None, None)[0],
+            0
+        );
+        pool.remember_session_assignment("anthropic", Some(session), None, &accounts[0]);
+        pool.note_quota(
+            "anthropic",
+            &accounts[0],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.98".to_string(),
+            )]),
+        );
+
+        assert_eq!(
+            pool.select_order("anthropic", &accounts, Some(session), None, None)[0],
+            1,
+            "a sticky primary must yield once it is quota-ineligible"
+        );
+        assert_eq!(
+            pool.select_order("anthropic", &accounts, None, None, None)[0],
+            1,
+            "new session-less traffic must also flow to the backup"
+        );
+    }
+
+    #[test]
+    fn balanced_new_sessions_follow_live_order_then_remain_sticky() {
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b")];
+        let pool_cfg = PoolConfig {
+            sort_by_reset: true,
+            ..Default::default()
+        };
+        let now = unix_now();
+
+        // Equal priorities are balanced mode. Initially A has the sooner reset,
+        // so the live ranking should assign a brand-new session to A.
+        for (index, reset) in [(0, now + 300), (1, now + 600)] {
+            pool.note_quota(
+                "anthropic",
+                &accounts[index],
+                &quota_headers(&[
+                    (
+                        "anthropic-ratelimit-unified-5h-utilization",
+                        "0.10".to_string(),
+                    ),
+                    ("anthropic-ratelimit-unified-5h-reset", reset.to_string()),
+                ]),
+            );
+        }
+
+        let existing = "balanced-existing";
+        assert_eq!(
+            pool.select_order(
+                "anthropic",
+                &accounts,
+                Some(existing),
+                None,
+                Some(&pool_cfg),
+            )[0],
+            0
+        );
+        pool.remember_session_assignment("anthropic", Some(existing), None, &accounts[0]);
+
+        // Flip the live ranking while A is still healthy. The existing
+        // conversation stays on A, while a new conversation follows the new
+        // balanced order and starts on B.
+        pool.note_quota(
+            "anthropic",
+            &accounts[0],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.10".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 900).to_string(),
+                ),
+            ]),
+        );
+
+        assert_eq!(
+            pool.select_order(
+                "anthropic",
+                &accounts,
+                Some(existing),
+                None,
+                Some(&pool_cfg),
+            )[0],
+            0,
+            "an existing healthy session keeps its assigned account"
+        );
+        assert_eq!(
+            pool.select_order(
+                "anthropic",
+                &accounts,
+                Some("balanced-new"),
+                None,
+                Some(&pool_cfg),
+            )[0],
+            1,
+            "a new session follows the current balanced ranking"
+        );
+    }
+
+    #[test]
     fn healthy_under_threshold_sticky_account_stays_first() {
         let pool = AccountPool::new();
         let accounts = accounts();
         let session = "healthy-sticky";
         let first = pool.select_order("anthropic", &accounts, Some(session), None, None);
         let sticky = first[0];
+        pool.remember_session_assignment("anthropic", Some(session), None, &accounts[sticky]);
         pool.note_quota(
             "anthropic",
             &accounts[sticky],
@@ -5030,6 +5292,7 @@ mod tests {
         let session = "quota-sticky";
         let original = pool.select_order("anthropic", &accounts, Some(session), None, None);
         let sticky = original[0];
+        pool.remember_session_assignment("anthropic", Some(session), None, &accounts[sticky]);
         pool.note_quota(
             "anthropic",
             &accounts[sticky],
@@ -5789,6 +6052,7 @@ mod tests {
         let session = "reenter-reset-passes";
         let initial = pool.select_order("codex", &accounts, Some(session), None, None);
         let sticky = initial[0];
+        pool.remember_session_assignment("codex", Some(session), None, &accounts[sticky]);
         let reset = unix_now() + 3_600;
         pool.note_codex_quota(
             "codex",
@@ -5804,6 +6068,8 @@ mod tests {
             yielded[0], sticky,
             "an exhausted account yields while its reset is still future"
         );
+        let failover = yielded[0];
+        pool.remember_session_assignment("codex", Some(session), None, &accounts[failover]);
 
         // Rewind the reset into the past directly — this is the state the
         // account would be in once upstream's window has actually reset, with
@@ -5818,8 +6084,8 @@ mod tests {
 
         let recovered = pool.select_order("codex", &accounts, Some(session), None, None);
         assert_eq!(
-            recovered[0], sticky,
-            "the account re-enters selection once its reset has passed"
+            recovered[0], failover,
+            "the conversation stays on the successful failover account after the old primary recovers"
         );
         let snaps = pool.snapshot("codex", &accounts, None, None);
         let sticky_snap = snaps
@@ -5847,6 +6113,7 @@ mod tests {
         let session = "reenter-reset-less";
         let initial = pool.select_order("codex", &accounts, Some(session), None, Some(&pool_cfg));
         let sticky = initial[0];
+        pool.remember_session_assignment("codex", Some(session), None, &accounts[sticky]);
         pool.note_codex_quota(
             "codex",
             &accounts[sticky],
@@ -5861,6 +6128,8 @@ mod tests {
             yielded[0], sticky,
             "the near-quota account yields immediately"
         );
+        let failover = yielded[0];
+        pool.remember_session_assignment("codex", Some(session), None, &accounts[failover]);
 
         // Rewind the observation past the 5h window length — no restart and no
         // real time passage needed, just the state one window length later
@@ -5875,8 +6144,16 @@ mod tests {
 
         let recovered = pool.select_order("codex", &accounts, Some(session), None, Some(&pool_cfg));
         assert_eq!(
-            recovered[0], sticky,
-            "the reset-less mark ages out and the account re-enters selection"
+            recovered[0], failover,
+            "the reset-less mark ages out without stealing an established conversation back"
+        );
+        let snaps = pool.snapshot("codex", &accounts, None, Some(&pool_cfg));
+        assert!(
+            snaps
+                .iter()
+                .find(|snap| snap.name == accounts[sticky].name)
+                .is_some_and(|snap| snap.available),
+            "the recovered account is available for new conversations"
         );
     }
 
@@ -6127,7 +6404,7 @@ mod tests {
     }
 
     #[test]
-    fn under_quota_accounts_sort_by_weekly_reset_with_unknown_first() {
+    fn reset_metadata_without_utilization_does_not_change_balanced_order() {
         let pool = AccountPool::new();
         let accounts = vec![account("a"), account("b"), account("c"), account("d")];
         let session = "reset-sort";
@@ -6144,7 +6421,9 @@ mod tests {
             .as_secs();
         let resets = [now + 300, now + 100, now + 200];
         for (position, (&index, reset)) in rotation[1..].iter().zip(resets).enumerate() {
-            // Leave the first available account's reset unknown.
+            // Leave the first available account's reset unknown. Reset metadata
+            // alone carries no burn-rate signal, so it must not reshuffle the
+            // balanced order unless sort_by_reset is explicitly enabled.
             if position != 0 {
                 pool.note_quota(
                     "anthropic",
@@ -6264,6 +6543,8 @@ mod tests {
         let session = "model-cooldown";
         let sticky = pool.select_order("codex", &accounts, Some(session), Some("gpt-x"), None)[0];
         let other = 1 - sticky;
+        pool.remember_session_assignment("codex", Some(session), Some("gpt-x"), &accounts[sticky]);
+        pool.remember_session_assignment("codex", Some(session), Some("gpt-y"), &accounts[sticky]);
         let key = account_key("codex", &accounts[sticky]);
         pool.entries
             .lock()
@@ -9032,6 +9313,9 @@ mod tests {
             Some(&ordering_only),
         );
         let sticky = rotation[0];
+        // Selection no longer creates affinity by itself: simulate the first
+        // turn having actually succeeded on the account chosen above.
+        pool.remember_session_assignment("anthropic", Some(session), None, &accounts[sticky]);
         // 0.9 burned just 30 minutes into the 5h window: projected to exhaust
         // the backstop long before the reset 4.5h away.
         pool.note_quota(
@@ -9169,64 +9453,65 @@ mod tests {
 
     #[test]
     fn available_accounts_order_by_burn_rate_headroom() {
-        // With [server.pool] set, equal-priority accounts still under their soft
-        // threshold order by largest projected headroom first — the headline
-        // burn-rate-aware ordering. (Distinct from the near_soft bucket, which
-        // all_near_accounts_fall_back_to_headroom_order covers.)
-        let pool = AccountPool::new();
-        let accounts = vec![account("a"), account("b"), account("c")];
-        let cfg = PoolConfig::default();
-        let session = "avail-headroom";
-        let now = unix_now();
-        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
-        let sticky = rotation[0];
-        // Push the sticky account near quota so the available_under sort runs
-        // (a healthy sticky account short-circuits to rotation order).
-        pool.note_quota(
-            "anthropic",
-            &accounts[sticky],
-            &quota_headers(&[(
-                "anthropic-ratelimit-unified-5h-utilization",
-                "0.99".to_string(),
-            )]),
-        );
-        // Both remaining accounts stay well under threshold (0.3) but burn at
-        // different rates: the nearer reset means more of the window has already
-        // elapsed, a slower observed pace, and thus larger headroom.
-        let others: Vec<usize> = (0..accounts.len()).filter(|&i| i != sticky).collect();
-        let (slow, fast) = (others[0], others[1]);
-        pool.note_quota(
-            "anthropic",
-            &accounts[slow],
-            &quota_headers(&[
-                (
+        // Equal-priority accounts order by largest projected headroom in both
+        // the default configuration and with an explicit [server.pool].
+        for cfg in [None, Some(PoolConfig::default())] {
+            let pool = AccountPool::new();
+            let accounts = vec![account("a"), account("b"), account("c")];
+            let session = "avail-headroom";
+            let now = unix_now();
+            let rotation =
+                pool.select_order("anthropic", &accounts, Some(session), None, cfg.as_ref());
+            let sticky = rotation[0];
+
+            pool.note_quota(
+                "anthropic",
+                &accounts[sticky],
+                &quota_headers(&[(
                     "anthropic-ratelimit-unified-5h-utilization",
-                    "0.3".to_string(),
-                ),
-                (
-                    "anthropic-ratelimit-unified-5h-reset",
-                    (now + 3_600).to_string(),
-                ),
-            ]),
-        );
-        pool.note_quota(
-            "anthropic",
-            &accounts[fast],
-            &quota_headers(&[
-                (
-                    "anthropic-ratelimit-unified-5h-utilization",
-                    "0.3".to_string(),
-                ),
-                (
-                    "anthropic-ratelimit-unified-5h-reset",
-                    (now + 16_200).to_string(),
-                ),
-            ]),
-        );
-        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
-        assert_eq!(order[0], slow, "larger-headroom account sorts first");
-        assert_eq!(order[1], fast, "faster-burning account sorts after");
-        assert_eq!(order.last(), Some(&sticky), "near sticky sorts last");
+                    "0.99".to_string(),
+                )]),
+            );
+
+            // Both remaining accounts stay well under threshold (0.3) but burn
+            // at different rates: the nearer reset means more of the window has
+            // elapsed, a slower observed pace, and thus larger headroom.
+            let others: Vec<usize> = (0..accounts.len()).filter(|&i| i != sticky).collect();
+            let (slow, fast) = (others[0], others[1]);
+            pool.note_quota(
+                "anthropic",
+                &accounts[slow],
+                &quota_headers(&[
+                    (
+                        "anthropic-ratelimit-unified-5h-utilization",
+                        "0.3".to_string(),
+                    ),
+                    (
+                        "anthropic-ratelimit-unified-5h-reset",
+                        (now + 3_600).to_string(),
+                    ),
+                ]),
+            );
+            pool.note_quota(
+                "anthropic",
+                &accounts[fast],
+                &quota_headers(&[
+                    (
+                        "anthropic-ratelimit-unified-5h-utilization",
+                        "0.3".to_string(),
+                    ),
+                    (
+                        "anthropic-ratelimit-unified-5h-reset",
+                        (now + 16_200).to_string(),
+                    ),
+                ]),
+            );
+            let order =
+                pool.select_order("anthropic", &accounts, Some(session), None, cfg.as_ref());
+            assert_eq!(order[0], slow, "larger-headroom account sorts first");
+            assert_eq!(order[1], fast, "faster-burning account sorts after");
+            assert_eq!(order.last(), Some(&sticky), "near sticky sorts last");
+        }
     }
 
     #[test]
@@ -9323,15 +9608,16 @@ mod tests {
         assert!(!seen.disabled);
         assert!(
             seen.headroom_secs.is_some(),
-            "finite projection is reported with [server.pool] set"
+            "finite projection is reported for balanced ranking"
         );
         let standby = &snaps[1];
         assert!(standby.disabled);
         assert_eq!(standby.priority, 200);
         assert!(!standby.available, "a disabled account is never available");
-        // Without [server.pool], the projection is not surfaced.
+        // Balanced ordering uses the same projection even without an explicit
+        // [server.pool] section; the hard-threshold defaults still define it.
         let legacy = pool.snapshot("anthropic", &accounts, None, None);
-        assert!(legacy[0].headroom_secs.is_none());
+        assert!(legacy[0].headroom_secs.is_some());
     }
 
     #[test]
@@ -10261,13 +10547,14 @@ mod tests {
             );
         }
 
-        // Sanity: while the sticky account is healthy and un-paused, it still
-        // takes the fast path, so `others` stay in raw rotation order.
+        // Simulate the first turn having succeeded on the original account.
+        // Its affinity keeps it first, while the remaining candidates still
+        // follow the live headroom ranking.
+        pool.remember_session_assignment("anthropic", Some(session), None, &accounts[sticky]);
         let baseline = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
-        assert_eq!(
-            baseline, rotation,
-            "a healthy sticky account takes the fast path"
-        );
+        let mut expected_baseline = vec![sticky];
+        expected_baseline.extend(others.iter().rev().copied());
+        assert_eq!(baseline, expected_baseline);
 
         pool.set_paused("anthropic", &accounts[sticky], true);
         let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
@@ -10281,10 +10568,9 @@ mod tests {
 
     #[test]
     fn effective_sort_by_reset_is_false_without_pool_config_even_if_overridden() {
-        // `[server.pool]` absent means the legacy branch of `select_order_inner`
-        // runs, which never consults `sort_by_reset` at all. Reporting the
-        // runtime override as active in that state (e.g. on `GET
-        // /admin/api/pool`) would claim an effect selection does not have.
+        // `sort_by_reset` is a [server.pool] feature. Without that section,
+        // balanced selection still uses headroom, but a runtime reset-order
+        // override remains inert and must not be reported as active.
         let pool = AccountPool::new();
         pool.set_sort_by_reset_override(Some(true));
         assert!(!pool.effective_sort_by_reset(None));

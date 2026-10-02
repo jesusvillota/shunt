@@ -73,26 +73,31 @@ States: `disabled` (config) · `paused` · `needs re-login` · `unseen` (no traf
 
 ## Ranking
 
-The number in the first column says in which order the gateway tries a provider's
-accounts for a new conversation: **1 is drawn first**.
+The number in the first column is the provider's ranking. In **balanced** mode it
+is the live order a new conversation would use. In **custom order** it is the
+configured priority (1 is most preferred); if that account is temporarily ineligible,
+the gateway skips it and serves from the next eligible rank.
 
-- **Balanced** (the default): all accounts share one tier and the gateway spreads
-  load by *headroom* — how much room an account has left before its limit, given how
-  fast it is being used. The numbers shown are the gateway's live order and change as
-  usage changes; an account that cannot take traffic right now (paused, cooling down,
-  needs re-login, disabled) shows `–`. If `[server.pool] sort_by_reset` is on
-  (process-wide, set in the config or through the admin API), balanced orders by
-  soonest reset instead and the numbers follow that.
-- **Custom order**: your own 1, 2, 3…. Pressing `m` starts from the order the gateway
-  is using at that moment so nothing reshuffles; then move accounts with
-  `Shift+↑/↓`. The order is saved as each account's `priority` in `shunt.toml`
-  (`1` = most preferred) — an existing config key, no new one. Pressing `m` again
-  removes the priorities and returns to balanced.
+- **Balanced** (the default): all accounts share one tier. A **new conversation**
+  starts on the account with the best live *headroom* — how much room it has left
+  before its limit, given how fast it is being used. The numbers shown are that live
+  order and change as usage changes; an account that cannot take traffic right now
+  (paused, cooling down, needs re-login, disabled) shows `–`. If
+  `[server.pool] sort_by_reset` is on (process-wide, set in the config or through the
+  admin API), new conversations use the soonest-reset order instead.
+- **Custom order**: a strict 1, 2, 3… waterfall for **new routing decisions**. With
+  `1 = X` and `2 = Y`, X receives new traffic while it remains eligible; Y takes
+  over when X is near quota, cooling down, paused, disabled, or otherwise unavailable.
+  Pressing `m` starts from the live order the gateway is using at that moment; then
+  move accounts with `Shift+↑/↓`. The order is saved as each account's `priority`
+  in `shunt.toml` (`1` = most preferred). Pressing `m` again removes the
+  priorities and returns to balanced.
 
-Two things the number does **not** do: a conversation already running stays on the
-account it started with (session stickiness) unless that account is cooling down or
-near quota; and when an account reaches its limit the gateway moves to the next one
-regardless of rank.
+A conversation already running stays on the account chosen for its first routing
+decision while that account remains healthy. If that account becomes near quota or
+unavailable, the conversation is re-routed using the current ranking. Opportunistic
+quota re-probes may also temporarily take the first attempt without changing the
+conversation's sticky assignment.
 
 ## Switching a provider off
 

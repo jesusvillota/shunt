@@ -697,6 +697,12 @@ pub(super) fn pool_events_stream(
                                         status.is_success(),
                                     );
                                     if status.is_success() {
+                                        state.accounts.remember_session_assignment(
+                                            &route.provider,
+                                            session_id.as_deref(),
+                                            Some(route.upstream_model.as_str()),
+                                            account,
+                                        );
                                         record(StatusCode::OK);
                                         let parsed: Parsed =
                                             Box::pin(parsed_events(upstream.bytes_stream()));
@@ -857,6 +863,12 @@ pub(super) fn pool_events_stream(
                                                     &route.provider,
                                                     account,
                                                     true,
+                                                );
+                                                state.accounts.remember_session_assignment(
+                                                    &route.provider,
+                                                    session_id.as_deref(),
+                                                    Some(route.upstream_model.as_str()),
+                                                    account,
                                                 );
                                                 record(StatusCode::OK);
                                                 let parsed: Parsed =
@@ -1107,6 +1119,14 @@ pub(super) async fn forward_chatgpt_oauth(
                     state
                         .accounts
                         .mark_healthy(&route.provider, account, status.is_success());
+                    if status.is_success() {
+                        state.accounts.remember_session_assignment(
+                            &route.provider,
+                            session_id.as_deref(),
+                            Some(route.upstream_model.as_str()),
+                            account,
+                        );
+                    }
                     let response = crate::adapters::with_admission(response, admission);
                     return Ok((status, with_account_header(response, &account.name)));
                 }
@@ -1218,6 +1238,12 @@ pub(super) async fn forward_chatgpt_oauth(
                     .accounts
                     .mark_healthy(&route.provider, account, status.is_success());
                 if status.is_success() {
+                    state.accounts.remember_session_assignment(
+                        &route.provider,
+                        session_id.as_deref(),
+                        Some(route.upstream_model.as_str()),
+                        account,
+                    );
                     let input_tokens_estimate = take_estimate(&mut estimate_handle);
                     let response = relay_success(
                         &state,
@@ -1316,6 +1342,12 @@ pub(super) async fn forward_chatgpt_oauth(
                         let retry_status = retry.status();
                         if retry_status.is_success() {
                             state.accounts.mark_healthy(&route.provider, account, true);
+                            state.accounts.remember_session_assignment(
+                                &route.provider,
+                                session_id.as_deref(),
+                                Some(route.upstream_model.as_str()),
+                                account,
+                            );
                             let input_tokens_estimate = take_estimate(&mut estimate_handle);
                             let response = relay_success(
                                 &state,
@@ -2428,6 +2460,7 @@ mod tests {
         config.providers.get_mut("codex").unwrap().base_url = format!("http://{addr}");
         config.providers.get_mut("codex").unwrap().websocket = true;
         let state = AppState::new(config, reqwest::Client::new()).unwrap();
+        let account_b = pool_account("acc-b", "SHUNT_POOL_PROBE_B");
 
         // Turn 1: only acc-b is resolvable, so it serves and pools the
         // conversation's socket under acc-b.
@@ -2437,7 +2470,7 @@ mod tests {
             PoolForward {
                 pool_key: Some("sess-1".to_string()),
                 session_id: Some("sess-1".to_string()),
-                ..pool_turn(vec![pool_account("acc-b", "SHUNT_POOL_PROBE_B")], false)
+                ..pool_turn(vec![account_b.clone()], false)
             },
         )
         .await
@@ -2453,9 +2486,15 @@ mod tests {
             "turn 1 pools the socket under acc-b"
         );
 
-        // Turn 2: compaction-marked, served by acc-a (now resolvable, ranked
-        // first). The bump must evict acc-b's pre-compaction socket along
-        // with acc-a's own.
+        // Turn 2: make the previously sticky acc-b unavailable, then add
+        // acc-a. The marked turn must fail over to acc-a, and the compaction
+        // bump must evict acc-b's pre-compaction socket along with acc-a's own.
+        state.accounts.cooldown(
+            "codex",
+            &account_b,
+            Duration::from_secs(60),
+            "test failover",
+        );
         let _token_a =
             crate::auth::shared::EnvVarGuard::set("SHUNT_POOL_PROBE_A", probe_token("acc-a"));
         let (status, _) = forward_chatgpt_oauth(
