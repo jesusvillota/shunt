@@ -36,16 +36,19 @@ gets a plain "read-only" message.
 ```
  shunt top  http://127.0.0.1:3001                          ● live · updated 1s ago
 ────────────────────────────────────────────────────────────────────────────────
-  #  Account              Plan    State            5h limit (used · resets in)  7d limit (used · resets in)
+  #  Account              Plan    State            5h limit (used · resets in)  7d limit (used · resets in)  Requests ok/fail · avg
 ▾ anthropic   ON   ranking: balanced · 3 accounts
-  1  work                 max     available        ████░░░░  50% · 2h 14m       ██░░░░░░  25% · 3d 4h
-  2  spare                max     near quota       ███████░  88% · 41m          ███░░░░░  40% · 5d
+  1  work                 max     available        ████░░░░  50% · 2h 14m       ██░░░░░░  25% · 3d 4h      212/0 · 840ms
+  2  spare                max     near quota       ███████░  88% · 41m          ███░░░░░  40% · 5d         97/3 · 1210ms
 ```
 
 Each provider is its own section with an **ON/OFF** switch and its ranking mode.
 Each account shows its rank, state, and for both the 5-hour and the 7-day limit how
 much is used and how long until that limit resets. Usage bars turn yellow at 70% and
-red at 90%. If the gateway goes away the last data stays on screen with the error in
+red at 90%. The last column counts the requests this gateway process has sent to the
+account: succeeded/failed, then the mean time to response headers (`–` before the first
+request). It turns red once any request has failed, and resets when the gateway restarts.
+It needs a gateway that reports request counters; an older one shows `–`. If the gateway goes away the last data stays on screen with the error in
 red, and polling continues until it returns.
 
 No line is highlighted until you choose one (arrow keys or a click). Click empty
