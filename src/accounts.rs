@@ -756,12 +756,7 @@ impl AccountPool {
             .remove(&Self::session_affinity_key(provider, session_id));
     }
 
-    fn remember_session_affinity(
-        &self,
-        provider: &str,
-        session_id: &str,
-        account: &AccountConfig,
-    ) {
+    fn remember_session_affinity(&self, provider: &str, session_id: &str, account: &AccountConfig) {
         let key = Self::session_affinity_key(provider, session_id);
         let mut affinities = self
             .session_affinity
@@ -5185,10 +5180,7 @@ mod tests {
                         "anthropic-ratelimit-unified-5h-utilization",
                         "0.10".to_string(),
                     ),
-                    (
-                        "anthropic-ratelimit-unified-5h-reset",
-                        reset.to_string(),
-                    ),
+                    ("anthropic-ratelimit-unified-5h-reset", reset.to_string()),
                 ]),
             );
         }
