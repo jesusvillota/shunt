@@ -381,6 +381,65 @@ fn add_opens_for_the_selected_provider_and_skips_ones_the_api_cannot_add_to() {
 }
 
 #[test]
+fn delete_requires_a_selected_managed_account_and_confirmation() {
+    let mut app = claude(vec![acct("a", None)]);
+
+    assert_eq!(app.on_key(key('d')), Effect::None);
+    assert!(app.delete_confirm.is_none());
+    assert!(
+        matches!(app.current_notice(), Some(Notice::Info(t)) if t.contains("Select an account"))
+    );
+
+    app.on_key(key('j')); // provider header
+    assert_eq!(app.on_key(key('d')), Effect::None);
+    assert!(app.delete_confirm.is_none());
+
+    app.on_key(key('j')); // account a
+    assert_eq!(app.on_key(key('d')), Effect::None);
+    assert_eq!(
+        app.delete_confirm,
+        Some(DeleteConfirm {
+            provider: "claude".into(),
+            kind: "claude",
+            name: "a".into(),
+        })
+    );
+
+    // Accidental or unrelated keys do nothing while the confirmation is open.
+    assert_eq!(app.on_key(key('x')), Effect::None);
+    assert!(app.delete_confirm.is_some());
+    assert_eq!(app.on_key(key('n')), Effect::None);
+    assert!(app.delete_confirm.is_none());
+
+    app.on_key(key('d'));
+    assert_eq!(app.on_key(code(KeyCode::Esc)), Effect::None);
+    assert!(app.delete_confirm.is_none());
+
+    app.on_key(key('d'));
+    assert_eq!(
+        app.on_key(key('y')),
+        Effect::Delete {
+            provider: "claude".into(),
+            kind: "claude",
+            name: "a".into(),
+        }
+    );
+    assert!(app.delete_confirm.is_none());
+}
+
+#[test]
+fn delete_is_not_offered_for_provider_families_without_a_delete_endpoint() {
+    let mut app = app_with(vec![provider("kimi", "kimi_oauth", vec![acct("k", None)])]);
+    app.on_key(key('j'));
+    app.on_key(key('j'));
+    assert_eq!(app.on_key(key('d')), Effect::None);
+    assert!(app.delete_confirm.is_none());
+    assert!(
+        matches!(app.current_notice(), Some(Notice::Info(t)) if t.contains("cannot be deleted"))
+    );
+}
+
+#[test]
 fn a_failed_poll_keeps_the_last_snapshot() {
     let mut app = claude(vec![acct("a", None)]);
     app.on_poll(Err("gateway unreachable".into()));

@@ -52,6 +52,11 @@ pub enum Effect {
     ClearRanks {
         provider: String,
     },
+    Delete {
+        provider: String,
+        kind: &'static str,
+        name: String,
+    },
     Add(add::Effect),
     /// Put text on the clipboard (via the terminal).
     CopyToClipboard(String),
@@ -70,6 +75,14 @@ pub enum Notice {
 pub struct Sel {
     pub provider: String,
     pub account: Option<String>,
+}
+
+/// The destructive delete action waiting for the operator to confirm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteConfirm {
+    pub provider: String,
+    pub kind: &'static str,
+    pub name: String,
 }
 
 /// One selectable line, in screen order.
@@ -97,6 +110,7 @@ pub struct App {
     pub show_help: bool,
     pub notice: Option<(Notice, Instant)>,
     pub dialog: Option<AddFlow>,
+    pub delete_confirm: Option<DeleteConfirm>,
     /// First visible list line.
     pub scroll: usize,
     /// Scroll the selection into view on the next draw (keyboard moves only).
@@ -121,6 +135,7 @@ impl App {
             show_help: false,
             notice: None,
             dialog: None,
+            delete_confirm: None,
             scroll: 0,
             reveal: false,
             list_area: Rect::default(),
@@ -284,7 +299,7 @@ impl App {
     }
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) -> Effect {
-        if self.dialog.is_some() || self.show_help {
+        if self.dialog.is_some() || self.delete_confirm.is_some() || self.show_help {
             return Effect::None;
         }
         match mouse.kind {
@@ -319,6 +334,9 @@ impl App {
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return Effect::Quit;
+        }
+        if self.delete_confirm.is_some() {
+            return self.delete_key(key);
         }
         if self.dialog.is_some() {
             return self.dialog_key(key);
@@ -363,6 +381,7 @@ impl App {
             KeyCode::Char('o') => self.toggle_provider(),
             KeyCode::Char('m') => self.toggle_mode(),
             KeyCode::Char('a') => self.open_dialog(),
+            KeyCode::Char('d') => self.open_delete_confirm(),
             _ => Effect::None,
         }
     }
@@ -513,6 +532,41 @@ impl App {
         }
         order.swap(at, to);
         self.write_order(&provider_name, order)
+    }
+
+    fn open_delete_confirm(&mut self) -> Effect {
+        let Some((provider, row)) = self.selected_row() else {
+            return self.need("Select an account first (d deletes one account)");
+        };
+        let Some(kind) = provider.account_kind() else {
+            return self.need("This provider's accounts cannot be deleted from the admin API");
+        };
+        self.delete_confirm = Some(DeleteConfirm {
+            provider: provider.name.clone(),
+            kind,
+            name: row.account.name.clone(),
+        });
+        Effect::None
+    }
+
+    fn delete_key(&mut self, key: KeyEvent) -> Effect {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let Some(confirm) = self.delete_confirm.take() else {
+                    return Effect::None;
+                };
+                Effect::Delete {
+                    provider: confirm.provider,
+                    kind: confirm.kind,
+                    name: confirm.name,
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.delete_confirm = None;
+                Effect::None
+            }
+            _ => Effect::None,
+        }
     }
 
     fn open_dialog(&mut self) -> Effect {

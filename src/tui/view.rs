@@ -14,7 +14,7 @@ use ratatui::{
 
 use super::{
     add::{AddFlow, Step},
-    app::{App, Entry, Notice, Sel},
+    app::{App, DeleteConfirm, Entry, Notice, Sel},
     model::{AccountDto, AccountState, RankMode},
 };
 
@@ -208,6 +208,8 @@ pub fn render(frame: &mut Frame, app: &mut App, now: u64) {
     render_footer(frame, app, footer);
     if let Some(dialog) = &app.dialog {
         render_dialog(frame, dialog);
+    } else if let Some(confirm) = &app.delete_confirm {
+        render_delete_confirm(frame, confirm);
     } else if app.show_help {
         render_help(frame, frame.area());
     }
@@ -300,10 +302,12 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     let hint = if app.dialog.is_some() {
         "Enter continue · Esc cancel"
+    } else if app.delete_confirm.is_some() {
+        "y delete · n/Esc cancel"
     } else if app.selected.is_none() {
         "↑↓ or click: select · a: add account · ?: help · q: quit"
     } else {
-        "p pause · o provider on/off · m ranking mode · Shift+↑↓ move rank · a add · Esc deselect · ? help · q quit"
+        "p pause · o provider on/off · m ranking mode · Shift+↑↓ move rank · a add · d delete · Esc deselect · ? help · q quit"
     };
     let line = match app.current_notice() {
         Some(Notice::Info(text)) => Line::from(format!(" {text}")).green(),
@@ -322,6 +326,32 @@ fn popup(area: Rect, width: u16, height: u16) -> Rect {
         width,
         height,
     )
+}
+
+fn render_delete_confirm(frame: &mut Frame, confirm: &DeleteConfirm) {
+    let area = frame.area();
+    let lines = vec![
+        Line::from(vec![
+            Span::raw("Delete account "),
+            Span::styled(format!("{:?}", confirm.name), Style::new().bold()),
+            Span::raw(format!(" from {}?", confirm.provider)),
+        ]),
+        Line::default(),
+        Line::styled(
+            "This permanently removes the managed credential from Shunt's account store.",
+            Style::new().fg(Color::Red),
+        ),
+        Line::default(),
+        Line::styled("y: delete · n / Esc: cancel", Style::new().dark_gray()),
+    ];
+    let rect = popup(area, 78, 9);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(Block::bordered().title(" Delete account "))
+            .wrap(Wrap { trim: false }),
+        rect,
+    );
 }
 
 fn render_dialog(frame: &mut Frame, dialog: &AddFlow) {
@@ -439,16 +469,17 @@ fn render_help(frame: &mut Frame, area: Rect) {
         "                    custom order your own 1, 2, 3… — number 1 is drawn first",
         "  Shift+↑↓ / K J  move the selected account up/down the custom order",
         "  a               add an account (it is added to the pool in shunt.toml)",
+        "  d               delete the selected account (asks y/n before deleting)",
         "  q               quit",
         "",
-        "Pause, switch-off and ranking: pause/switch-off last until the gateway",
-        "restarts; ranking and added accounts are saved in shunt.toml.",
+        "Pause/switch-off last until the gateway restarts. Ranking and explicit",
+        "pool membership are saved in shunt.toml; delete also removes the credential.",
         "Open conversations stay on the account they started with.",
         "",
         "Press any key to close.",
     ]
     .join("\n");
-    let rect = popup(area, 84, 21);
+    let rect = popup(area, 84, 22);
     frame.render_widget(Clear, rect);
     frame.render_widget(
         Paragraph::new(text).block(Block::bordered().title(" Help ")),

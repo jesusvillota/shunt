@@ -34,6 +34,20 @@ shunt run --config /path/to/shunt.toml
 
 通过 Homebrew 安装时,也可以作为后台服务运行: `brew services start shunt`。详见 [安装](/zh-cn/getting-started/installation/#作为后台服务运行)。
 
+## `shunt top`
+
+打开托管账户池的实时终端监视器。它会轮询正在运行的网关 Admin API，因此显示的账户行和配额状态与调度器实际使用的状态一致。
+
+```bash
+shunt top --config /path/to/shunt.toml
+```
+
+用方向键或 `j`/`k` 选择行。按 `a` 添加账户。选中账户后按 `d` 会打开删除确认对话框；只有按 `y` 才会删除，按 `n` 或 `Esc` 取消，确认窗口打开时其他按键不会执行操作。
+
+删除会通过 Admin API 移除托管的 Claude、Codex 或 Antigravity 凭据，并在能够安全修改时同步删除 `shunt.toml` 中显式列出的池条目。执行任何破坏性操作之前，TUI 会先试运行配置清理。例如，删除最后一个显式账户会让空列表变成“扫描所有已存储账户”，因此这种删除会被拒绝。同一安全检查也意味着 YAML 配置或通过 `[[upstreams]]` 定义的提供商不能使用该删除操作。
+
+暂停和提供商开关只影响当前运行时。排序变化和显式账户成员变更会持久化到 TOML 配置，并通过热重载生效。
+
 ## `shunt check`
 
 校验解析后的配置并退出(`shunt --check` 也可以):

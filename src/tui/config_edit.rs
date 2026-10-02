@@ -161,6 +161,91 @@ pub fn include_account(text: &str, provider: &str, name: &str) -> anyhow::Result
     Ok(Some(doc.to_string()))
 }
 
+/// Remove `name` from an explicitly listed provider pool after its managed
+/// credential is deleted. A provider with no explicit accounts scans the whole
+/// store, so there is nothing to edit. Refuse to turn a one-account explicit
+/// list into an empty list: empty means "scan every store account", which could
+/// silently widen the pool instead of leaving it empty.
+pub fn remove_account(text: &str, provider: &str, name: &str) -> anyhow::Result<Option<String>> {
+    let mut doc = parse(text)?;
+    let table = provider_table(&mut doc, provider)?;
+    let Some(accounts) = table.get_mut("accounts") else {
+        return Ok(None);
+    };
+    let listed = names_of(accounts);
+    let matching = listed
+        .iter()
+        .filter(|existing| existing.as_str() == name)
+        .count();
+    if matching == 0 {
+        return Ok(None);
+    }
+
+    let uses_inline_credentials = match accounts {
+        Item::ArrayOfTables(tables) => tables.iter().any(|entry| {
+            entry.get("name").and_then(Item::as_str) == Some(name)
+                && (entry.contains_key("credentials") || entry.contains_key("token_env"))
+        }),
+        Item::Value(Value::Array(array)) => array.iter().any(|entry| {
+            entry.as_inline_table().is_some_and(|table| {
+                table.get("name").and_then(Value::as_str) == Some(name)
+                    && (table.contains_key("credentials") || table.contains_key("token_env"))
+            })
+        }),
+        _ => false,
+    };
+    if uses_inline_credentials {
+        bail!(
+            "account {name:?} in provider {provider:?} uses an inline credential source; \
+             d only deletes shunt-managed store accounts"
+        );
+    }
+
+    if matching == listed.len() {
+        bail!(
+            "cannot remove the last explicitly listed account {name:?} from provider {provider:?}: \
+             an empty account list means scan every stored account; edit the provider by hand if \
+             you want different empty-pool behavior"
+        );
+    }
+
+    match accounts {
+        Item::ArrayOfTables(tables) => {
+            let remove: Vec<_> = tables
+                .iter()
+                .enumerate()
+                .filter_map(|(index, entry)| {
+                    (entry.get("name").and_then(Item::as_str) == Some(name)).then_some(index)
+                })
+                .collect();
+            for index in remove.into_iter().rev() {
+                tables.remove(index);
+            }
+        }
+        Item::Value(Value::Array(array)) => {
+            let remove: Vec<_> = array
+                .iter()
+                .enumerate()
+                .filter_map(|(index, entry)| {
+                    entry
+                        .as_inline_table()
+                        .and_then(|table| table.get("name"))
+                        .and_then(Value::as_str)
+                        .is_some_and(|entry_name| entry_name == name)
+                        .then_some(index)
+                })
+                .collect();
+            for index in remove.into_iter().rev() {
+                array.remove(index);
+            }
+        }
+        _ => bail!("accounts in this provider is not an array of accounts"),
+    }
+
+    let updated = doc.to_string();
+    Ok((updated != text).then_some(updated))
+}
+
 /// Give every account in `ranks` the matching `priority`. If the provider
 /// lists no accounts yet, the gateway was pooling the whole store, and an
 /// explicit list would silently shrink that to what we write — so every name
@@ -291,6 +376,51 @@ auth = "chatgpt_oauth"
             "[providers.anthropic]\nauth = \"claude_oauth\"\naccounts = [{ name = \"a\" }]\n";
         let out = include_account(text, "anthropic", "b").unwrap().unwrap();
         assert_eq!(names(&out, "anthropic"), ["a", "b"]);
+        toml::from_str::<toml::Value>(&out).unwrap();
+    }
+
+    #[test]
+    fn remove_drops_an_explicit_account_but_never_turns_the_list_into_scan_all() {
+        let out = remove_account(AOT, "anthropic", "alpha").unwrap().unwrap();
+        assert_eq!(names(&out, "anthropic"), ["beta"]);
+        assert!(out.contains("# my config"));
+        assert_eq!(remove_account(AOT, "anthropic", "missing").unwrap(), None);
+        assert_eq!(
+            remove_account(AOT, "codex", "anything").unwrap(),
+            None,
+            "a store-scanned provider needs no config edit"
+        );
+
+        let one =
+            "[providers.anthropic]\nauth = \"claude_oauth\"\naccounts = [{ name = \"only\" }]\n";
+        let error = remove_account(one, "anthropic", "only")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("last explicitly listed account"), "{error}");
+        assert!(error.contains("scan every stored account"), "{error}");
+    }
+
+    #[test]
+    fn remove_refuses_inline_credential_sources() {
+        let path = "[providers.anthropic]\nauth = \"claude_oauth\"\naccounts = [{ name = \"custom\", credentials = \"/tmp/custom.json\" }, { name = \"other\" }]\n";
+        let error = remove_account(path, "anthropic", "custom")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("inline credential source"), "{error}");
+
+        let env = "[providers.anthropic]\nauth = \"claude_oauth\"\n[[providers.anthropic.accounts]]\nname = \"custom\"\ntoken_env = \"TOKEN\"\n[[providers.anthropic.accounts]]\nname = \"other\"\n";
+        let error = remove_account(env, "anthropic", "custom")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("shunt-managed store accounts"), "{error}");
+    }
+
+    #[test]
+    fn remove_handles_an_inline_accounts_array_without_reformatting_the_provider() {
+        let text = "[providers.anthropic]\nauth = \"claude_oauth\"\naccounts = [{ name = \"a\" }, { name = \"b\", priority = 2 }]\n";
+        let out = remove_account(text, "anthropic", "a").unwrap().unwrap();
+        assert_eq!(names(&out, "anthropic"), ["b"]);
+        assert!(out.contains("priority = 2"));
         toml::from_str::<toml::Value>(&out).unwrap();
     }
 

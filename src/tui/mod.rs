@@ -310,6 +310,48 @@ fn perform(ctx: &Ctx, effect: Effect) {
                 ctx.refresh_soon(true);
             });
         }
+        Effect::Delete {
+            provider,
+            kind,
+            name,
+        } => {
+            tokio::spawn(async move {
+                // Validate the config transform before deleting the credential.
+                // In particular, removing the last explicit account is unsafe:
+                // an empty list means "scan every stored account".
+                let (guard_provider, guard_name) = (provider.clone(), name.clone());
+                if let Err(e) = ctx
+                    .edit_config(move |text| {
+                        config_edit::remove_account(text, &guard_provider, &guard_name)?;
+                        Ok(None)
+                    })
+                    .await
+                {
+                    ctx.say(Notice::Error(format!("cannot safely delete {name}: {e:#}")));
+                    return;
+                }
+
+                if let Err(e) = ctx.client.delete_account(kind, &name).await {
+                    ctx.say(Notice::Error(format!("{e:#}")));
+                    ctx.refresh_soon(false);
+                    return;
+                }
+
+                let (target_provider, target_name) = (provider.clone(), name.clone());
+                let config_result = ctx
+                    .edit_config(move |text| {
+                        config_edit::remove_account(text, &target_provider, &target_name)
+                    })
+                    .await;
+                ctx.say(match config_result {
+                    Ok(_) => Notice::Info(format!("deleted {name} from {provider}")),
+                    Err(e) => Notice::Error(format!(
+                        "{name} was deleted, but shunt.toml was not updated: {e:#}"
+                    )),
+                });
+                ctx.refresh_soon(true);
+            });
+        }
         Effect::Add(add::Effect::Start { target, name }) => {
             tokio::spawn(async move {
                 let result = ctx.client.start_account(target.kind, &name).await;

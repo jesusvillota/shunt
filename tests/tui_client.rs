@@ -1,6 +1,6 @@
 //! The `shunt top` admin-API client against a real in-process gateway: poll,
-//! pause/resume by `account_ref`, account provisioning start/complete, and the
-//! read-tier refusal the monitor surfaces to the operator.
+//! pause/resume by `account_ref`, account provisioning start/complete, managed
+//! account deletion, and the read-tier refusal the monitor surfaces to the operator.
 
 #![cfg(feature = "tui")]
 
@@ -113,6 +113,11 @@ async fn polls_pauses_resumes_and_starts_provisioning() {
     );
     let refused = reader.set_paused(&provider_name, account_ref, true).await;
     assert!(format!("{:#}", refused.unwrap_err()).contains("read-only"));
+    let refused = reader.delete_account("claude", "missing").await;
+    assert!(format!("{:#}", refused.unwrap_err()).contains("read-only"));
+
+    // Deleting a missing managed account is idempotent at the admin API.
+    writer.delete_account("claude", "missing").await.unwrap();
 
     // A wrong token is reported as such rather than as an empty pool.
     let stranger = Client::new(&base, "x-shunt-admin-token", "nope").unwrap();
