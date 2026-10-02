@@ -25,7 +25,7 @@ The gateway needs `[server.admin]` (`shunt dashboard setup` does it in one step)
 | :-- | :-- | :-- |
 | Gateway URL | `--url` | derived from `[server].bind` in the config, else `http://127.0.0.1:3001` |
 | Admin token | `--token` | `SHUNT_ADMIN_TOKEN`, then the first entry of `SHUNT_ADMIN_TOKENS`, then `~/.shunt/admin-token` |
-| Config file | `--config` | the first file the gateway's loader would find. **Pass the same file the gateway was started with**: ranking and added accounts are written there |
+| Config file | `--config` | the first file the gateway's loader would find. **Pass the same file the gateway was started with**: ranking and explicit account membership edits are written there |
 | Token header | `--header` | `x-shunt-admin-token` |
 | Poll interval | `--interval-ms` | `2000` (minimum `500`) |
 
