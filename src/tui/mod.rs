@@ -327,9 +327,7 @@ fn perform(ctx: &Ctx, effect: Effect) {
                     })
                     .await
                 {
-                    ctx.say(Notice::Error(format!(
-                        "cannot safely delete {name}: {e:#}"
-                    )));
+                    ctx.say(Notice::Error(format!("cannot safely delete {name}: {e:#}")));
                     return;
                 }
 
