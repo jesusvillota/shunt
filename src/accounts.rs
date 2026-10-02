@@ -1115,45 +1115,35 @@ impl AccountPool {
             .copied()
             .filter(|&index| is_available(index) && !snapshots[index].1.near)
             .collect::<Vec<_>>();
-        // The stable sorts below preserve rotation order as the final tiebreak.
-        match pool {
-            // Priority beats headroom; ties prefer the account projected to
-            // keep the most margin before its tightest window resets.
-            Some(pool_cfg) => {
-                let sort_by_reset = self.effective_sort_by_reset(Some(pool_cfg));
-                available_under.sort_by(|&left, &right| {
-                    accounts[left]
-                        .priority
-                        .cmp(&accounts[right].priority)
-                        .then_with(|| {
-                            if sort_by_reset {
-                                // Soonest reset first; None (unknown) sorts last.
-                                let l = snapshots[left].3;
-                                let r = snapshots[right].3;
-                                match (l, r) {
-                                    (Some(lt), Some(rt)) => lt.cmp(&rt),
-                                    (Some(_), None) => std::cmp::Ordering::Less,
-                                    (None, Some(_)) => std::cmp::Ordering::Greater,
-                                    (None, None) => std::cmp::Ordering::Equal,
-                                }
-                            } else {
-                                snapshots[right]
-                                    .1
-                                    .headroom
-                                    .total_cmp(&snapshots[left].1.headroom)
-                            }
-                        })
+        // Priority defines custom-order tiers. Within a tier, balanced mode
+        // prefers the account with the most projected headroom. The explicit
+        // sort-by-reset setting replaces that tiebreak with soonest reset.
+        // Stable sorting preserves the hash/round-robin rotation as the final
+        // tiebreak when the live quota signals are identical or unknown.
+        let sort_by_reset = self.effective_sort_by_reset(pool);
+        available_under.sort_by(|&left, &right| {
+            accounts[left]
+                .priority
+                .cmp(&accounts[right].priority)
+                .then_with(|| {
+                    if sort_by_reset {
+                        // Soonest reset first; None (unknown) sorts last.
+                        let l = snapshots[left].3;
+                        let r = snapshots[right].3;
+                        match (l, r) {
+                            (Some(lt), Some(rt)) => lt.cmp(&rt),
+                            (Some(_), None) => std::cmp::Ordering::Less,
+                            (None, Some(_)) => std::cmp::Ordering::Greater,
+                            (None, None) => std::cmp::Ordering::Equal,
+                        }
+                    } else {
+                        snapshots[right]
+                            .1
+                            .headroom
+                            .total_cmp(&snapshots[left].1.headroom)
+                    }
                 })
-            }
-            // Legacy: `Option` orders `None` before `Some`, so accounts with
-            // an unknown weekly reset sort first.
-            None => available_under.sort_by(|&left, &right| {
-                accounts[left]
-                    .priority
-                    .cmp(&accounts[right].priority)
-                    .then_with(|| snapshots[left].2.cmp(&snapshots[right].2))
-            }),
-        }
+        });
 
         // Available accounts past a threshold. With `[server.pool]` set, the
         // soft-near ones (under the hard backstop) order by priority then
@@ -2390,8 +2380,7 @@ impl AccountPool {
                         priority: account.priority,
                         disabled: account.disabled,
                         paused: health.paused_providers.contains(provider),
-                        headroom_secs: (pool.is_some() && quota.headroom.is_finite())
-                            .then_some(quota.headroom as i64),
+                        headroom_secs: quota.headroom.is_finite().then_some(quota.headroom as i64),
                         utilization_5h: health.quota.utilization_5h,
                         reset_5h: health.quota.reset_5h,
                         utilization_7d: health.quota.utilization_7d,
@@ -6382,7 +6371,7 @@ mod tests {
     }
 
     #[test]
-    fn under_quota_accounts_sort_by_weekly_reset_with_unknown_first() {
+    fn reset_metadata_without_utilization_does_not_change_balanced_order() {
         let pool = AccountPool::new();
         let accounts = vec![account("a"), account("b"), account("c"), account("d")];
         let session = "reset-sort";
@@ -6399,7 +6388,9 @@ mod tests {
             .as_secs();
         let resets = [now + 300, now + 100, now + 200];
         for (position, (&index, reset)) in rotation[1..].iter().zip(resets).enumerate() {
-            // Leave the first available account's reset unknown.
+            // Leave the first available account's reset unknown. Reset metadata
+            // alone carries no burn-rate signal, so it must not reshuffle the
+            // balanced order unless sort_by_reset is explicitly enabled.
             if position != 0 {
                 pool.note_quota(
                     "anthropic",
@@ -9578,15 +9569,16 @@ mod tests {
         assert!(!seen.disabled);
         assert!(
             seen.headroom_secs.is_some(),
-            "finite projection is reported with [server.pool] set"
+            "finite projection is reported for balanced ranking"
         );
         let standby = &snaps[1];
         assert!(standby.disabled);
         assert_eq!(standby.priority, 200);
         assert!(!standby.available, "a disabled account is never available");
-        // Without [server.pool], the projection is not surfaced.
+        // Balanced ordering uses the same projection even without an explicit
+        // [server.pool] section; the hard-threshold defaults still define it.
         let legacy = pool.snapshot("anthropic", &accounts, None, None);
-        assert!(legacy[0].headroom_secs.is_none());
+        assert!(legacy[0].headroom_secs.is_some());
     }
 
     #[test]
