@@ -9313,6 +9313,9 @@ mod tests {
             Some(&ordering_only),
         );
         let sticky = rotation[0];
+        // Selection no longer creates affinity by itself: simulate the first
+        // turn having actually succeeded on the account chosen above.
+        pool.remember_session_assignment("anthropic", Some(session), None, &accounts[sticky]);
         // 0.9 burned just 30 minutes into the 5h window: projected to exhaust
         // the backstop long before the reset 4.5h away.
         pool.note_quota(
