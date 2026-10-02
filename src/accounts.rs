@@ -715,8 +715,18 @@ impl AccountPool {
         Self::default()
     }
 
-    fn session_affinity_key(provider: &str, session_id: &str) -> (String, [u8; 32]) {
-        let digest = Sha256::digest(session_id.as_bytes());
+    fn session_affinity_key(
+        provider: &str,
+        session_id: &str,
+        model: Option<&str>,
+    ) -> (String, [u8; 32]) {
+        let mut hasher = Sha256::new();
+        hasher.update(session_id.as_bytes());
+        hasher.update([0]);
+        if let Some(model) = model {
+            hasher.update(model.to_ascii_lowercase().as_bytes());
+        }
+        let digest = hasher.finalize();
         let mut bytes = [0_u8; 32];
         bytes.copy_from_slice(&digest);
         (provider.to_string(), bytes)
@@ -726,10 +736,11 @@ impl AccountPool {
         &self,
         provider: &str,
         session_id: &str,
+        model: Option<&str>,
         accounts: &[AccountConfig],
         candidates: &[usize],
     ) -> Option<usize> {
-        let key = Self::session_affinity_key(provider, session_id);
+        let key = Self::session_affinity_key(provider, session_id, model);
         let mut affinities = self
             .session_affinity
             .lock()
@@ -749,15 +760,28 @@ impl AccountPool {
         index
     }
 
-    fn clear_session_affinity(&self, provider: &str, session_id: &str) {
+    fn clear_session_affinity(&self, provider: &str, session_id: &str, model: Option<&str>) {
         self.session_affinity
             .lock()
             .expect("session affinity lock poisoned")
-            .remove(&Self::session_affinity_key(provider, session_id));
+            .remove(&Self::session_affinity_key(provider, session_id, model));
     }
 
-    fn remember_session_affinity(&self, provider: &str, session_id: &str, account: &AccountConfig) {
-        let key = Self::session_affinity_key(provider, session_id);
+    /// Record the account that actually served a conversation turn. Selection
+    /// itself never creates affinity: an account that merely ranked first can
+    /// still fail admission, credential resolution, transport, or failover.
+    /// Callers commit only after a real successful upstream response.
+    pub(crate) fn remember_session_assignment(
+        &self,
+        provider: &str,
+        session_id: Option<&str>,
+        model: Option<&str>,
+        account: &AccountConfig,
+    ) {
+        let Some(session_id) = session_id.filter(|session_id| !session_id.is_empty()) else {
+            return;
+        };
+        let key = Self::session_affinity_key(provider, session_id, model);
         let mut affinities = self
             .session_affinity
             .lock()
@@ -1100,7 +1124,13 @@ impl AccountPool {
         // which is what makes balanced mode genuinely headroom-driven and
         // custom priorities a strict waterfall.
         let bound_session_index = session_id.and_then(|session_id| {
-            self.session_affinity_index(&provider, session_id, accounts, &rotation)
+            self.session_affinity_index(
+                &provider,
+                session_id,
+                model_key.as_deref(),
+                accounts,
+                &rotation,
+            )
         });
 
         let is_available =
@@ -1194,21 +1224,13 @@ impl AccountPool {
                     order.insert(0, bound);
                 }
             } else if let Some(session_id) = session_id {
-                self.clear_session_affinity(&provider, session_id);
+                self.clear_session_affinity(&provider, session_id, model_key.as_deref());
             }
         }
 
-        // Re-probes are intentionally transient and may temporarily override a
-        // sticky account. Do not establish a new binding from such a request;
-        // the next turn will make a normal routing decision.
-        if pending_reprobe.is_none() {
-            if let (Some(session_id), Some(&first)) = (session_id, order.first()) {
-                if is_available(first) && !snapshots[first].1.near {
-                    self.remember_session_affinity(&provider, session_id, &accounts[first]);
-                }
-            }
-        }
-
+        // Selection is intentionally side-effect-free with respect to session
+        // affinity. The adapter records the account only after it actually
+        // serves a successful upstream response.
         (promote(order), pending_reprobe)
     }
 
