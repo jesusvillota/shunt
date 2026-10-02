@@ -73,8 +73,10 @@ States: `disabled` (config) · `paused` · `needs re-login` · `unseen` (no traf
 
 ## Ranking
 
-The number in the first column says in which order the gateway tries a provider's
-accounts for a new conversation: **1 is drawn first**.
+The number in the first column is the provider's ranking. In **balanced** mode it
+is the live order a new conversation would use. In **custom order** it is the
+configured priority (1 is most preferred); if that account is temporarily ineligible,
+the gateway skips it and serves from the next eligible rank.
 
 - **Balanced** (the default): all accounts share one tier. A **new conversation**
   starts on the account with the best live *headroom* — how much room it has left
