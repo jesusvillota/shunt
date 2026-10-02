@@ -256,6 +256,7 @@ fn state_with_auth_and_seeded_pool(token: &str, label: &str) -> (AppState, Strin
         + 3_600;
     let mut config = crate::config::Config::default();
     config.server.auth = Some(InboundAuthConfig {
+        jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: env.clone(),
     });
@@ -339,6 +340,7 @@ async fn aggregates_codex_headers_and_claude_fable_usage_together() {
 
     let mut config = crate::config::Config::default();
     config.server.auth = Some(InboundAuthConfig {
+        jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: env.clone(),
     });
@@ -484,6 +486,7 @@ async fn aggregate_covers_a_kimi_oauth_pool_alongside_claude_and_codex() {
 
     let mut config = crate::config::Config::default();
     config.server.auth = Some(InboundAuthConfig {
+        jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: env.clone(),
     });
@@ -592,6 +595,7 @@ async fn aggregate_counts_an_aliased_identity_once() {
 
     let mut config = crate::config::Config::default();
     config.server.auth = Some(InboundAuthConfig {
+        jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: env.clone(),
     });
@@ -705,6 +709,7 @@ async fn returns_api_error_500_when_account_store_scan_fails() {
     std::env::set_var(&env, "tester:tok-secret");
     let mut config = crate::config::Config::default();
     config.server.auth = Some(InboundAuthConfig {
+        jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: env.clone(),
     });
