@@ -342,10 +342,7 @@ fn render_delete_confirm(frame: &mut Frame, confirm: &DeleteConfirm) {
             Style::new().fg(Color::Red),
         ),
         Line::default(),
-        Line::styled(
-            "y: delete · n / Esc: cancel",
-            Style::new().dark_gray(),
-        ),
+        Line::styled("y: delete · n / Esc: cancel", Style::new().dark_gray()),
     ];
     let rect = popup(area, 78, 9);
     frame.render_widget(Clear, rect);
