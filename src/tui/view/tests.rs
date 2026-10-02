@@ -258,6 +258,26 @@ fn the_add_dialog_shows_the_authorize_url_and_what_to_paste() {
 }
 
 #[test]
+fn the_delete_confirmation_names_the_account_and_requires_y_or_n() {
+    let mut app = app(vec![provider(
+        "anthropic",
+        "claude_oauth",
+        vec![acct("work")],
+    )]);
+    app.delete_confirm = Some(DeleteConfirm {
+        provider: "anthropic".into(),
+        kind: "claude",
+        name: "work".into(),
+    });
+    let screen = draw(&mut app, 100, 16).0;
+    assert!(screen.contains("Delete account"), "{screen}");
+    assert!(screen.contains("work"), "{screen}");
+    assert!(screen.contains("from anthropic?"), "{screen}");
+    assert!(screen.contains("y: delete"), "{screen}");
+    assert!(screen.contains("n / Esc: cancel"), "{screen}");
+}
+
+#[test]
 fn help_and_tiny_terminals_do_not_panic() {
     let mut app = app(vec![provider("anthropic", "claude_oauth", vec![acct("a")])]);
     app.show_help = true;
