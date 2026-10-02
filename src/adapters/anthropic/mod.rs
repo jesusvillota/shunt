@@ -326,6 +326,14 @@ async fn forward_claude_oauth(
                     status.is_success(),
                     is_fable,
                 );
+                if status.is_success() {
+                    state.accounts.remember_session_assignment(
+                        &route.provider,
+                        session_id,
+                        Some(route.upstream_model.as_str()),
+                        account,
+                    );
+                }
                 return relay_response(&state, &route, upstream, Some(&account.name), bounds)
                     .await
                     .map(|(status, response)| {
@@ -407,6 +415,12 @@ async fn forward_claude_oauth(
                     state
                         .accounts
                         .mark_healthy_scoped(&route.provider, account, true, is_fable);
+                    state.accounts.remember_session_assignment(
+                        &route.provider,
+                        session_id,
+                        Some(route.upstream_model.as_str()),
+                        account,
+                    );
                 } else {
                     let cooldown = accounts::retry_after(retry.headers())
                         .unwrap_or(delay)
@@ -609,6 +623,12 @@ async fn forward_claude_oauth(
                                 account,
                                 true,
                                 is_fable,
+                            );
+                            state.accounts.remember_session_assignment(
+                                &route.provider,
+                                session_id,
+                                Some(route.upstream_model.as_str()),
+                                account,
                             );
                         } else {
                             // A relayed non-401 4xx is the client's error, not the
@@ -876,6 +896,14 @@ async fn forward_kimi_oauth(
                 state
                     .accounts
                     .mark_healthy(&route.provider, account, status.is_success());
+                if status.is_success() {
+                    state.accounts.remember_session_assignment(
+                        &route.provider,
+                        session_id,
+                        Some(route.upstream_model.as_str()),
+                        account,
+                    );
+                }
                 return relay_response(&state, &route, upstream, Some(&account.name), bounds)
                     .await
                     .map(|(status, response)| {
