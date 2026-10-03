@@ -33,3 +33,6 @@ ui/dist/
 # Cargo reads both config.toml and the legacy extensionless config, so ignore both.
 /.cargo/config.toml
 /.cargo/config
+
+# Machine-local runbook (personal LaunchAgent/symlink setup); never shared upstream.
+/LOCAL.md
