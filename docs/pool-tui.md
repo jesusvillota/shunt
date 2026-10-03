@@ -66,8 +66,10 @@ States: `disabled` (config) · `paused` · `needs re-login` · `unseen` (no traf
 | `Esc`, click on empty space | Unselect |
 | `p` / `Space` | Pause or resume the chosen account |
 | `o` | Switch the chosen account's whole provider on or off |
+| `h` | Hide the chosen account's provider section (display only) |
+| `U` | Unhide one hidden provider (picker) |
 | `m` | Switch the provider between **balanced** and **custom order** |
-| `Shift+↑`/`Shift+↓` (or `K`/`J`) | Move the chosen account up or down a custom order |
+| `Shift+↑`/`Shift+↓` (or `K`/`J`) | On an account: move it up or down a custom order; on a provider header: move the whole section |
 | `a` | Add an account |
 | `d` | Delete the selected account (asks for `y`/`n` confirmation first) |
 | `?` | Help |
@@ -109,6 +111,24 @@ pause it is **memory-only** — a gateway restart clears it — and while a prov
 off, requests routed to it find no account to use and fail the way an exhausted pool
 does. If this program is restarted while a provider is off, `o` resumes every paused
 account in it.
+
+## Hiding a provider and reordering sections
+
+Sections arrive in gateway order (alphabetical by provider name). `h` hides the
+selected provider's section — for example Antigravity — and `U` brings back one
+hidden provider at a time through a picker. A trailing `N hidden (…) · U to unhide
+one` line keeps hidden providers visible as a reminder.
+
+Hiding is **display-only** and must not be confused with `o`: a hidden provider
+keeps routing traffic exactly as before, it just is not drawn. `Shift+↑`/`Shift+↓`
+(or `K`/`J`) on a provider header moves the whole section up or down; on an account
+row the same binding keeps moving the account through its custom order.
+
+Both are this terminal's own preferences, stored in `~/.shunt/top.json` and
+restored on the next run. Nothing is sent to the gateway: no admin API call, no
+`shunt.toml` edit, no routing effect, and the web dashboard is unchanged. A
+provider that appears after the prefs were saved (or one the prefs never named)
+is shown at the end in gateway order.
 
 ## Adding an account
 

@@ -294,6 +294,22 @@ fn help_and_tiny_terminals_do_not_panic() {
 }
 
 #[test]
+fn a_notice_keeps_the_hints_visible_on_their_own_line() {
+    let mut app = app(vec![provider("anthropic", "claude_oauth", vec![acct("a")])]);
+    app.selected = Some(Sel {
+        provider: "anthropic".into(),
+        account: Some("ref-a".into()),
+    });
+    app.notify(Notice::Info("paused a".into()));
+    let screen = draw(&mut app, 110, 12).0;
+    assert!(screen.contains("paused a"), "{screen}");
+    assert!(screen.contains("p pause"), "{screen}");
+    let notice_line = screen.lines().position(|l| l.contains("paused a")).unwrap();
+    let hint_line = screen.lines().position(|l| l.contains("p pause")).unwrap();
+    assert_ne!(notice_line, hint_line, "{screen}");
+}
+
+#[test]
 fn requests_cell_shows_ok_fail_and_latency_once_attempted() {
     let mut a = acct("a");
     assert_eq!(requests_cell(&a), "–");
@@ -303,4 +319,40 @@ fn requests_cell_shows_ok_fail_and_latency_once_attempted() {
     assert_eq!(requests_cell(&a), "10/2");
     a.mean_latency_ms = Some(419.6);
     assert_eq!(requests_cell(&a), "10/2 · 420ms");
+}
+
+#[test]
+fn a_hidden_provider_is_not_drawn_but_leaves_a_placeholder() {
+    let mut app = app(vec![
+        provider("anthropic", "claude_oauth", vec![acct("a")]),
+        provider("antigravity", "antigravity_oauth", vec![acct("g")]),
+    ]);
+    app.hidden.insert("antigravity".into());
+    let (screen, _) = draw(&mut app, 110, 12);
+    assert!(screen.contains("anthropic"), "{screen}");
+    assert!(!screen.contains("▾ antigravity"), "{screen}");
+    assert!(screen.contains("1 hidden"), "{screen}");
+    assert!(screen.contains("U to unhide"), "{screen}");
+}
+
+#[test]
+fn hiding_everything_explains_how_to_get_it_back() {
+    let mut app = app(vec![provider("anthropic", "claude_oauth", vec![acct("a")])]);
+    app.hidden.insert("anthropic".into());
+    let screen = draw(&mut app, 100, 10).0;
+    assert!(screen.contains("All providers hidden"), "{screen}");
+}
+
+#[test]
+fn the_unhide_picker_lists_hidden_providers() {
+    let mut app = app(vec![
+        provider("anthropic", "claude_oauth", vec![acct("a")]),
+        provider("codex", "chatgpt_oauth", vec![acct("c")]),
+    ]);
+    app.hidden.insert("codex".into());
+    app.unhide = Some(crate::tui::app::UnhidePicker { at: 0 });
+    let (screen, _) = draw(&mut app, 100, 16);
+    assert!(screen.contains("Unhide provider"), "{screen}");
+    assert!(screen.contains("codex"), "{screen}");
+    assert!(screen.contains("Enter unhide"), "{screen}");
 }

@@ -3,7 +3,7 @@
 //! testable without a terminal or a gateway.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 
@@ -18,6 +18,7 @@ use super::{
     add::{self, AddFlow, Target},
     config_edit::DEFAULT_PRIORITY,
     model::{ProviderView, RankMode, Row, Snapshot},
+    prefs::DisplayPrefs,
 };
 
 /// How long a status-bar notice stays up.
@@ -56,6 +57,11 @@ pub enum Effect {
         provider: String,
         kind: &'static str,
         name: String,
+    },
+    /// Persist the TUI-local display preferences (`~/.shunt/top.json`).
+    SaveDisplayPrefs {
+        hidden: Vec<String>,
+        order: Vec<String>,
     },
     Add(add::Effect),
     /// Put text on the clipboard (via the terminal).
@@ -99,6 +105,26 @@ struct RankOverlay {
     at: Instant,
 }
 
+/// Stable section order: ranked names first, everything else (new or never
+/// ordered providers) keeps gateway order at the end.
+fn sort_providers(providers: &mut [&ProviderView], order: &[String]) {
+    // `sort_by_key` is stable, so unknown providers (all keyed MAX) keep wire
+    // order at the end. Position lookup is linear, but provider counts are tiny.
+    providers.sort_by_key(|p| {
+        order
+            .iter()
+            .position(|n| *n == p.name)
+            .unwrap_or(usize::MAX)
+    });
+}
+
+/// The one-at-a-time unhide picker: `U` opens it, `at` is the cursor over the
+/// alphabetically listed hidden providers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnhidePicker {
+    pub at: usize,
+}
+
 pub struct App {
     pub snapshot: Snapshot,
     pub base_url: String,
@@ -111,6 +137,11 @@ pub struct App {
     pub notice: Option<(Notice, Instant)>,
     pub dialog: Option<AddFlow>,
     pub delete_confirm: Option<DeleteConfirm>,
+    /// Display-only provider visibility and section order (`~/.shunt/top.json`).
+    /// Hidden providers are not drawn but keep routing traffic.
+    pub hidden: HashSet<String>,
+    pub provider_order: Vec<String>,
+    pub unhide: Option<UnhidePicker>,
     /// First visible list line.
     pub scroll: usize,
     /// Scroll the selection into view on the next draw (keyboard moves only).
@@ -136,6 +167,9 @@ impl App {
             notice: None,
             dialog: None,
             delete_confirm: None,
+            hidden: HashSet::new(),
+            provider_order: Vec::new(),
+            unhide: None,
             scroll: 0,
             reveal: false,
             list_area: Rect::default(),
@@ -145,11 +179,58 @@ impl App {
         }
     }
 
-    /// Every selectable line in screen order: each provider's header, then its
-    /// accounts in the order the gateway would try them.
+    /// Hidden providers, alphabetically, for the unhide picker and the
+    /// "N hidden" placeholder line.
+    pub fn hidden_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.hidden.iter().cloned().collect();
+        names.sort();
+        names
+    }
+
+    /// Visible provider names in screen order.
+    fn visible_provider_names(&self) -> Vec<String> {
+        let mut providers: Vec<&ProviderView> = self
+            .snapshot
+            .providers
+            .iter()
+            .filter(|p| !self.hidden.contains(&p.name))
+            .collect();
+        sort_providers(&mut providers, &self.provider_order);
+        providers.into_iter().map(|p| p.name.clone()).collect()
+    }
+
+    /// Load persisted display preferences (best effort; unknown names ride
+    /// along harmlessly until pruned by an explicit move or unhide).
+    pub fn apply_prefs(&mut self, prefs: DisplayPrefs) {
+        self.hidden = prefs.hidden.into_iter().collect();
+        self.provider_order = prefs.order;
+        self.unhide = None;
+        if self.selected.is_some() && self.selected_index().is_none() {
+            self.selected = None;
+        }
+    }
+
+    fn save_effect(&self) -> Effect {
+        Effect::SaveDisplayPrefs {
+            hidden: self.hidden_names(),
+            order: self.provider_order.clone(),
+        }
+    }
+
+    /// Every selectable line in screen order: each visible provider's header,
+    /// then its accounts in the order the gateway would try them. Providers
+    /// follow the persisted section order; ones never ordered stay in gateway
+    /// (wire) order at the end.
     pub fn entries(&self) -> Vec<Entry<'_>> {
+        let mut providers: Vec<&ProviderView> = self
+            .snapshot
+            .providers
+            .iter()
+            .filter(|p| !self.hidden.contains(&p.name))
+            .collect();
+        sort_providers(&mut providers, &self.provider_order);
         let mut entries = Vec::new();
-        for provider in &self.snapshot.providers {
+        for provider in providers {
             entries.push(Entry {
                 sel: Sel {
                     provider: provider.name.clone(),
@@ -299,7 +380,11 @@ impl App {
     }
 
     pub fn on_mouse(&mut self, mouse: MouseEvent) -> Effect {
-        if self.dialog.is_some() || self.delete_confirm.is_some() || self.show_help {
+        if self.dialog.is_some()
+            || self.delete_confirm.is_some()
+            || self.unhide.is_some()
+            || self.show_help
+        {
             return Effect::None;
         }
         match mouse.kind {
@@ -341,6 +426,9 @@ impl App {
         if self.dialog.is_some() {
             return self.dialog_key(key);
         }
+        if self.unhide.is_some() {
+            return self.unhide_key(key);
+        }
         if self.show_help {
             // Any key dismisses the overlay; it must not also act.
             self.show_help = false;
@@ -379,6 +467,8 @@ impl App {
             }
             KeyCode::Char('p') | KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('o') => self.toggle_provider(),
+            KeyCode::Char('h') | KeyCode::Char('H') => self.hide_selected(),
+            KeyCode::Char('u') | KeyCode::Char('U') => self.open_unhide(),
             KeyCode::Char('m') => self.toggle_mode(),
             KeyCode::Char('a') => self.open_dialog(),
             KeyCode::Char('d') => self.open_delete_confirm(),
@@ -513,6 +603,13 @@ impl App {
     }
 
     fn move_rank(&mut self, delta: isize) -> Effect {
+        let Some(selected) = self.selected.clone() else {
+            return self.need("Select an account or a provider header to move it");
+        };
+        // On a provider header the same binding moves the whole section.
+        if selected.account.is_none() {
+            return self.move_provider(&selected.provider, delta);
+        }
         let Some((provider, row)) = self.selected_row() else {
             return self.need("Select an account to move it up or down the ranking");
         };
@@ -532,6 +629,101 @@ impl App {
         }
         order.swap(at, to);
         self.write_order(&provider_name, order)
+    }
+
+    /// Hide the selected provider's section. Display-only: its accounts keep
+    /// routing traffic, they just are not drawn. The cursor moves to the line
+    /// that slides into place.
+    fn hide_selected(&mut self) -> Effect {
+        let Some(selected) = self.selected.clone() else {
+            return self.need("Select a provider or one of its accounts first");
+        };
+        let at = self.selected_index().unwrap_or(0);
+        self.hidden.insert(selected.provider.clone());
+        let entries = self.entries();
+        self.selected = if entries.is_empty() {
+            None
+        } else {
+            entries
+                .get(at.min(entries.len() - 1))
+                .map(|entry| entry.sel.clone())
+        };
+        self.reveal = true;
+        self.notify(Notice::Info(format!(
+            "hid {} (display only — U to unhide)",
+            selected.provider
+        )));
+        self.save_effect()
+    }
+
+    /// Move a whole provider section up or down the screen. Display-only, like
+    /// hiding: routing is untouched.
+    fn move_provider(&mut self, name: &str, delta: isize) -> Effect {
+        let mut names = self.visible_provider_names();
+        let Some(at) = names.iter().position(|n| n == name) else {
+            return Effect::None;
+        };
+        let to = at.saturating_add_signed(delta);
+        if to >= names.len() || to == at {
+            return Effect::None;
+        }
+        names.swap(at, to);
+        // Keep stale entries (providers not currently polled) at the tail so
+        // a removed-and-returned provider lands where it was.
+        let stale: Vec<String> = self
+            .provider_order
+            .iter()
+            .filter(|n| !names.contains(n))
+            .cloned()
+            .collect();
+        names.extend(stale);
+        self.provider_order = names;
+        self.reveal = true;
+        self.save_effect()
+    }
+
+    fn open_unhide(&mut self) -> Effect {
+        if self.hidden.is_empty() {
+            return self.need("No hidden providers");
+        }
+        self.unhide = Some(UnhidePicker { at: 0 });
+        Effect::None
+    }
+
+    fn unhide_key(&mut self, key: KeyEvent) -> Effect {
+        let names = self.hidden_names();
+        let Some(picker) = &mut self.unhide else {
+            return Effect::None;
+        };
+        picker.at = picker.at.min(names.len().saturating_sub(1));
+        match key.code {
+            KeyCode::Esc => {
+                self.unhide = None;
+                Effect::None
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                picker.at = picker.at.saturating_sub(1);
+                Effect::None
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                picker.at = picker
+                    .at
+                    .saturating_add(1)
+                    .min(names.len().saturating_sub(1));
+                Effect::None
+            }
+            KeyCode::Enter => {
+                let Some(name) = names.get(picker.at).cloned() else {
+                    self.unhide = None;
+                    return Effect::None;
+                };
+                self.unhide = None;
+                self.hidden.remove(&name);
+                self.notify(Notice::Info(format!("showing {name}")));
+                self.save_effect()
+            }
+            _ => Effect::None,
+        }
     }
 
     fn open_delete_confirm(&mut self) -> Effect {

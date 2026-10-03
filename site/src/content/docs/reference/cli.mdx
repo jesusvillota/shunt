@@ -46,7 +46,7 @@ Select rows with the arrow keys or `j`/`k`. Press `a` to add an account. With an
 
 Deletion removes the managed Claude, Codex, or Antigravity credential through the admin API and removes its explicit pool entry from `shunt.toml` when that edit is safe. Before deleting anything, the TUI dry-runs the config cleanup. It refuses the operation if the cleanup cannot be made safely—for example, deleting the last explicitly listed account would turn an empty list into "scan every stored account". The same safety check means deletion is unavailable for YAML configs or providers defined through `[[upstreams]]`.
 
-Pause/provider switches are runtime-only. Ranking changes and explicit account membership edits are persisted to the TOML config and picked up by hot reload.
+Pause/provider switches are runtime-only. Ranking changes and explicit account membership edits are persisted to the TOML config and picked up by hot reload. Hiding a provider (`h`) and reordering sections (`Shift+↑/↓` on a header) are local display preferences stored in `~/.shunt/top.json`; they never affect routing.
 
 ## `shunt check`
 

@@ -199,7 +199,7 @@ pub fn render(frame: &mut Frame, app: &mut App, now: u64) {
         Constraint::Length(2),
         Constraint::Length(1),
         Constraint::Min(1),
-        Constraint::Length(1),
+        Constraint::Length(2),
     ])
     .areas(frame.area());
 
@@ -210,6 +210,8 @@ pub fn render(frame: &mut Frame, app: &mut App, now: u64) {
         render_dialog(frame, dialog);
     } else if let Some(confirm) = &app.delete_confirm {
         render_delete_confirm(frame, confirm);
+    } else if let Some(picker) = &app.unhide {
+        render_unhide(frame, app, picker.at);
     } else if app.show_help {
         render_help(frame, frame.area());
     }
@@ -244,6 +246,8 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
         Some(
             "No pooled providers. Configure a claude_oauth / chatgpt_oauth provider with accounts.",
         )
+    } else if app.entries().is_empty() {
+        Some("All providers hidden · press U to unhide one")
     } else {
         None
     };
@@ -279,6 +283,14 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
         }
         lines.push((line, Some(entry.sel)));
     }
+    if !app.hidden.is_empty() {
+        let names = app.hidden_names().join(", ");
+        let hidden_line = Line::styled(
+            format!("  {} hidden ({names}) · U to unhide one", app.hidden.len()),
+            Style::new().fg(Color::DarkGray),
+        );
+        lines.push((hidden_line, None));
+    }
 
     let height = usize::from(list.height);
     if app.reveal {
@@ -304,17 +316,26 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         "Enter continue · Esc cancel"
     } else if app.delete_confirm.is_some() {
         "y delete · n/Esc cancel"
+    } else if app.unhide.is_some() {
+        "↑↓ choose · Enter unhide · Esc cancel"
     } else if app.selected.is_none() {
-        "↑↓ or click: select · a: add account · ?: help · q: quit"
+        "↑↓ or click: select · U unhide · a: add account · ?: help · q: quit"
     } else {
-        "p pause · o provider on/off · m ranking mode · Shift+↑↓ move rank · a add · d delete · Esc deselect · ? help · q quit"
+        "p pause · o provider on/off · h hide · U unhide · m ranking mode · Shift+↑↓ move · a add · d delete · Esc deselect · ? help · q quit"
     };
-    let line = match app.current_notice() {
+    // ponytail: notice gets its own line so the hints below never hide.
+    let notice = match app.current_notice() {
         Some(Notice::Info(text)) => Line::from(format!(" {text}")).green(),
         Some(Notice::Error(text)) => Line::from(format!(" {text}")).red().bold(),
-        None => Line::from(format!(" {hint}")).dark_gray(),
+        None => Line::default(),
     };
-    frame.render_widget(Paragraph::new(line), area);
+    let [notice_area, hint_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
+    frame.render_widget(Paragraph::new(notice), notice_area);
+    frame.render_widget(
+        Paragraph::new(Line::from(format!(" {hint}")).dark_gray()),
+        hint_area,
+    );
 }
 
 fn popup(area: Rect, width: u16, height: u16) -> Rect {
@@ -350,6 +371,35 @@ fn render_delete_confirm(frame: &mut Frame, confirm: &DeleteConfirm) {
         Paragraph::new(lines)
             .block(Block::bordered().title(" Delete account "))
             .wrap(Wrap { trim: false }),
+        rect,
+    );
+}
+
+fn render_unhide(frame: &mut Frame, app: &App, at: usize) {
+    let names = app.hidden_names();
+    let mut lines = vec![
+        Line::from("Which provider should be shown again?"),
+        Line::default(),
+    ];
+    for (i, name) in names.iter().enumerate() {
+        let marker = if i == at { "▶ " } else { "  " };
+        let style = if i == at {
+            Style::new().bold()
+        } else {
+            Style::new()
+        };
+        lines.push(Line::styled(format!("{marker}{name}"), style));
+    }
+    lines.push(Line::default());
+    lines.push(Line::styled(
+        "↑↓ choose · Enter unhide · Esc cancel",
+        Style::new().dark_gray(),
+    ));
+    let height = lines.len() as u16 + 4;
+    let rect = popup(frame.area(), 52, height);
+    frame.render_widget(Clear, rect);
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::bordered().title(" Unhide provider ")),
         rect,
     );
 }
@@ -464,22 +514,27 @@ fn render_help(frame: &mut Frame, area: Rect) {
         "  ↑↓ / j k        move · PgUp/PgDn jump",
         "  p / Space       pause or resume the selected account",
         "  o               switch the whole provider on or off (pauses all its accounts)",
+        "  h               hide the selected provider (display only — it still routes traffic)",
+        "  U               unhide one hidden provider (picker)",
         "  m               ranking mode for the provider:",
         "                    balanced     the gateway spreads load by remaining headroom",
         "                    custom order your own 1, 2, 3… — number 1 is drawn first",
-        "  Shift+↑↓ / K J  move the selected account up/down the custom order",
+        "  Shift+↑↓ / K J  on an account: move it up/down the custom order;",
+        "                  on a provider header: move the whole section",
         "  a               add an account (it is added to the pool in shunt.toml)",
         "  d               delete the selected account (asks y/n before deleting)",
         "  q               quit",
         "",
-        "Pause/switch-off last until the gateway restarts. Ranking and explicit",
-        "pool membership are saved in shunt.toml; delete also removes the credential.",
+        "Pause/switch-off last until the gateway restarts. Hiding and section order",
+        "are this terminal's own display preferences (~/.shunt/top.json); routing",
+        "is untouched. Ranking and explicit pool membership are saved in shunt.toml;",
+        "delete also removes the credential.",
         "Open conversations stay on the account they started with.",
         "",
         "Press any key to close.",
     ]
     .join("\n");
-    let rect = popup(area, 84, 22);
+    let rect = popup(area, 84, 27);
     frame.render_widget(Clear, rect);
     frame.render_widget(
         Paragraph::new(text).block(Block::bordered().title(" Help ")),

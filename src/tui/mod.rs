@@ -10,6 +10,7 @@ mod app;
 pub mod client;
 mod config_edit;
 pub mod model;
+mod prefs;
 mod view;
 
 use std::{
@@ -352,6 +353,15 @@ fn perform(ctx: &Ctx, effect: Effect) {
                 ctx.refresh_soon(true);
             });
         }
+        Effect::SaveDisplayPrefs { hidden, order } => {
+            // Best effort: losing display prefs must never interrupt monitoring.
+            tokio::spawn(async move {
+                let prefs = prefs::DisplayPrefs { hidden, order };
+                if let Err(e) = prefs::save(&prefs) {
+                    ctx.say(Notice::Error(format!("display prefs not saved: {e:#}")));
+                }
+            });
+        }
         Effect::Add(add::Effect::Start { target, name }) => {
             tokio::spawn(async move {
                 let result = ctx.client.start_account(target.kind, &name).await;
@@ -447,6 +457,7 @@ async fn event_loop(
     };
 
     let mut app = App::new(client.base().to_string());
+    app.apply_prefs(prefs::load());
     let mut mouse_on = true;
     let outcome = loop {
         terminal.draw(|frame| view::render(frame, &mut app, view::now_secs()))?;

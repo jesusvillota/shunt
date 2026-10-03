@@ -67,6 +67,8 @@ enum Command {
     /// Live terminal view of the managed account pool, one section per
     /// provider: usage and reset times, pause/resume, a provider on/off switch,
     /// an explicit account ranking, and adding accounts (saved to shunt.toml).
+    /// Hiding a provider and reordering sections are local display preferences
+    /// (`~/.shunt/top.json`) with no routing effect.
     /// Talks to a running gateway's admin API and needs a write-tier admin
     /// token. Requires a build with `--features tui`.
     Top {

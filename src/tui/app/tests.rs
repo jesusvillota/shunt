@@ -459,3 +459,136 @@ fn help_swallows_the_key_that_closes_it() {
     let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
     assert_eq!(app.on_key(ctrl_c), Effect::Quit);
 }
+
+fn three_providers() -> App {
+    app_with(vec![
+        provider("anthropic", "claude_oauth", vec![acct("a", None)]),
+        provider("antigravity", "antigravity_oauth", vec![acct("g", None)]),
+        provider("codex", "chatgpt_oauth", vec![acct("c", None)]),
+    ])
+}
+
+fn header_names(app: &App) -> Vec<String> {
+    app.entries()
+        .into_iter()
+        .filter(|e| e.row.is_none())
+        .map(|e| e.provider.name.clone())
+        .collect()
+}
+
+#[test]
+fn hide_removes_the_section_and_asks_for_a_prefs_save() {
+    let mut app = three_providers();
+    app.on_key(key('j')); // anthropic header
+    app.on_key(key('j')); // anthropic account
+    app.on_key(key('j')); // antigravity header
+    let effect = app.on_key(key('h'));
+    assert_eq!(
+        effect,
+        Effect::SaveDisplayPrefs {
+            hidden: vec!["antigravity".into()],
+            order: vec![],
+        }
+    );
+    assert_eq!(header_names(&app), ["anthropic", "codex"]);
+    // The cursor lands on the line that slid into place (the codex header).
+    assert_eq!(
+        sel(&app),
+        Some(("codex".into(), None)),
+        "selection follows the visible lines"
+    );
+    assert!(matches!(app.current_notice(), Some(Notice::Info(t)) if t.contains("U to unhide")));
+}
+
+#[test]
+fn hide_needs_a_selection_and_is_display_only() {
+    let mut app = three_providers();
+    assert_eq!(app.on_key(key('h')), Effect::None);
+    assert!(matches!(app.current_notice(), Some(Notice::Info(_))));
+    // The snapshot still carries every provider: only the drawing is filtered.
+    assert_eq!(app.snapshot.providers.len(), 3);
+}
+
+#[test]
+fn unhide_opens_a_picker_and_restores_one_provider_at_a_time() {
+    let mut app = three_providers();
+    app.hidden.insert("antigravity".into());
+    app.hidden.insert("codex".into());
+    assert_eq!(app.on_key(key('u')), Effect::None);
+    assert!(app.unhide.is_some());
+    // Second in the alphabetical picker list.
+    app.on_key(code(KeyCode::Down));
+    let effect = app.on_key(code(KeyCode::Enter));
+    assert_eq!(
+        effect,
+        Effect::SaveDisplayPrefs {
+            hidden: vec!["antigravity".into()],
+            order: vec![],
+        }
+    );
+    assert!(app.unhide.is_none());
+    assert_eq!(header_names(&app), ["anthropic", "codex"]);
+    assert_eq!(app.on_key(key('u')), Effect::None);
+    app.on_key(code(KeyCode::Enter));
+    assert!(app.hidden.is_empty());
+    assert_eq!(header_names(&app), ["anthropic", "antigravity", "codex"]);
+}
+
+#[test]
+fn unhide_with_nothing_hidden_is_a_notice_and_esc_cancels() {
+    let mut app = three_providers();
+    assert_eq!(app.on_key(key('U')), Effect::None);
+    assert!(app.unhide.is_none());
+    assert!(matches!(app.current_notice(), Some(Notice::Info(t)) if t.contains("No hidden")));
+    app.hidden.insert("codex".into());
+    app.on_key(key('u'));
+    assert_eq!(app.on_key(code(KeyCode::Esc)), Effect::None);
+    assert!(app.unhide.is_none());
+    assert!(app.hidden.contains("codex"));
+}
+
+#[test]
+fn shift_arrows_on_a_header_move_the_whole_section() {
+    let mut app = three_providers();
+    app.on_key(key('j')); // anthropic header
+    let effect = app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+    assert_eq!(
+        effect,
+        Effect::SaveDisplayPrefs {
+            hidden: vec![],
+            order: vec!["antigravity".into(), "anthropic".into(), "codex".into()],
+        }
+    );
+    assert_eq!(header_names(&app), ["antigravity", "anthropic", "codex"]);
+    // The cursor stays on the moved header.
+    assert_eq!(sel(&app), Some(("anthropic".into(), None)));
+    // Moving past the end does nothing and saves nothing.
+    app.on_key(key('j')); // account a
+    app.on_key(key('j')); // codex header, last section
+    assert_eq!(sel(&app), Some(("codex".into(), None)));
+    assert_eq!(
+        app.on_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT)),
+        Effect::None
+    );
+}
+
+#[test]
+fn section_order_survives_polls_and_new_providers_land_last() {
+    let mut app = three_providers();
+    app.apply_prefs(crate::tui::prefs::DisplayPrefs {
+        hidden: vec!["antigravity".into()],
+        order: vec!["codex".into(), "anthropic".into()],
+    });
+    assert_eq!(header_names(&app), ["codex", "anthropic"]);
+    // A provider the prefs never named appears at the end, still visible.
+    app.on_poll(Ok(Snapshot::from_response(PoolResponse {
+        providers: vec![
+            provider("anthropic", "claude_oauth", vec![acct("a", None)]),
+            provider("antigravity", "antigravity_oauth", vec![acct("g", None)]),
+            provider("codex", "chatgpt_oauth", vec![acct("c", None)]),
+            provider("kimi", "kimi_oauth", vec![acct("k", None)]),
+        ],
+        sort_by_reset: false,
+    })));
+    assert_eq!(header_names(&app), ["codex", "anthropic", "kimi"]);
+}
