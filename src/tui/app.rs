@@ -650,7 +650,7 @@ impl App {
         };
         self.reveal = true;
         self.notify(Notice::Info(format!(
-            "hid {} (display only — U to unhide)",
+            "hid {} (display only — u to unhide)",
             selected.provider
         )));
         self.save_effect()

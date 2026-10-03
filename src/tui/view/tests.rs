@@ -322,7 +322,7 @@ fn requests_cell_shows_ok_fail_and_latency_once_attempted() {
 }
 
 #[test]
-fn a_hidden_provider_is_not_drawn_but_leaves_a_placeholder() {
+fn a_hidden_provider_is_not_drawn_and_the_footer_carries_its_count() {
     let mut app = app(vec![
         provider("anthropic", "claude_oauth", vec![acct("a")]),
         provider("antigravity", "antigravity_oauth", vec![acct("g")]),
@@ -331,8 +331,8 @@ fn a_hidden_provider_is_not_drawn_but_leaves_a_placeholder() {
     let (screen, _) = draw(&mut app, 110, 12);
     assert!(screen.contains("anthropic"), "{screen}");
     assert!(!screen.contains("▾ antigravity"), "{screen}");
-    assert!(screen.contains("1 hidden"), "{screen}");
-    assert!(screen.contains("U to unhide"), "{screen}");
+    assert!(!screen.contains("hidden (antigravity)"), "{screen}");
+    assert!(screen.contains("u unhide (1)"), "{screen}");
 }
 
 #[test]

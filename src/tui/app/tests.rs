@@ -497,7 +497,7 @@ fn hide_removes_the_section_and_asks_for_a_prefs_save() {
         Some(("codex".into(), None)),
         "selection follows the visible lines"
     );
-    assert!(matches!(app.current_notice(), Some(Notice::Info(t)) if t.contains("U to unhide")));
+    assert!(matches!(app.current_notice(), Some(Notice::Info(t)) if t.contains("to unhide")));
 }
 
 #[test]

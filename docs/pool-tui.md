@@ -67,7 +67,7 @@ States: `disabled` (config) · `paused` · `needs re-login` · `unseen` (no traf
 | `p` / `Space` | Pause or resume the chosen account |
 | `o` | Switch the chosen account's whole provider on or off |
 | `h` | Hide the chosen account's provider section (display only) |
-| `U` | Unhide one hidden provider (picker) |
+| `u` | Unhide one hidden provider (picker) |
 | `m` | Switch the provider between **balanced** and **custom order** |
 | `Shift+↑`/`Shift+↓` (or `K`/`J`) | On an account: move it up or down a custom order; on a provider header: move the whole section |
 | `a` | Add an account |
@@ -115,9 +115,9 @@ account in it.
 ## Hiding a provider and reordering sections
 
 Sections arrive in gateway order (alphabetical by provider name). `h` hides the
-selected provider's section — for example Antigravity — and `U` brings back one
-hidden provider at a time through a picker. A trailing `N hidden (…) · U to unhide
-one` line keeps hidden providers visible as a reminder.
+selected provider's section — for example Antigravity — and `u` brings back one
+hidden provider at a time through a picker. While anything is hidden the bottom
+bar reads `u unhide (n)`, with `n` the hidden count.
 
 Hiding is **display-only** and must not be confused with `o`: a hidden provider
 keeps routing traffic exactly as before, it just is not drawn. `Shift+↑`/`Shift+↓`

@@ -247,7 +247,7 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
             "No pooled providers. Configure a claude_oauth / chatgpt_oauth provider with accounts.",
         )
     } else if app.entries().is_empty() {
-        Some("All providers hidden · press U to unhide one")
+        Some("All providers hidden · press u to unhide one")
     } else {
         None
     };
@@ -283,14 +283,6 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
         }
         lines.push((line, Some(entry.sel)));
     }
-    if !app.hidden.is_empty() {
-        let names = app.hidden_names().join(", ");
-        let hidden_line = Line::styled(
-            format!("  {} hidden ({names}) · U to unhide one", app.hidden.len()),
-            Style::new().fg(Color::DarkGray),
-        );
-        lines.push((hidden_line, None));
-    }
 
     let height = usize::from(list.height);
     if app.reveal {
@@ -312,16 +304,24 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
 }
 
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
-    let hint = if app.dialog.is_some() {
-        "Enter continue · Esc cancel"
-    } else if app.delete_confirm.is_some() {
-        "y delete · n/Esc cancel"
-    } else if app.unhide.is_some() {
-        "↑↓ choose · Enter unhide · Esc cancel"
-    } else if app.selected.is_none() {
-        "↑↓ or click: select · U unhide · a: add account · ?: help · q: quit"
+    // The hidden count lives here, not in the list: `u unhide (2)`.
+    let unhide = if app.hidden.is_empty() {
+        String::new()
     } else {
-        "p pause · o provider on/off · h hide · U unhide · m ranking mode · Shift+↑↓ move · a add · d delete · Esc deselect · ? help · q quit"
+        format!(" · u unhide ({})", app.hidden.len())
+    };
+    let hint = if app.dialog.is_some() {
+        "Enter continue · Esc cancel".to_string()
+    } else if app.delete_confirm.is_some() {
+        "y delete · n/Esc cancel".to_string()
+    } else if app.unhide.is_some() {
+        "↑↓ choose · Enter unhide · Esc cancel".to_string()
+    } else if app.selected.is_none() {
+        format!("↑↓ or click: select{unhide} · a: add account · ?: help · q: quit")
+    } else {
+        format!(
+            "p pause · o provider on/off · h hide{unhide} · m ranking mode · Shift+↑↓ move · a add · d delete · Esc deselect · ? help · q quit"
+        )
     };
     // ponytail: notice gets its own line so the hints below never hide.
     let notice = match app.current_notice() {
@@ -515,7 +515,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         "  p / Space       pause or resume the selected account",
         "  o               switch the whole provider on or off (pauses all its accounts)",
         "  h               hide the selected provider (display only — it still routes traffic)",
-        "  U               unhide one hidden provider (picker)",
+        "  u               unhide one hidden provider (picker)",
         "  m               ranking mode for the provider:",
         "                    balanced     the gateway spreads load by remaining headroom",
         "                    custom order your own 1, 2, 3… — number 1 is drawn first",
