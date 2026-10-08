@@ -125,10 +125,9 @@ fn pause_needs_an_account_and_targets_its_ref() {
     assert_eq!(app.on_key(key('p')), Effect::None);
     assert!(matches!(app.current_notice(), Some(Notice::Info(_))));
     app.on_key(key('j')); // header
-    assert_eq!(
-        app.on_key(key('p')),
-        Effect::None,
-        "a header is not an account"
+    assert!(
+        matches!(app.on_key(key('p')), Effect::SetProvider { on: false, .. }),
+        "p on a header pauses the whole provider"
     );
     app.on_key(key('j'));
     assert_eq!(
@@ -591,4 +590,19 @@ fn section_order_survives_polls_and_new_providers_land_last() {
         sort_by_reset: false,
     })));
     assert_eq!(header_names(&app), ["codex", "anthropic", "kimi"]);
+}
+
+#[test]
+fn space_folds_a_header_and_pauses_an_account() {
+    let mut app = claude(vec![acct("a", None)]);
+    app.on_key(key('j')); // header
+    assert_eq!(app.on_key(key(' ')), Effect::None);
+    assert_eq!(app.entries().len(), 1, "only the header remains");
+    app.on_key(key(' '));
+    assert_eq!(app.entries().len(), 2);
+    app.on_key(key('j'));
+    assert!(matches!(
+        app.on_key(key(' ')),
+        Effect::SetPaused { paused: true, .. }
+    ));
 }

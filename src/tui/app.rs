@@ -140,6 +140,8 @@ pub struct App {
     /// Display-only provider visibility and section order (`~/.shunt/top.json`).
     /// Hidden providers are not drawn but keep routing traffic.
     pub hidden: HashSet<String>,
+    /// Providers shown as a header only; in memory, not saved.
+    pub collapsed: HashSet<String>,
     pub provider_order: Vec<String>,
     pub unhide: Option<UnhidePicker>,
     /// First visible list line.
@@ -168,6 +170,7 @@ impl App {
             dialog: None,
             delete_confirm: None,
             hidden: HashSet::new(),
+            collapsed: HashSet::new(),
             provider_order: Vec::new(),
             unhide: None,
             scroll: 0,
@@ -239,6 +242,9 @@ impl App {
                 provider,
                 row: None,
             });
+            if self.collapsed.contains(&provider.name) {
+                continue;
+            }
             for (rank, row) in provider.ordered(self.snapshot.sort_by_reset) {
                 entries.push(Entry {
                     sel: Sel {
@@ -405,6 +411,10 @@ impl App {
                 } else {
                     None
                 };
+                // A click on a header's arrow also folds or unfolds it.
+                if inside && mouse.column <= area.x + 1 {
+                    self.toggle_collapse();
+                }
             }
             MouseEventKind::ScrollDown => self.scroll = self.scroll.saturating_add(1),
             MouseEventKind::ScrollUp => self.scroll = self.scroll.saturating_sub(1),
@@ -465,7 +475,13 @@ impl App {
                 self.move_by(-10);
                 Effect::None
             }
-            KeyCode::Char('p') | KeyCode::Char(' ') => self.toggle_pause(),
+            KeyCode::Char('p') if self.header_selected() => self.toggle_provider(),
+            KeyCode::Char('p') => self.toggle_pause(),
+            KeyCode::Char(' ') if self.header_selected() => {
+                self.toggle_collapse();
+                Effect::None
+            }
+            KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('o') => self.toggle_provider(),
             KeyCode::Char('h') | KeyCode::Char('H') => self.hide_selected(),
             KeyCode::Char('u') | KeyCode::Char('U') => self.open_unhide(),
@@ -476,6 +492,24 @@ impl App {
         }
     }
 
+    pub fn header_selected(&self) -> bool {
+        self.selected.as_ref().is_some_and(|s| s.account.is_none())
+    }
+
+    /// Fold or unfold the selected provider header; no-op on anything else.
+    fn toggle_collapse(&mut self) {
+        let Some(Sel {
+            provider,
+            account: None,
+        }) = self.selected.clone()
+        else {
+            return;
+        };
+        if !self.collapsed.remove(&provider) {
+            self.collapsed.insert(provider);
+        }
+    }
+
     fn need(&mut self, text: &str) -> Effect {
         self.notify(Notice::Info(text.to_string()));
         Effect::None
@@ -483,9 +517,7 @@ impl App {
 
     fn toggle_pause(&mut self) -> Effect {
         let Some((provider, row)) = self.selected_row() else {
-            return self.need(
-                "Select an account first (p pauses one account; o switches a whole provider)",
-            );
+            return self.need("Select an account or a provider first (p pauses it)");
         };
         let Some(account_ref) = row.account_ref().map(str::to_string) else {
             let text = "this gateway does not report account_ref; pause needs pool pause support";

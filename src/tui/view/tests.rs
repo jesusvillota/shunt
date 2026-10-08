@@ -85,7 +85,7 @@ fn shows_each_provider_separately_with_ranks_and_both_reset_times() {
     assert!(screen.contains("codex"), "{screen}");
     assert!(screen.contains("ON"), "{screen}");
     assert!(
-        screen.contains("ranking: balanced · 2 accounts"),
+        screen.contains("ranking: balanced     · 2 accounts"),
         "{screen}"
     );
     assert!(screen.contains("50% · 2h 14m"), "5h reset time:\n{screen}");
