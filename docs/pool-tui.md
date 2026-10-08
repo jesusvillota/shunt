@@ -1,4 +1,4 @@
-# `shunt top` — live terminal pool monitor
+# `shunt tui` — live terminal pool monitor
 
 A keyboard-and-mouse terminal view of the managed account pool, one section per
 provider. It is a client of a **running** gateway's admin API, not a second copy
@@ -16,7 +16,7 @@ Off by default, so the gateway binary carries no terminal-UI dependencies:
 
 ```bash
 cargo build --release --features tui
-./target/release/shunt top --config /path/to/shunt.toml
+./target/release/shunt tui --config /path/to/shunt.toml
 ```
 
 The gateway needs `[server.admin]` (`shunt dashboard setup` does it in one step).
@@ -35,7 +35,7 @@ gets a plain "read-only" message.
 ## The screen
 
 ```
- shunt top  http://127.0.0.1:3001                          ● live · updated 1s ago
+ shunt tui  http://127.0.0.1:3001                          ● live · updated 1s ago
 ────────────────────────────────────────────────────────────────────────────────
   #  Account              Plan    State            5h limit (used · resets in)  7d limit (used · resets in)  Requests ok/fail · avg
 ▾ anthropic   ON   ranking: balanced · 3 accounts
@@ -154,7 +154,7 @@ unrelated keys do nothing while the confirmation is open. Deletion is available
 for the managed Claude, Codex and Antigravity account stores; providers without
 the corresponding admin delete endpoint are refused.
 
-Before sending the destructive API request, `shunt top` dry-runs the matching
+Before sending the destructive API request, `shunt tui` dry-runs the matching
 `shunt.toml` cleanup. That is a second safety boundary after the `y` prompt:
 if the config cannot be updated safely, nothing is deleted. In particular, the
 last entry of an explicitly listed account pool is refused because an empty list

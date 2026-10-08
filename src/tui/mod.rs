@@ -1,4 +1,4 @@
-//! `shunt top` — a live terminal view of the managed account pool.
+//! `shunt tui` — a live terminal view of the managed account pool.
 //!
 //! It is a client of a *running* gateway's admin API (`GET /admin/api/pool`,
 //! `PATCH /admin/api/pool[/…]`), not a second implementation of pool state, so
@@ -47,7 +47,7 @@ pub struct Options {
     pub header: String,
     /// Poll interval in milliseconds.
     pub interval_ms: u64,
-    /// The config file the gateway runs, for the edits `shunt top` makes
+    /// The config file the gateway runs, for the edits `shunt tui` makes
     /// (added accounts, ranking). Defaults to the loader's usual search.
     pub config: Option<PathBuf>,
 }

@@ -33,7 +33,7 @@ pub fn locate(explicit: Option<&Path>) -> anyhow::Result<PathBuf> {
         })?;
     if ConfigFormat::from_path(&path) != ConfigFormat::Toml {
         bail!(
-            "{} is not TOML; editing accounts and ranking from `shunt top` supports shunt.toml only",
+            "{} is not TOML; editing accounts and ranking from `shunt tui` supports shunt.toml only",
             path.display()
         );
     }
@@ -79,7 +79,7 @@ fn provider_table<'a>(doc: &'a mut DocumentMut, provider: &str) -> anyhow::Resul
     match table {
         Some(table) => Ok(table),
         None if defined_by_upstreams => bail!(
-            "provider {provider:?} is defined through [[upstreams]], which `shunt top` does not edit; \
+            "provider {provider:?} is defined through [[upstreams]], which `shunt tui` does not edit; \
              change that entry by hand"
         ),
         None => bail!(

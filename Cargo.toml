@@ -34,7 +34,7 @@ path = "src/main.rs"
 # `ui/README.md`.
 ui = ["dep:rust-embed", "dep:mime_guess"]
 
-# Terminal pool monitor (`shunt top`): a live, keyboard-driven view of the
+# Terminal pool monitor (`shunt tui`): a live, keyboard-driven view of the
 # managed account pool that talks to a running gateway's admin API. Off by
 # default so the gateway binary carries no terminal-UI dependencies
 # (`docs/pool-tui.md`).
@@ -193,7 +193,7 @@ url = "2.5.8"
 # default features stay off.
 zstd = { version = "0.13", default-features = false }
 ratatui = { version = "0.30.2", optional = true }
-# Format-preserving edits of `shunt.toml` for `shunt top` (add account, ranking).
+# Format-preserving edits of `shunt.toml` for `shunt tui` (add account, ranking).
 toml_edit = { version = "0.22", optional = true }
 
 [target.'cfg(unix)'.dependencies]

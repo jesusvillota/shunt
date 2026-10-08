@@ -230,7 +230,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let title = Line::from(vec![
-        Span::styled(" shunt top ", Style::new().bold()),
+        Span::styled(" shunt tui ", Style::new().bold()),
         Span::styled(app.base_url.clone(), Style::new().dark_gray()),
     ]);
     frame.render_widget(Paragraph::new(title), inner);
