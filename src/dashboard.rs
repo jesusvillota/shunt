@@ -260,7 +260,7 @@ fn has_uncommented_table(text: &str, dotted: &str) -> bool {
 
 /// The gateway's base URL (no `/admin` suffix) from the config file at
 /// `explicit` or the first one the loader would find, falling back to the
-/// documented default bind. For clients of a *running* gateway, like `shunt top`.
+/// documented default bind. For clients of a *running* gateway, like `shunt tui`.
 pub fn gateway_base_url(explicit: Option<&Path>) -> String {
     let path = explicit
         .map(Path::to_path_buf)

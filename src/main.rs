@@ -71,6 +71,7 @@ enum Command {
     /// (`~/.shunt/top.json`) with no routing effect.
     /// Talks to a running gateway's admin API and needs a write-tier admin
     /// token. Requires a build with `--features tui`.
+    #[command(name = "tui", visible_alias = "top")]
     Top {
         /// Gateway base URL. Default: derived from `[server].bind` in the config.
         #[arg(long)]
@@ -85,7 +86,7 @@ enum Command {
         /// Poll interval in milliseconds (minimum 500).
         #[arg(long, default_value_t = 2000)]
         interval_ms: u64,
-        /// The config file the gateway runs; `shunt top` edits it to save
+        /// The config file the gateway runs; `shunt tui` edits it to save
         /// rankings and added accounts.
         #[arg(long)]
         config: Option<PathBuf>,

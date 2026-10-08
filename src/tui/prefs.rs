@@ -1,4 +1,4 @@
-//! Display-only preferences for `shunt top`: which provider sections are
+//! Display-only preferences for `shunt tui`: which provider sections are
 //! hidden and in what order they are drawn.
 //!
 //! Stored as JSON at `~/.shunt/top.json` (`HOME`, falling back to
