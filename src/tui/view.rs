@@ -15,12 +15,11 @@ use ratatui::{
 use super::{
     add::{AddFlow, Step},
     app::{App, DeleteConfirm, Entry, Notice, Sel},
-    model::{AccountDto, AccountState, RankMode},
+    model::{AccountDto, AccountState, ProviderView, RankMode},
 };
 
 const BAR_WIDTH: usize = 8;
 const NAME_W: usize = 20;
-const PLAN_W: usize = 7;
 const STATE_W: usize = 16;
 const REQUESTS_W: usize = 22;
 const WINDOW_W: usize = BAR_WIDTH + 1 + 4 + 3 + 7;
@@ -104,7 +103,7 @@ fn state_style(state: AccountState) -> Style {
     }
 }
 
-fn provider_line(entry: &Entry<'_>) -> Line<'static> {
+fn provider_line(entry: &Entry<'_>, collapsed: bool) -> Line<'static> {
     let provider = entry.provider;
     let (switch, switch_style) = if provider.is_on() {
         (
@@ -122,16 +121,46 @@ fn provider_line(entry: &Entry<'_>) -> Line<'static> {
     let detail = if count == 0 {
         "no accounts · press a to add one".to_string()
     } else {
-        format!(
-            "ranking: {mode} · {count} account{}",
-            if count == 1 { "" } else { "s" }
-        )
+        let plural = if count == 1 { "" } else { "s" };
+        if collapsed {
+            format!("{count} account{plural} · {}", state_summary(provider))
+        } else {
+            format!("{count} account{plural}")
+        }
     };
+    let arrow = if collapsed { "▸" } else { "▾" };
     Line::from(vec![
-        Span::styled(format!("▾ {}  ", provider.name), Style::new().bold()),
+        Span::styled(
+            fit(&format!("{arrow} {}", provider.name), NAME_W + 4),
+            Style::new().bold(),
+        ),
         Span::styled(switch, switch_style),
-        Span::styled(format!("  {detail}"), Style::new().fg(Color::Gray)),
+        Span::styled("  ranking: ", Style::new().fg(Color::Gray)),
+        Span::styled(
+            fit(mode, 12),
+            Style::new().fg(Color::Rgb(255, 165, 0)).bold(),
+        ),
+        Span::styled(format!(" · {detail}"), Style::new().fg(Color::Gray)),
     ])
+    .style(Style::new().bg(Color::Rgb(38, 42, 50)))
+}
+
+/// `2 available · 1 paused` — what a folded provider hides.
+fn state_summary(provider: &ProviderView) -> String {
+    let count = |f: fn(AccountState) -> bool| provider.rows.iter().filter(|r| f(r.state)).count();
+    let available = count(|s| s == AccountState::Available);
+    let paused = count(|s| s == AccountState::Paused);
+    let other = provider.rows.len() - available - paused;
+    [
+        (available, "available"),
+        (paused, "paused"),
+        (other, "other"),
+    ]
+    .iter()
+    .filter(|(n, _)| *n > 0)
+    .map(|(n, label)| format!("{n} {label}"))
+    .collect::<Vec<_>>()
+    .join(" · ")
 }
 
 fn account_line(entry: &Entry<'_>, now: u64) -> Line<'static> {
@@ -141,21 +170,24 @@ fn account_line(entry: &Entry<'_>, now: u64) -> Line<'static> {
     let mut spans = vec![
         Span::styled(format!("{rank:>3} "), Style::new().bold()),
         Span::raw(fit(&a.name, NAME_W + 1)),
-        Span::raw(fit(a.plan.as_deref().unwrap_or(""), PLAN_W + 1)),
-        Span::styled(fit(row.state.label(), STATE_W + 1), state_style(row.state)),
     ];
     spans.extend(window_cell(a.utilization_5h, a.reset_5h, now));
     spans.push(Span::raw("  "));
     spans.extend(window_cell(a.utilization_7d, a.reset_7d, now));
     spans.push(Span::raw("  "));
     spans.push(Span::styled(
-        fit(&requests_cell(a), REQUESTS_W),
+        fit(row.state.label(), STATE_W + 1),
+        state_style(row.state),
+    ));
+    spans.push(Span::styled(
+        fit(&requests_cell(a), REQUESTS_W + 1),
         if a.requests_failed > 0 {
             Style::new().fg(Color::LightRed)
         } else {
             Style::new()
         },
     ));
+    spans.push(Span::raw(a.plan.clone().unwrap_or_default()));
     let mut line = Line::from(spans);
     if !entry.provider.is_on() || matches!(row.state, AccountState::Disabled | AccountState::Paused)
     {
@@ -178,25 +210,26 @@ fn requests_cell(a: &AccountDto) -> String {
 
 fn column_heading() -> Line<'static> {
     let head = format!(
-        "{:>3} {:<n$} {:<p$} {:<s$} {:<w$}  {:<w$}  {}",
+        "{:>3} {:<n$} {:<w$}  {:<w$}  {:<s$} {:<r$} {}",
         "#",
         "Account",
-        "Plan",
+        "5h limit",
+        "7d limit",
         "State",
-        "5h limit (used · resets in)",
-        "7d limit (used · resets in)",
         "Requests ok/fail · avg",
+        "Plan",
         n = NAME_W,
-        p = PLAN_W,
         s = STATE_W,
+        r = REQUESTS_W,
         w = WINDOW_W,
     );
     Line::styled(head, Style::new().bold().fg(Color::Cyan))
 }
 
 pub fn render(frame: &mut Frame, app: &mut App, now: u64) {
-    let [header, heading, list, footer] = Layout::vertical([
+    let [header, heading, _gap, list, footer] = Layout::vertical([
         Constraint::Length(2),
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Min(1),
         Constraint::Length(2),
@@ -273,7 +306,7 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
         }
         current_provider = Some(entry.sel.provider.clone());
         let mut line = if entry.row.is_none() {
-            provider_line(&entry)
+            provider_line(&entry, app.collapsed.contains(&entry.sel.provider))
         } else {
             account_line(&entry, now)
         };
@@ -298,7 +331,16 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
     app.scroll = app.scroll.min(lines.len().saturating_sub(height));
     for (line, sel) in lines.into_iter().skip(app.scroll).take(height) {
         let y = list.y + app.hits.len() as u16;
-        frame.render_widget(Paragraph::new(line), Rect::new(list.x, y, list.width, 1));
+        // A header's background spans the whole row, not just its text.
+        let style = if sel.as_ref().is_some_and(|s| s.account.is_none()) {
+            line.style
+        } else {
+            Style::new()
+        };
+        frame.render_widget(
+            Paragraph::new(line).style(style),
+            Rect::new(list.x, y, list.width, 1),
+        );
         app.hits.push(sel);
     }
 }
@@ -318,9 +360,13 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         "↑↓ choose · Enter unhide · Esc cancel".to_string()
     } else if app.selected.is_none() {
         format!("↑↓ or click: select{unhide} · a: add account · ?: help · q: quit")
+    } else if app.header_selected() {
+        format!(
+            "p pause/resume all · Space fold · m ranking mode · h hide{unhide} · a add · Esc deselect · ? help · q quit"
+        )
     } else {
         format!(
-            "p pause · o provider on/off · h hide{unhide} · m ranking mode · Shift+↑↓ move · a add · d delete · Esc deselect · ? help · q quit"
+            "p pause · h hide{unhide} · m ranking mode · Shift+↑↓ move · a add · d delete · Esc deselect · ? help · q quit"
         )
     };
     // ponytail: notice gets its own line so the hints below never hide.
@@ -512,8 +558,8 @@ fn render_help(frame: &mut Frame, area: Rect) {
         "pick it (arrow keys or a click); click empty space or press Esc to unpick.",
         "",
         "  ↑↓ / j k        move · PgUp/PgDn jump",
-        "  p / Space       pause or resume the selected account",
-        "  o               switch the whole provider on or off (pauses all its accounts)",
+        "  p               pause or resume the selected account; on a provider header, all its accounts",
+        "  Space           pause the selected account; on a provider header, fold or unfold it",
         "  h               hide the selected provider (display only — it still routes traffic)",
         "  u               unhide one hidden provider (picker)",
         "  m               ranking mode for the provider:",
