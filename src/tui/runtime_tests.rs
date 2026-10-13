@@ -44,7 +44,9 @@ async fn weekly_reset_effect_acknowledges_success_but_not_api_refusal() {
         Mock::given(method("PATCH"))
             .and(path("/admin/api/pool"))
             .and(header("x-shunt-admin-token", "test-write-key"))
-            .and(body_json(serde_json::json!({"sort_by_weekly_reset": true})))
+            .and(body_json(
+                serde_json::json!({"provider": "claude", "sort_by_weekly_reset": true}),
+            ))
             .respond_with(ResponseTemplate::new(status))
             .expect(1)
             .mount(&server)
@@ -53,20 +55,26 @@ async fn weekly_reset_effect_acknowledges_success_but_not_api_refusal() {
             .and(path("/admin/api/pool"))
             .respond_with(
                 ResponseTemplate::new(200)
-                    .set_body_json(serde_json::json!({"sort_by_weekly_reset": true})),
+                    .set_body_json(serde_json::json!({"providers": [{"provider": "claude", "sort_by_weekly_reset": true}]})),
             )
             .expect(if status == 200 { 1 } else { 0 })
             .mount(&server)
             .await;
         let (ctx, mut rx) = context(&server, None);
-        perform(&ctx, Effect::SetWeeklyReset(true));
+        perform(
+            &ctx,
+            Effect::SetWeeklyReset {
+                provider: "claude".into(),
+                on: true,
+            },
+        );
         if status == 200 {
             assert!(
-                matches!(next(&mut rx).await, Msg::Pool(Ok(snapshot)) if snapshot.sort_by_weekly_reset)
+                matches!(next(&mut rx).await, Msg::Pool(Ok(snapshot)) if snapshot.providers[0].weekly_reset)
             );
-            assert!(matches!(next(&mut rx).await, Msg::WeeklyResetSet(true)));
+            assert!(matches!(next(&mut rx).await, Msg::WeeklyResetSet(_, true)));
             assert!(
-                matches!(next(&mut rx).await, Msg::Notice(Notice::Info(text)) if text.contains("all pooled providers"))
+                matches!(next(&mut rx).await, Msg::Notice(Notice::Info(text)) if text.contains("claude: weekly reset on"))
             );
         } else {
             assert!(
@@ -91,17 +99,23 @@ async fn inactive_weekly_reset_uses_the_gateways_effective_mode() {
         .and(path("/admin/api/pool"))
         .respond_with(
             ResponseTemplate::new(200)
-                .set_body_json(serde_json::json!({"sort_by_weekly_reset": false})),
+                .set_body_json(serde_json::json!({"providers": [{"provider": "claude", "sort_by_weekly_reset": false}]})),
         )
         .expect(1)
         .mount(&server)
         .await;
     let (ctx, mut rx) = context(&server, None);
-    perform(&ctx, Effect::SetWeeklyReset(true));
-    assert!(
-        matches!(next(&mut rx).await, Msg::Pool(Ok(snapshot)) if !snapshot.sort_by_weekly_reset)
+    perform(
+        &ctx,
+        Effect::SetWeeklyReset {
+            provider: "claude".into(),
+            on: true,
+        },
     );
-    assert!(matches!(next(&mut rx).await, Msg::WeeklyResetSet(false)));
+    assert!(
+        matches!(next(&mut rx).await, Msg::Pool(Ok(snapshot)) if !snapshot.providers[0].weekly_reset)
+    );
+    assert!(matches!(next(&mut rx).await, Msg::WeeklyResetSet(_, false)));
     assert!(
         matches!(next(&mut rx).await, Msg::Notice(Notice::Info(text)) if text.contains("inactive") && text.contains("[server.pool]"))
     );
@@ -115,7 +129,7 @@ async fn clearing_ranks_disables_weekly_reset_and_reports_partial_failure() {
         Mock::given(method("PATCH"))
             .and(path("/admin/api/pool"))
             .and(body_json(
-                serde_json::json!({"sort_by_weekly_reset": false}),
+                serde_json::json!({"provider": "claude", "sort_by_weekly_reset": false}),
             ))
             .respond_with(ResponseTemplate::new(status))
             .expect(1)
@@ -137,7 +151,7 @@ async fn clearing_ranks_disables_weekly_reset_and_reports_partial_failure() {
         if status == 200 {
             assert!(matches!(next(&mut rx).await, Msg::RanksCleared(name) if name == "claude"));
             assert!(
-                matches!(next(&mut rx).await, Msg::Notice(Notice::Info(text)) if text.contains("weekly reset off for all providers"))
+                matches!(next(&mut rx).await, Msg::Notice(Notice::Info(text)) if text.contains("weekly reset off"))
             );
         } else {
             assert!(

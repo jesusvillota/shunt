@@ -87,16 +87,16 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
   -d '{"sort_by_weekly_reset": true}'
 ```
 
-`sort_by_reset` と同様に、ランタイムの切り替えは解除されるかプロセスが再起動するまで設定ファイルの値を上書きします。明示的に解除するには `null` を送り、フィールドの省略は何もしません。`GET /admin/api/pool` は有効な値をトップレベルの `sort_by_weekly_reset` ブール値として報告し、`[server.pool]` 自体が存在しない場合、この設定もまったく効果を持ちません。
+`sort_by_reset` と同様に、ランタイムの切り替えは解除されるかプロセスが再起動するまで設定ファイルの値を上書きします。明示的に解除するには `null` を送り、フィールドの省略は何もしません。ボディに `"provider": "<name>"` を加えると、上書きはそのプロバイダーだけに適用され、プロセス全体の値より優先されます。`GET /admin/api/pool` は有効な値をトップレベルの `sort_by_weekly_reset` ブール値(および各プロバイダーオブジェクトの値)として報告し、`[server.pool]` 自体が存在しない場合、この設定もまったく効果を持ちません。
 
 ## 端末でのランキング切り替え
 
 `shunt tui`(`--features tui` でビルド)でプロバイダーのヘッダーまたはアカウントを選び、`m` を押します。アカウントが 2 つ以上ある場合、**custom order → balanced → weekly reset → custom order** の順に切り替わります。
 
-- **Custom order → balanced** は、そのプロバイダーの優先順位を `shunt.toml` から削除し、プール API に `{"sort_by_weekly_reset": false}` を送ります。
-- **Balanced → weekly reset** は、設定ファイルを編集せずに `{"sort_by_weekly_reset": true}` を送ります。
-- **Weekly reset → custom order** は、現在表示されている順序を、そのプロバイダーの優先順位 `1, 2, 3…` として保存します。全体の週間リセット設定は有効なままです。
+- **Custom order → balanced** は、そのプロバイダーの優先順位を `shunt.toml` から削除し、プール API に `{"provider": "<name>", "sort_by_weekly_reset": false}` を送ります。
+- **Balanced → weekly reset** は、設定ファイルを編集せずに `{"provider": "<name>", "sort_by_weekly_reset": true}` を送ります。
+- **Weekly reset → custom order** は、現在表示されている順序を、そのプロバイダーの優先順位 `1, 2, 3…` として保存します。そのプロバイダーの週間リセット設定は有効なままです。
 
-週間リセットの切り替えは **すべてのプール対象プロバイダー** に影響します。カスタム優先順位が優先されるため、それらのプロバイダーは引き続き `custom order` と表示されます。Balanced に戻すと週間リセットを全体で無効にし、`sort_by_reset` は変更しません。ランタイムの上書きは解除またはゲートウェイの再起動で終了しますが、カスタム優先順位は再起動後も残ります。TUI は `[server.pool]` を書き換えません。設定の編集が成功して API 呼び出しが失敗した場合は、部分的な変更を報告し、実際の状態を再取得します。
+週間リセットの切り替えは **選択したプロバイダーだけ** に影響します。カスタム優先順位が優先されるため、そのプロバイダーは引き続き `custom order` と表示されます。Balanced に戻すとそのプロバイダーの週間リセットを無効にし、`sort_by_reset` は変更しません。ランタイムの上書きは解除またはゲートウェイの再起動で終了しますが、カスタム優先順位は再起動後も残ります。TUI は `[server.pool]` を書き換えません。設定の編集が成功して API 呼び出しが失敗した場合は、部分的な変更を報告し、実際の状態を再取得します。
 
 週間リセットには `[server.pool]` と `sort_by_weekly_reset` をサポートするゲートウェイが必要です。有効な値が false のままの場合、TUI は設定が無効であることを報告します。

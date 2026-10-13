@@ -103,7 +103,7 @@ fn state_style(state: AccountState) -> Style {
     }
 }
 
-fn provider_line(entry: &Entry<'_>, collapsed: bool, weekly_reset: bool) -> Line<'static> {
+fn provider_line(entry: &Entry<'_>, collapsed: bool) -> Line<'static> {
     let provider = entry.provider;
     let (switch, switch_style) = if provider.is_on() {
         (
@@ -113,7 +113,7 @@ fn provider_line(entry: &Entry<'_>, collapsed: bool, weekly_reset: bool) -> Line
     } else {
         (" OFF", Style::new().fg(Color::White).bg(Color::Red).bold())
     };
-    let mode = provider.mode_with_pool(weekly_reset).label();
+    let mode = provider.mode_with_pool(provider.weekly_reset).label();
     let count = provider.rows.len();
     let detail = if count == 0 {
         "no accounts · press a to add one".to_string()
@@ -303,11 +303,7 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
         }
         current_provider = Some(entry.sel.provider.clone());
         let mut line = if entry.row.is_none() {
-            provider_line(
-                &entry,
-                app.collapsed.contains(&entry.sel.provider),
-                app.snapshot.sort_by_weekly_reset,
-            )
+            provider_line(&entry, app.collapsed.contains(&entry.sel.provider))
         } else {
             account_line(&entry, now)
         };

@@ -87,16 +87,16 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
   -d '{"sort_by_weekly_reset": true}'
 ```
 
-Like `sort_by_reset`, the runtime toggle overrides the config file's value until cleared or the process restarts; send `null` to clear it explicitly, and omitting the field is a no-op. `GET /admin/api/pool` reports the effective value as a top-level `sort_by_weekly_reset` boolean, and the setting is likewise inert while `[server.pool]` itself is absent.
+Like `sort_by_reset`, the runtime toggle overrides the config file's value until cleared or the process restarts; send `null` to clear it explicitly, and omitting the field is a no-op. Add `"provider": "<name>"` to the body to set the override for that provider only; it wins over the process-wide value. `GET /admin/api/pool` reports the effective value as a top-level `sort_by_weekly_reset` boolean (and per provider, on each provider object), and the setting is likewise inert while `[server.pool]` itself is absent.
 
 ## Terminal ranking cycle
 
 In `shunt tui` (built with `--features tui`), select a provider header or one of its accounts and press `m`. With at least two accounts, the cycle is **custom order → balanced → weekly reset → custom order**:
 
-- **Custom order → balanced** removes that provider's priorities from `shunt.toml` and sends `{"sort_by_weekly_reset": false}` to the pool API.
-- **Balanced → weekly reset** sends `{"sort_by_weekly_reset": true}` without editing the config.
-- **Weekly reset → custom order** saves the current displayed order as priorities `1, 2, 3…` for that provider. The global weekly-reset flag stays enabled.
+- **Custom order → balanced** removes that provider's priorities from `shunt.toml` and sends `{"provider": "<name>", "sort_by_weekly_reset": false}` to the pool API.
+- **Balanced → weekly reset** sends `{"provider": "<name>", "sort_by_weekly_reset": true}` without editing the config.
+- **Weekly reset → custom order** saves the current displayed order as priorities `1, 2, 3…` for that provider. That provider's weekly-reset flag stays enabled.
 
-The weekly-reset switch affects **all pooled providers**. Custom priorities take precedence, so those providers still show `custom order`. Returning to balanced disables weekly reset globally and leaves `sort_by_reset` unchanged. Both runtime overrides end when cleared or when the gateway restarts; custom priorities survive restarts. The TUI never writes `[server.pool]`. If the config edit succeeds but the API call fails, the TUI reports the partial change and refreshes the live state.
+The weekly-reset switch affects **only the selected provider**. Custom priorities take precedence, so that provider still shows `custom order`. Returning to balanced disables weekly reset for that provider and leaves `sort_by_reset` unchanged. Both runtime overrides end when cleared or when the gateway restarts; custom priorities survive restarts. The TUI never writes `[server.pool]`. If the config edit succeeds but the API call fails, the TUI reports the partial change and refreshes the live state.
 
 Weekly reset requires `[server.pool]` and a gateway that supports `sort_by_weekly_reset`. The TUI reports an inactive setting if the effective value stays false.

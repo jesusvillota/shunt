@@ -1273,7 +1273,15 @@ async fn pool(State(state): State<AppState>, headers: HeaderMap) -> Response {
         // an account -- a provider named "claude" is not necessarily a
         // claude_oauth provider, and a claude_oauth provider need not be
         // named "claude".
-        providers.push(json!({ "provider": name, "auth": provider.auth, "accounts": accounts }));
+        let weekly_reset = state
+            .accounts
+            .effective_sort_by_weekly_reset_for(name, state.config.server.pool.as_ref());
+        providers.push(json!({
+            "provider": name,
+            "auth": provider.auth,
+            "sort_by_weekly_reset": weekly_reset,
+            "accounts": accounts,
+        }));
     }
     json_secure(json!({
         "providers": providers,
@@ -1305,6 +1313,9 @@ struct PatchPoolSettingsBody {
     /// weekly-reset ranking wins at selection time.
     #[serde(default, deserialize_with = "deserialize_some")]
     sort_by_weekly_reset: Option<Option<bool>>,
+    /// When set, `sort_by_weekly_reset` applies to this provider only.
+    #[serde(default)]
+    provider: Option<String>,
 }
 
 /// Maps a present field (of any value, including `null`) to `Some`, so a
@@ -1350,10 +1361,16 @@ async fn patch_pool_settings(
         );
     }
     if let Some(sort_by_weekly_reset) = body.sort_by_weekly_reset {
-        state
-            .accounts
-            .set_sort_by_weekly_reset_override(sort_by_weekly_reset);
+        match &body.provider {
+            Some(provider) => state
+                .accounts
+                .set_provider_weekly_reset_override(provider, sort_by_weekly_reset),
+            None => state
+                .accounts
+                .set_sort_by_weekly_reset_override(sort_by_weekly_reset),
+        }
         tracing::info!(
+            provider = ?body.provider,
             sort_by_weekly_reset = ?sort_by_weekly_reset,
             "admin: pool sort_by_weekly_reset override updated"
         );

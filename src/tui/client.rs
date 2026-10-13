@@ -77,13 +77,19 @@ impl Client {
 
     pub async fn set_sort_by_weekly_reset(
         &self,
+        provider: Option<&str>,
         sort_by_weekly_reset: Option<bool>,
     ) -> anyhow::Result<()> {
         let response = self
             .http
             .patch(self.url("/pool"))
             .header(&self.header, &self.token)
-            .json(&json!({ "sort_by_weekly_reset": sort_by_weekly_reset }))
+            .json(&match provider {
+                Some(provider) => {
+                    json!({ "provider": provider, "sort_by_weekly_reset": sort_by_weekly_reset })
+                }
+                None => json!({ "sort_by_weekly_reset": sort_by_weekly_reset }),
+            })
             .send()
             .await
             .context("gateway unreachable")?;

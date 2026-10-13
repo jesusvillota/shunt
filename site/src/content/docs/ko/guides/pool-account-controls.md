@@ -87,16 +87,16 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
   -d '{"sort_by_weekly_reset": true}'
 ```
 
-`sort_by_reset`과 마찬가지로, 런타임 토글은 해제되거나 프로세스가 재시작될 때까지 설정 파일의 값을 덮어쓰며, 명시적으로 해제하려면 `null`을 보내고 필드를 생략하면 아무 효과가 없습니다. `GET /admin/api/pool`은 유효한 값을 최상위 `sort_by_weekly_reset` 불리언으로 보고하며, `[server.pool]` 자체가 없으면 이 설정 역시 전혀 효과가 없습니다.
+`sort_by_reset`과 마찬가지로, 런타임 토글은 해제되거나 프로세스가 재시작될 때까지 설정 파일의 값을 덮어쓰며, 명시적으로 해제하려면 `null`을 보내고 필드를 생략하면 아무 효과가 없습니다. 바디에 `"provider": "<name>"`을 추가하면 해당 공급자에게만 덮어쓰기가 적용되며, 이는 프로세스 전체 값보다 우선합니다. `GET /admin/api/pool`은 유효한 값을 최상위 `sort_by_weekly_reset` 불리언(및 각 공급자 객체의 값)으로 보고하며, `[server.pool]` 자체가 없으면 이 설정 역시 전혀 효과가 없습니다.
 
 ## 터미널 순위 모드 전환
 
 `shunt tui`(`--features tui`로 빌드)에서 공급자 헤더나 계정을 선택하고 `m`을 누릅니다. 계정이 두 개 이상이면 **custom order → balanced → weekly reset → custom order** 순서로 전환됩니다.
 
-- **Custom order → balanced**는 해당 공급자의 우선순위를 `shunt.toml`에서 제거하고 풀 API에 `{"sort_by_weekly_reset": false}`를 보냅니다.
-- **Balanced → weekly reset**는 설정 파일을 편집하지 않고 `{"sort_by_weekly_reset": true}`를 보냅니다.
-- **Weekly reset → custom order**는 현재 표시된 순서를 해당 공급자의 우선순위 `1, 2, 3…`으로 저장합니다. 전역 주간 리셋 설정은 계속 켜져 있습니다.
+- **Custom order → balanced**는 해당 공급자의 우선순위를 `shunt.toml`에서 제거하고 풀 API에 `{"provider": "<name>", "sort_by_weekly_reset": false}`를 보냅니다.
+- **Balanced → weekly reset**는 설정 파일을 편집하지 않고 `{"provider": "<name>", "sort_by_weekly_reset": true}`를 보냅니다.
+- **Weekly reset → custom order**는 현재 표시된 순서를 해당 공급자의 우선순위 `1, 2, 3…`으로 저장합니다. 해당 공급자의 주간 리셋 설정은 계속 켜져 있습니다.
 
-주간 리셋 스위치는 **모든 풀 공급자**에 영향을 줍니다. 사용자 지정 우선순위가 먼저 적용되므로 해당 공급자는 계속 `custom order`로 표시됩니다. Balanced로 돌아가면 주간 리셋을 전역으로 끄며 `sort_by_reset`은 변경하지 않습니다. 런타임 덮어쓰기는 해제하거나 게이트웨이를 재시작할 때 끝나지만 사용자 지정 우선순위는 유지됩니다. TUI는 `[server.pool]`을 쓰지 않습니다. 설정 편집이 성공하고 API 호출이 실패하면 부분 변경을 알리고 실제 상태를 새로 조회합니다.
+주간 리셋 스위치는 **선택한 공급자에게만** 영향을 줍니다. 사용자 지정 우선순위가 먼저 적용되므로 해당 공급자는 계속 `custom order`로 표시됩니다. Balanced로 돌아가면 해당 공급자의 주간 리셋을 끄며 `sort_by_reset`은 변경하지 않습니다. 런타임 덮어쓰기는 해제하거나 게이트웨이를 재시작할 때 끝나지만 사용자 지정 우선순위는 유지됩니다. TUI는 `[server.pool]`을 쓰지 않습니다. 설정 편집이 성공하고 API 호출이 실패하면 부분 변경을 알리고 실제 상태를 새로 조회합니다.
 
 주간 리셋에는 `[server.pool]`과 `sort_by_weekly_reset`을 지원하는 게이트웨이가 필요합니다. 유효한 값이 계속 false이면 TUI는 설정이 비활성 상태라고 알립니다.
