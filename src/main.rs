@@ -1644,6 +1644,15 @@ mod tests {
             "the probed credential must be absent for this test to mean anything"
         );
         let _env = EnvVarGuard::set("SHUNT_ANTIGRAVITY_AUTH_FILE", &credential);
+        let empty_dir = std::env::temp_dir().join(format!(
+            "shunt-serve-antigravity-accounts-absent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        ));
+        let _accounts_env = EnvVarGuard::set("SHUNT_ANTIGRAVITY_ACCOUNTS_DIR", &empty_dir);
 
         let mut config = Config::default();
         // `serve` binds before it reaches the guard, so give it a bindable

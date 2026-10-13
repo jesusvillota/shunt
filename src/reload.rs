@@ -691,6 +691,9 @@ mod tests {
         // Point the credential probe at a file that does not exist.
         let credential_path = dir.join("antigravity-auth.json");
         let _env_var_guard = EnvVarGuard::set("SHUNT_ANTIGRAVITY_AUTH_FILE", &credential_path);
+        let empty_accounts_dir = dir.join("antigravity-accounts");
+        let _accounts_dir_guard =
+            EnvVarGuard::set("SHUNT_ANTIGRAVITY_ACCOUNTS_DIR", &empty_accounts_dir);
 
         std::fs::write(&path, "[server]\ndefault_provider = \"anthropic\"\n").unwrap();
         let shared = shared_from(Config::load(Some(&path)).unwrap());

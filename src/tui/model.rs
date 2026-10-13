@@ -29,6 +29,10 @@ pub struct ProviderDto {
     pub auth: Option<String>,
     #[serde(default)]
     pub accounts: Vec<AccountDto>,
+    /// This provider's own weekly-reset setting; a gateway that predates it
+    /// omits it, and the pool-wide value applies.
+    #[serde(default)]
+    pub sort_by_weekly_reset: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -196,6 +200,8 @@ pub struct ProviderView {
     pub auth: Option<String>,
     /// Accounts in the order the pool lists them.
     pub rows: Vec<Row>,
+    /// Whether this provider ranks by soonest weekly reset.
+    pub weekly_reset: bool,
 }
 
 impl ProviderView {
@@ -315,6 +321,7 @@ fn balanced_cmp(a: &Row, b: &Row, sort_by_reset: bool, sort_by_weekly_reset: boo
 pub struct Snapshot {
     pub providers: Vec<ProviderView>,
     pub sort_by_reset: bool,
+    /// The pool-wide setting; each provider's own is [`ProviderView::weekly_reset`].
     pub sort_by_weekly_reset: bool,
 }
 
@@ -324,6 +331,9 @@ impl Snapshot {
             .providers
             .into_iter()
             .map(|provider| ProviderView {
+                weekly_reset: provider
+                    .sort_by_weekly_reset
+                    .unwrap_or(response.sort_by_weekly_reset),
                 name: provider.provider,
                 auth: provider.auth,
                 rows: provider
@@ -367,6 +377,7 @@ mod tests {
                 provider: "claude".into(),
                 auth: Some("claude_oauth".into()),
                 accounts,
+                sort_by_weekly_reset: None,
             }],
             sort_by_reset: false,
             ..Default::default()

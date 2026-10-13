@@ -26,6 +26,7 @@ fn provider(name: &str, auth: &str, accounts: Vec<AccountDto>) -> ProviderDto {
         provider: name.into(),
         auth: Some(auth.into()),
         accounts,
+        sort_by_weekly_reset: None,
     }
 }
 
@@ -216,7 +217,7 @@ fn weekly_reset_to_custom_starts_from_the_live_order() {
     let rows = &mut app.snapshot.providers[0].rows;
     rows[0].account.reset_7d = Some(2_000);
     rows[1].account.reset_7d = Some(8_000);
-    app.snapshot.sort_by_weekly_reset = true;
+    app.snapshot.providers[0].weekly_reset = true;
     app.on_key(key('j'));
     let effect = app.on_key(key('m'));
     assert_eq!(
@@ -237,8 +238,8 @@ fn weekly_reset_to_custom_starts_from_the_live_order() {
         .collect();
     assert_eq!(names, ["low", "high", "mid"]);
     assert!(
-        app.snapshot.sort_by_weekly_reset,
-        "custom order keeps the global flag"
+        app.snapshot.providers[0].weekly_reset,
+        "custom order keeps the provider flag"
     );
 }
 
@@ -247,12 +248,21 @@ fn balanced_to_weekly_reset_uses_the_pool_api_without_writing_priorities() {
     let mut app = claude(vec![acct("a", None), acct("b", None)]);
     app.on_key(key('j'));
     app.on_key(key('j')); // Also works from an account row.
-    assert_eq!(app.on_key(key('m')), Effect::SetWeeklyReset(true));
-    assert!(!app.snapshot.sort_by_weekly_reset, "wait for API success");
-    assert!(app.overlay.is_none());
-    app.on_weekly_reset_set(true);
     assert_eq!(
-        app.snapshot.providers[0].mode_with_pool(app.snapshot.sort_by_weekly_reset),
+        app.on_key(key('m')),
+        Effect::SetWeeklyReset {
+            provider: "claude".into(),
+            on: true
+        }
+    );
+    assert!(
+        !app.snapshot.providers[0].weekly_reset,
+        "wait for API success"
+    );
+    assert!(app.overlay.is_none());
+    app.on_weekly_reset_set("claude", true);
+    assert_eq!(
+        app.snapshot.providers[0].mode_with_pool(app.snapshot.providers[0].weekly_reset),
         RankMode::WeeklyReset
     );
     assert!(matches!(app.on_key(key('m')), Effect::SetRanks { .. }));
@@ -265,7 +275,7 @@ fn custom_to_balanced_clears_ranks() {
     let mut b = acct("b", None);
     b.priority = Some(2);
     let mut app = claude(vec![a, b]);
-    app.snapshot.sort_by_weekly_reset = true;
+    app.snapshot.providers[0].weekly_reset = true;
     app.on_key(key('j'));
     assert_eq!(
         app.on_key(key('m')),
@@ -276,7 +286,7 @@ fn custom_to_balanced_clears_ranks() {
     // Do not claim balanced until the file edit and the pool PATCH both succeed.
     assert_eq!(app.snapshot.providers[0].mode(), RankMode::Custom);
     app.on_ranks_cleared("claude");
-    assert!(!app.snapshot.sort_by_weekly_reset);
+    assert!(!app.snapshot.providers[0].weekly_reset);
     assert_eq!(
         app.snapshot.provider("claude").unwrap().mode(),
         RankMode::Balanced
@@ -295,21 +305,21 @@ fn ranking_needs_two_accounts() {
 fn confirmed_pool_mode_survives_stale_polls_then_yields_to_gateway() {
     let mut app = claude(vec![acct("a", None), acct("b", None)]);
     let stale = app.snapshot.clone();
-    app.on_weekly_reset_set(true);
+    app.on_weekly_reset_set("claude", true);
     app.on_poll(Ok(stale.clone()));
-    assert!(app.snapshot.sort_by_weekly_reset);
+    assert!(app.snapshot.providers[0].weekly_reset);
     assert!(app.weekly_reset_overlay.is_some());
     let mut confirmed = stale.clone();
-    confirmed.sort_by_weekly_reset = true;
+    confirmed.providers[0].weekly_reset = true;
     app.on_poll(Ok(confirmed));
     assert!(app.weekly_reset_overlay.is_none());
     // A subsequent dashboard change is authoritative.
     app.on_poll(Ok(stale));
-    assert!(!app.snapshot.sort_by_weekly_reset);
+    assert!(!app.snapshot.providers[0].weekly_reset);
 }
 
 #[test]
-fn custom_to_balanced_changes_all_equal_priority_providers() {
+fn custom_to_balanced_leaves_other_providers_alone() {
     let mut app = custom_app();
     app.snapshot.providers.push(
         Snapshot::from_response(PoolResponse {
@@ -323,15 +333,16 @@ fn custom_to_balanced_changes_all_equal_priority_providers() {
         .providers
         .remove(0),
     );
-    app.snapshot.sort_by_weekly_reset = true;
+    app.snapshot.providers[0].weekly_reset = true;
+    app.snapshot.providers[1].weekly_reset = true;
     app.on_key(key('j'));
     assert!(matches!(app.on_key(key('m')), Effect::ClearRanks { .. }));
     app.on_ranks_cleared("claude");
-    assert!(app
-        .snapshot
-        .providers
-        .iter()
-        .all(|p| p.mode_with_pool(app.snapshot.sort_by_weekly_reset) == RankMode::Balanced));
+    let mode = |at: usize| {
+        app.snapshot.providers[at].mode_with_pool(app.snapshot.providers[at].weekly_reset)
+    };
+    assert_eq!(mode(0), RankMode::Balanced);
+    assert_eq!(mode(1), RankMode::WeeklyReset, "codex keeps its own mode");
 }
 
 fn custom_app() -> App {
@@ -388,7 +399,7 @@ fn the_overlay_yields_to_the_gateway_once_it_reports_the_same_ranking() {
     let mut app = claude(vec![acct("a", Some(1)), acct("b", Some(2))]);
     app.snapshot.providers[0].rows[0].account.reset_7d = Some(5_000);
     app.snapshot.providers[0].rows[1].account.reset_7d = Some(2_000);
-    app.snapshot.sort_by_weekly_reset = true;
+    app.snapshot.providers[0].weekly_reset = true;
     app.on_key(key('j'));
     app.on_key(key('m'));
     assert!(app.overlay.is_some());

@@ -98,12 +98,21 @@ async fn polls_pauses_resumes_and_starts_provisioning() {
 
     // The TUI's weekly-reset switch is global and supports an explicit clear.
     assert!(!resumed.sort_by_weekly_reset);
-    writer.set_sort_by_weekly_reset(Some(true)).await.unwrap();
+    writer
+        .set_sort_by_weekly_reset(None, Some(true))
+        .await
+        .unwrap();
     assert!(writer.fetch_pool().await.unwrap().sort_by_weekly_reset);
-    writer.set_sort_by_weekly_reset(Some(false)).await.unwrap();
+    writer
+        .set_sort_by_weekly_reset(None, Some(false))
+        .await
+        .unwrap();
     assert!(!writer.fetch_pool().await.unwrap().sort_by_weekly_reset);
-    writer.set_sort_by_weekly_reset(Some(true)).await.unwrap();
-    writer.set_sort_by_weekly_reset(None).await.unwrap();
+    writer
+        .set_sort_by_weekly_reset(None, Some(true))
+        .await
+        .unwrap();
+    writer.set_sort_by_weekly_reset(None, None).await.unwrap();
     assert!(!writer.fetch_pool().await.unwrap().sort_by_weekly_reset);
 
     // Provisioning: the start call yields an authorize URL (no upstream call is
@@ -128,7 +137,7 @@ async fn polls_pauses_resumes_and_starts_provisioning() {
     assert!(format!("{:#}", refused.unwrap_err()).contains("read-only"));
     let refused = reader.delete_account("claude", "missing").await;
     assert!(format!("{:#}", refused.unwrap_err()).contains("read-only"));
-    let refused = reader.set_sort_by_weekly_reset(Some(true)).await;
+    let refused = reader.set_sort_by_weekly_reset(None, Some(true)).await;
     assert!(format!("{:#}", refused.unwrap_err()).contains("read-only"));
     assert!(!writer.fetch_pool().await.unwrap().sort_by_weekly_reset);
 

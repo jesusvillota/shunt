@@ -91,13 +91,13 @@ the gateway skips it and serves from the next eligible rank.
    `[server.pool] sort_by_reset` is on (process-wide, set in the config or through the
    admin API), new conversations use the soonest-reset order instead. Switching
    from custom order to balanced clears this provider's priorities and sets
-   `sort_by_weekly_reset = false` through the admin API. This disables weekly-reset
-   ranking for **all pooled providers**, even if the config enables it. It leaves
-   `sort_by_reset` unchanged.
+   `sort_by_weekly_reset = false` for this provider through the admin API
+   (`{"provider": …}`). Other providers keep their own mode, even if the config
+   enables weekly reset. It leaves `sort_by_reset` unchanged.
 - **Weekly reset**: equal-priority accounts use the soonest weekly quota reset;
   unknown weekly resets sort last. Press `m` from balanced to enable
-  `sort_by_weekly_reset` through `PATCH /admin/api/pool`. This setting affects
-  **all pooled providers**, while explicit custom priorities keep precedence.
+  `sort_by_weekly_reset` for this provider through `PATCH /admin/api/pool`. The
+  setting is **per provider**, and explicit custom priorities keep precedence.
   It wins over `sort_by_reset`. The display uses the earliest reported `7d` or
   `7d_oi` reset; the gateway uses the weekly window for the request's model.
 - **Custom order**: a strict 1, 2, 3… waterfall for **new routing decisions**. With
@@ -106,8 +106,8 @@ the gateway skips it and serves from the next eligible rank.
   Pressing `m` from weekly reset saves the current displayed order; then
   move accounts with `Shift+↑/↓`. The order is saved as each account's `priority`
   in `shunt.toml` (`1` = most preferred). Pressing `m` again removes the
-  priorities and returns to balanced. Entering custom order leaves the global
-  weekly-reset setting enabled for other providers.
+  priorities and returns to balanced. Entering custom order leaves the
+  provider's weekly-reset setting as it was.
 
 The cycle needs at least two accounts in the selected provider. Weekly reset
 requires `[server.pool]` and a gateway that supports `sort_by_weekly_reset`;

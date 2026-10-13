@@ -69,6 +69,10 @@ fn check(config: &Path, credential: &Path) -> Output {
         .arg("--config")
         .arg(config)
         .env("SHUNT_ANTIGRAVITY_AUTH_FILE", credential)
+        .env(
+            "SHUNT_ANTIGRAVITY_ACCOUNTS_DIR",
+            credential.parent().unwrap_or(credential),
+        )
         .output()
         .expect("shunt binary should run")
 }

@@ -615,6 +615,9 @@ pub struct AccountPool {
     /// Runtime override for `[server.pool] sort_by_weekly_reset`, mirroring
     /// `sort_by_reset_override`. Same process-wide, memory-only semantics.
     sort_by_weekly_reset_override: Mutex<Option<bool>>,
+    /// Per-provider runtime override of `sort_by_weekly_reset`; wins over the
+    /// process-wide override and the config file. Memory-only.
+    provider_weekly_reset_override: Mutex<HashMap<String, bool>>,
 }
 
 #[derive(Debug)]
@@ -1151,7 +1154,7 @@ impl AccountPool {
         // `sort_by_reset` (earliest across windows) when both are set.
         // Stable sorting preserves the hash/round-robin rotation as the final
         // tiebreak when the live quota signals are identical or unknown.
-        let sort_by_weekly_reset = self.effective_sort_by_weekly_reset(pool);
+        let sort_by_weekly_reset = self.effective_sort_by_weekly_reset_for(&provider, pool);
         let sort_by_reset = self.effective_sort_by_reset(pool);
         available_under.sort_by(|&left, &right| {
             accounts[left]
@@ -1828,6 +1831,35 @@ impl AccountPool {
             .sort_by_weekly_reset_override
             .lock()
             .expect("account health lock poisoned") = value;
+    }
+
+    /// Set (or clear, with `None`) one provider's weekly-reset override.
+    pub fn set_provider_weekly_reset_override(&self, provider: &str, value: Option<bool>) {
+        let mut map = self
+            .provider_weekly_reset_override
+            .lock()
+            .expect("account health lock poisoned");
+        match value {
+            Some(value) => map.insert(provider.to_string(), value),
+            None => map.remove(provider),
+        };
+    }
+
+    /// Effective weekly-reset ranking for one provider: its own override when
+    /// set, else [`Self::effective_sort_by_weekly_reset`].
+    pub fn effective_sort_by_weekly_reset_for(
+        &self,
+        provider: &str,
+        pool: Option<&PoolConfig>,
+    ) -> bool {
+        pool.is_some()
+            && self
+                .provider_weekly_reset_override
+                .lock()
+                .expect("account health lock poisoned")
+                .get(provider)
+                .copied()
+                .unwrap_or_else(|| self.effective_sort_by_weekly_reset(pool))
     }
 
     /// Effective `sort_by_weekly_reset`: the runtime override when set, else
@@ -11126,6 +11158,23 @@ mod tests {
         );
         assert_eq!(order[1], sooner_5h);
         assert_eq!(order.last(), Some(&sticky), "near sticky sorts last");
+    }
+
+    #[test]
+    fn provider_weekly_reset_override_is_scoped_to_that_provider() {
+        let pool = AccountPool::default();
+        let cfg = PoolConfig::default();
+        pool.set_provider_weekly_reset_override("claude", Some(true));
+        assert!(pool.effective_sort_by_weekly_reset_for("claude", Some(&cfg)));
+        assert!(!pool.effective_sort_by_weekly_reset_for("codex", Some(&cfg)));
+        // An explicit per-provider false beats the process-wide override.
+        pool.set_sort_by_weekly_reset_override(Some(true));
+        pool.set_provider_weekly_reset_override("codex", Some(false));
+        assert!(!pool.effective_sort_by_weekly_reset_for("codex", Some(&cfg)));
+        assert!(pool.effective_sort_by_weekly_reset_for("other", Some(&cfg)));
+        pool.set_provider_weekly_reset_override("codex", None);
+        assert!(pool.effective_sort_by_weekly_reset_for("codex", Some(&cfg)));
+        assert!(!pool.effective_sort_by_weekly_reset_for("claude", None));
     }
 
     #[test]

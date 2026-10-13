@@ -56,6 +56,7 @@ fn provider(name: &str, auth: &str, accounts: Vec<AccountDto>) -> ProviderDto {
         provider: name.into(),
         auth: Some(auth.into()),
         accounts,
+        sort_by_weekly_reset: None,
     }
 }
 
@@ -141,7 +142,8 @@ fn weekly_reset_header_and_rows_follow_the_pool_flag_but_custom_stays_custom() {
         provider("anthropic", "claude_oauth", vec![later, sooner]),
         provider("codex", "chatgpt_oauth", vec![ranked, acct("next")]),
     ]);
-    app.snapshot.sort_by_weekly_reset = true;
+    app.snapshot.providers[0].weekly_reset = true;
+    app.snapshot.providers[1].weekly_reset = true;
     let (screen, _) = draw(&mut app, 120, 18);
     assert!(screen.contains("ranking: weekly reset"), "{screen}");
     assert!(screen.contains("ranking: custom order"), "{screen}");
