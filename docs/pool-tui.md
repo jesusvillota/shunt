@@ -3,12 +3,13 @@
 A keyboard-and-mouse terminal view of the managed account pool, one section per
 provider. It is a client of a **running** gateway's admin API, not a second copy
 of pool state: it polls `GET /admin/api/pool` (every 2 s) and acts through the
-admin API (`PATCH /admin/api/pool/{provider}/accounts/{account_ref}` to pause,
+admin API (`PATCH /admin/api/pool` to toggle weekly-reset ranking,
+`PATCH /admin/api/pool/{provider}/accounts/{account_ref}` to pause,
 `POST /admin/api/accounts/{claude,codex,antigravity}` to add accounts, and
 `DELETE /admin/api/accounts/{claude,codex,antigravity}/{name}` to delete them),
 so what it shows is what the web dashboard shows and what the scheduler acts on.
-Pool membership edits and ranking changes are saved to the **config file** the
-gateway runs, which the gateway hot-reloads.
+Pool membership and custom priorities are saved to the **config file** the
+gateway runs, which the gateway hot-reloads. The weekly-reset switch is runtime-only.
 
 ## Build and run
 
@@ -68,7 +69,7 @@ States: `disabled` (config) · `paused` · `needs re-login` · `unseen` (no traf
 | `o` | Switch the chosen account's whole provider on or off |
 | `h` | Hide the chosen account's provider section (display only) |
 | `u` | Unhide one hidden provider (picker) |
-| `m` | Switch the provider between **balanced** and **custom order** |
+| `m` | Cycle **custom order → balanced → weekly reset → custom order** |
 | `Shift+↑`/`Shift+↓` (or `K`/`J`) | On an account: move it up or down a custom order; on a provider header: move the whole section |
 | `a` | Add an account |
 | `d` | Delete the selected account (asks for `y`/`n` confirmation first) |
@@ -77,25 +78,44 @@ States: `disabled` (config) · `paused` · `needs re-login` · `unseen` (no traf
 
 ## Ranking
 
-The number in the first column is the provider's ranking. In **balanced** mode it
-is the live order a new conversation would use. In **custom order** it is the
-configured priority (1 is most preferred); if that account is temporarily ineligible,
+The number in the first column is the provider's ranking. In **balanced** and
+**weekly reset** modes it is the live order a new conversation would use.
+In **custom order** it is the configured priority (1 is most preferred); if that account is temporarily ineligible,
 the gateway skips it and serves from the next eligible rank.
 
 - **Balanced** (the default): all accounts share one tier. A **new conversation**
   starts on the account with the best live *headroom* — how much room it has left
   before its limit, given how fast it is being used. The numbers shown are that live
-  order and change as usage changes; an account that cannot take traffic right now
-  (paused, cooling down, needs re-login, disabled) shows `–`. If
-  `[server.pool] sort_by_reset` is on (process-wide, set in the config or through the
-  admin API), new conversations use the soonest-reset order instead.
+   order and change as usage changes; an account that cannot take traffic right now
+   (paused, cooling down, needs re-login, disabled) shows `–`. If
+   `[server.pool] sort_by_reset` is on (process-wide, set in the config or through the
+   admin API), new conversations use the soonest-reset order instead. Switching
+   from custom order to balanced clears this provider's priorities and sets
+   `sort_by_weekly_reset = false` through the admin API. This disables weekly-reset
+   ranking for **all pooled providers**, even if the config enables it. It leaves
+   `sort_by_reset` unchanged.
+- **Weekly reset**: equal-priority accounts use the soonest weekly quota reset;
+  unknown weekly resets sort last. Press `m` from balanced to enable
+  `sort_by_weekly_reset` through `PATCH /admin/api/pool`. This setting affects
+  **all pooled providers**, while explicit custom priorities keep precedence.
+  It wins over `sort_by_reset`. The display uses the earliest reported `7d` or
+  `7d_oi` reset; the gateway uses the weekly window for the request's model.
 - **Custom order**: a strict 1, 2, 3… waterfall for **new routing decisions**. With
   `1 = X` and `2 = Y`, X receives new traffic while it remains eligible; Y takes
   over when X is near quota, cooling down, paused, disabled, or otherwise unavailable.
-  Pressing `m` starts from the live order the gateway is using at that moment; then
+  Pressing `m` from weekly reset saves the current displayed order; then
   move accounts with `Shift+↑/↓`. The order is saved as each account's `priority`
   in `shunt.toml` (`1` = most preferred). Pressing `m` again removes the
-  priorities and returns to balanced.
+  priorities and returns to balanced. Entering custom order leaves the global
+  weekly-reset setting enabled for other providers.
+
+The cycle needs at least two accounts in the selected provider. Weekly reset
+requires `[server.pool]` and a gateway that supports `sort_by_weekly_reset`;
+the TUI reports an inactive setting when the effective value stays false. Weekly-reset
+overrides last until cleared through the admin API or the gateway restarts;
+the config value then applies again. The TUI does not write `[server.pool]`.
+Custom priorities survive restarts. If clearing priorities succeeds but the
+pool API fails, the TUI reports the partial change and refreshes the live state.
 
 A conversation already running stays on the account chosen for its first routing
 decision while that account remains healthy. If that account becomes near quota or
@@ -181,8 +201,8 @@ edited.
 
 ## Tests
 
-`src/tui/` unit tests cover the state ladder, balanced and custom ordering, cursor and
+`src/tui/` unit tests cover the state ladder, the three-mode cycle and ordering, cursor and
 mouse behaviour, every keybinding as a pure reducer, the TOML edits, the add and
 delete confirmation state machines, and rendering through a `TestBackend`;
-`tests/tui_client.rs` drives poll / pause / resume / provisioning / deletion and
+`tests/tui_client.rs` drives poll / pause / resume / weekly-reset toggles / provisioning / deletion and
 its refusals against an in-process gateway.

@@ -66,3 +66,37 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
 完全省略该字段不会有任何效果 —— 会保留当前的覆盖值(或其缺失状态)不变;只有显式的 `null` 才会清除它。
 
 `GET /admin/api/pool` 会以顶层的 `sort_by_reset` 布尔值报告当前生效的值(覆盖值或配置值)。若 `[server.pool]` 本身不存在,这个设置完全不起作用 —— 它原本要改变的旧版选择路径根本不会运行 —— 因此在 `[server.pool]` 存在之前,运行时切换和 `GET /admin/api/pool` 报告的值都没有意义。
+
+## 按周重置最早排序
+
+`[server.pool] sort_by_weekly_reset`(默认 `false`)把上述排序收窄到按周窗口:不再按所有窗口中最早的重置时间,而是按管理性周重置(`7d`,Fable 模型为 `7d_oi`)升序对可用账户排序 —— 周配额最先恢复的账户被最先尝试;没有周重置信号的账户排在最后。这样做的思路是先耗尽离周配额回满最近的账户,把其余账户留作缓冲。两个标志同时设置时,按周重置的顺序优先。
+
+在 `shunt.toml` 中设置:
+
+```toml
+[server.pool]
+sort_by_weekly_reset = true
+```
+
+或直接在运行时切换:
+
+```bash
+curl -X PATCH "$SHUNT_URL/admin/api/pool" \
+  -H "x-shunt-admin-token: $ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"sort_by_weekly_reset": true}'
+```
+
+与 `sort_by_reset` 一样,运行时切换会覆盖配置文件的值,直到被清除或进程重启;显式清除请发送 `null`,省略该字段则为空操作。`GET /admin/api/pool` 会以顶层的 `sort_by_weekly_reset` 布尔值报告生效值;若 `[server.pool]` 本身不存在,该设置同样完全不起作用。
+
+## 终端排序模式切换
+
+在 `shunt tui`（使用 `--features tui` 构建）中，选择提供商标题或账户，然后按 `m`。提供商至少有两个账户时，按 **custom order → balanced → weekly reset → custom order** 顺序切换。
+
+- **Custom order → balanced** 从 `shunt.toml` 删除该提供商的优先级，并向账户池 API 发送 `{"sort_by_weekly_reset": false}`。
+- **Balanced → weekly reset** 发送 `{"sort_by_weekly_reset": true}`，不编辑配置文件。
+- **Weekly reset → custom order** 将当前显示顺序保存为该提供商的优先级 `1, 2, 3…`。全局按周重置设置保持开启。
+
+按周重置开关影响 **所有使用账户池的提供商**。自定义优先级优先，因此这些提供商仍显示 `custom order`。返回 balanced 会全局关闭按周重置，但不会修改 `sort_by_reset`。运行时覆盖在清除或网关重启时结束；自定义优先级在重启后保留。TUI 不会写入 `[server.pool]`。如果配置编辑成功而 API 调用失败，TUI 会报告部分修改并重新获取实际状态。
+
+按周重置需要 `[server.pool]` 和支持 `sort_by_weekly_reset` 的网关。如果实际生效值仍为 false，TUI 会提示该设置未生效。

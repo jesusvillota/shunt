@@ -34,6 +34,7 @@ fn app_with(providers: Vec<ProviderDto>) -> App {
     app.on_poll(Ok(Snapshot::from_response(PoolResponse {
         providers,
         sort_by_reset: false,
+        ..Default::default()
     })));
     app
 }
@@ -115,6 +116,7 @@ fn a_poll_that_removes_the_selected_account_clears_the_selection() {
     app.on_poll(Ok(Snapshot::from_response(PoolResponse {
         providers: vec![provider("claude", "claude_oauth", vec![acct("b", None)])],
         sort_by_reset: false,
+        ..Default::default()
     })));
     assert_eq!(app.selected, None);
 }
@@ -173,6 +175,7 @@ fn provider_switch_pauses_what_is_live_and_resumes_only_those() {
             vec![paused("a"), paused("deliberate"), paused("b")],
         )],
         sort_by_reset: false,
+        ..Default::default()
     })));
     let Effect::SetProvider {
         on, account_refs, ..
@@ -203,19 +206,24 @@ fn switching_a_provider_on_without_memory_resumes_every_paused_account() {
 }
 
 #[test]
-fn balanced_to_custom_starts_from_the_live_order() {
+fn weekly_reset_to_custom_starts_from_the_live_order() {
     let mut app = claude(vec![
         acct("low", Some(10)),
         acct("high", Some(9_000)),
         acct("mid", Some(500)),
     ]);
+    // Weekly resets deliberately disagree with headroom and include a missing signal.
+    let rows = &mut app.snapshot.providers[0].rows;
+    rows[0].account.reset_7d = Some(2_000);
+    rows[1].account.reset_7d = Some(8_000);
+    app.snapshot.sort_by_weekly_reset = true;
     app.on_key(key('j'));
     let effect = app.on_key(key('m'));
     assert_eq!(
         effect,
         Effect::SetRanks {
             provider: "claude".into(),
-            ranks: vec![("high".into(), 1), ("mid".into(), 2), ("low".into(), 3)],
+            ranks: vec![("low".into(), 1), ("high".into(), 2), ("mid".into(), 3)],
             pool_names: vec!["low".into(), "high".into(), "mid".into()],
         }
     );
@@ -223,11 +231,31 @@ fn balanced_to_custom_starts_from_the_live_order() {
     let provider = app.snapshot.provider("claude").unwrap();
     assert_eq!(provider.mode(), RankMode::Custom);
     let names: Vec<_> = provider
-        .ordered(false)
+        .ordered(false, false)
         .iter()
         .map(|(_, r)| r.account.name.clone())
         .collect();
-    assert_eq!(names, ["high", "mid", "low"]);
+    assert_eq!(names, ["low", "high", "mid"]);
+    assert!(
+        app.snapshot.sort_by_weekly_reset,
+        "custom order keeps the global flag"
+    );
+}
+
+#[test]
+fn balanced_to_weekly_reset_uses_the_pool_api_without_writing_priorities() {
+    let mut app = claude(vec![acct("a", None), acct("b", None)]);
+    app.on_key(key('j'));
+    app.on_key(key('j')); // Also works from an account row.
+    assert_eq!(app.on_key(key('m')), Effect::SetWeeklyReset(true));
+    assert!(!app.snapshot.sort_by_weekly_reset, "wait for API success");
+    assert!(app.overlay.is_none());
+    app.on_weekly_reset_set(true);
+    assert_eq!(
+        app.snapshot.providers[0].mode_with_pool(app.snapshot.sort_by_weekly_reset),
+        RankMode::WeeklyReset
+    );
+    assert!(matches!(app.on_key(key('m')), Effect::SetRanks { .. }));
 }
 
 #[test]
@@ -237,6 +265,7 @@ fn custom_to_balanced_clears_ranks() {
     let mut b = acct("b", None);
     b.priority = Some(2);
     let mut app = claude(vec![a, b]);
+    app.snapshot.sort_by_weekly_reset = true;
     app.on_key(key('j'));
     assert_eq!(
         app.on_key(key('m')),
@@ -244,6 +273,10 @@ fn custom_to_balanced_clears_ranks() {
             provider: "claude".into()
         }
     );
+    // Do not claim balanced until the file edit and the pool PATCH both succeed.
+    assert_eq!(app.snapshot.providers[0].mode(), RankMode::Custom);
+    app.on_ranks_cleared("claude");
+    assert!(!app.snapshot.sort_by_weekly_reset);
     assert_eq!(
         app.snapshot.provider("claude").unwrap().mode(),
         RankMode::Balanced
@@ -256,6 +289,49 @@ fn ranking_needs_two_accounts() {
     app.on_key(key('j'));
     assert_eq!(app.on_key(key('m')), Effect::None);
     assert!(matches!(app.current_notice(), Some(Notice::Info(t)) if t.contains("two accounts")));
+}
+
+#[test]
+fn confirmed_pool_mode_survives_stale_polls_then_yields_to_gateway() {
+    let mut app = claude(vec![acct("a", None), acct("b", None)]);
+    let stale = app.snapshot.clone();
+    app.on_weekly_reset_set(true);
+    app.on_poll(Ok(stale.clone()));
+    assert!(app.snapshot.sort_by_weekly_reset);
+    assert!(app.weekly_reset_overlay.is_some());
+    let mut confirmed = stale.clone();
+    confirmed.sort_by_weekly_reset = true;
+    app.on_poll(Ok(confirmed));
+    assert!(app.weekly_reset_overlay.is_none());
+    // A subsequent dashboard change is authoritative.
+    app.on_poll(Ok(stale));
+    assert!(!app.snapshot.sort_by_weekly_reset);
+}
+
+#[test]
+fn custom_to_balanced_changes_all_equal_priority_providers() {
+    let mut app = custom_app();
+    app.snapshot.providers.push(
+        Snapshot::from_response(PoolResponse {
+            providers: vec![provider(
+                "codex",
+                "chatgpt_oauth",
+                vec![acct("other", None)],
+            )],
+            ..Default::default()
+        })
+        .providers
+        .remove(0),
+    );
+    app.snapshot.sort_by_weekly_reset = true;
+    app.on_key(key('j'));
+    assert!(matches!(app.on_key(key('m')), Effect::ClearRanks { .. }));
+    app.on_ranks_cleared("claude");
+    assert!(app
+        .snapshot
+        .providers
+        .iter()
+        .all(|p| p.mode_with_pool(app.snapshot.sort_by_weekly_reset) == RankMode::Balanced));
 }
 
 fn custom_app() -> App {
@@ -310,6 +386,9 @@ fn moving_past_either_end_does_nothing_and_balanced_mode_refuses() {
 #[test]
 fn the_overlay_yields_to_the_gateway_once_it_reports_the_same_ranking() {
     let mut app = claude(vec![acct("a", Some(1)), acct("b", Some(2))]);
+    app.snapshot.providers[0].rows[0].account.reset_7d = Some(5_000);
+    app.snapshot.providers[0].rows[1].account.reset_7d = Some(2_000);
+    app.snapshot.sort_by_weekly_reset = true;
     app.on_key(key('j'));
     app.on_key(key('m'));
     assert!(app.overlay.is_some());
@@ -321,6 +400,7 @@ fn the_overlay_yields_to_the_gateway_once_it_reports_the_same_ranking() {
             vec![acct("a", Some(1)), acct("b", Some(2))],
         )],
         sort_by_reset: false,
+        ..Default::default()
     })));
     assert!(app.overlay.is_some());
     assert_eq!(
@@ -339,6 +419,7 @@ fn the_overlay_yields_to_the_gateway_once_it_reports_the_same_ranking() {
             vec![ranked("a", 2, 1), ranked("b", 1, 2)],
         )],
         sort_by_reset: false,
+        ..Default::default()
     })));
     assert!(app.overlay.is_none());
 }
@@ -588,6 +669,7 @@ fn section_order_survives_polls_and_new_providers_land_last() {
             provider("kimi", "kimi_oauth", vec![acct("k", None)]),
         ],
         sort_by_reset: false,
+        ..Default::default()
     })));
     assert_eq!(header_names(&app), ["codex", "anthropic", "kimi"]);
 }

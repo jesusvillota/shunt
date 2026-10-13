@@ -426,6 +426,150 @@ async fn patch_pool_sort_by_reset_flips_the_process_wide_setting() {
     drop(gateway);
 }
 
+/// `[server.pool]` is process-wide, so `PATCH /admin/api/pool` toggles the
+/// weekly-reset sort for every provider at once, with no `shunt.toml` edit
+/// or restart. Also covers clearing the override back to config-following
+/// with an explicit `{"sort_by_weekly_reset": null}` (distinct from omitting
+/// the field, which is a no-op), and that the two sort overrides are
+/// independent of each other.
+#[tokio::test]
+async fn patch_pool_sort_by_weekly_reset_flips_the_process_wide_setting() {
+    if !can_bind_loopback() {
+        return;
+    }
+    let mut vars = common::env_lock().await;
+    vars.set("SHUNT_TEST_ADMIN_TOKENS_POOL_PAUSE", "ops:unused-6");
+    let (gateway, state) = start(admin_config_with_pool()).await;
+    let client = reqwest::Client::new();
+
+    // Starts unset: falls back to the config file's own value (false, the
+    // `PoolConfig` default).
+    let pool_cfg = PoolConfig::default();
+    assert!(!state
+        .accounts
+        .effective_sort_by_weekly_reset(Some(&pool_cfg)));
+
+    let response = client
+        .get(format!("{}/admin/api/pool", gateway.base_url))
+        .header("x-shunt-admin-token", ADMIN_WRITE_KEY)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["sort_by_weekly_reset"], false);
+
+    let response = client
+        .patch(format!("{}/admin/api/pool", gateway.base_url))
+        .header("x-shunt-admin-token", ADMIN_WRITE_KEY)
+        .header("content-type", "application/json")
+        .body(r#"{"sort_by_weekly_reset":true}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(state
+        .accounts
+        .effective_sort_by_weekly_reset(Some(&pool_cfg)));
+
+    let response = client
+        .get(format!("{}/admin/api/pool", gateway.base_url))
+        .header("x-shunt-admin-token", ADMIN_WRITE_KEY)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["sort_by_weekly_reset"], true);
+    // The `sort_by_reset` override is independent: setting the weekly one
+    // leaves it untouched.
+    assert_eq!(body["sort_by_reset"], false);
+
+    // A read key may see the setting but not change it.
+    let response = client
+        .patch(format!("{}/admin/api/pool", gateway.base_url))
+        .header("x-shunt-admin-token", ADMIN_READ_KEY)
+        .header("content-type", "application/json")
+        .body(r#"{"sort_by_weekly_reset":false}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(state
+        .accounts
+        .effective_sort_by_weekly_reset(Some(&pool_cfg)));
+
+    // Omitting the field entirely is a no-op: the override stays set.
+    let response = client
+        .patch(format!("{}/admin/api/pool", gateway.base_url))
+        .header("x-shunt-admin-token", ADMIN_WRITE_KEY)
+        .header("content-type", "application/json")
+        .body(r#"{}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(state
+        .accounts
+        .effective_sort_by_weekly_reset(Some(&pool_cfg)));
+
+    // An explicit `null` clears the override, reverting to the config file's
+    // own value (`false`, unchanged in this test).
+    let response = client
+        .patch(format!("{}/admin/api/pool", gateway.base_url))
+        .header("x-shunt-admin-token", ADMIN_WRITE_KEY)
+        .header("content-type", "application/json")
+        .body(r#"{"sort_by_weekly_reset":null}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!state
+        .accounts
+        .effective_sort_by_weekly_reset(Some(&pool_cfg)));
+
+    drop(gateway);
+}
+
+/// `effective_sort_by_weekly_reset` (and therefore `GET /admin/api/pool`) must
+/// report `false` when `[server.pool]` is absent, even with the runtime
+/// override set — that legacy branch never consults `sort_by_weekly_reset`,
+/// so reporting the override as active there would claim an effect selection
+/// does not have.
+#[tokio::test]
+async fn patch_pool_sort_by_weekly_reset_has_no_effect_without_a_pool_table() {
+    if !can_bind_loopback() {
+        return;
+    }
+    let mut vars = common::env_lock().await;
+    vars.set("SHUNT_TEST_ADMIN_TOKENS_POOL_PAUSE", "ops:unused-7");
+    let (gateway, state) = start(admin_config()).await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .patch(format!("{}/admin/api/pool", gateway.base_url))
+        .header("x-shunt-admin-token", ADMIN_WRITE_KEY)
+        .header("content-type", "application/json")
+        .body(r#"{"sort_by_weekly_reset":true}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        !state.accounts.effective_sort_by_weekly_reset(None),
+        "no [server.pool] table means the override has no effect"
+    );
+
+    let response = client
+        .get(format!("{}/admin/api/pool", gateway.base_url))
+        .header("x-shunt-admin-token", ADMIN_WRITE_KEY)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["sort_by_weekly_reset"], false);
+
+    drop(gateway);
+}
+
 /// `effective_sort_by_reset` (and therefore `GET /admin/api/pool`) must report
 /// `false` when `[server.pool]` is absent, even with the runtime override set
 /// — that legacy branch never consults `sort_by_reset`, so reporting the

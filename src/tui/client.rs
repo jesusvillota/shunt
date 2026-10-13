@@ -75,6 +75,21 @@ impl Client {
         ok_empty(response).await
     }
 
+    pub async fn set_sort_by_weekly_reset(
+        &self,
+        sort_by_weekly_reset: Option<bool>,
+    ) -> anyhow::Result<()> {
+        let response = self
+            .http
+            .patch(self.url("/pool"))
+            .header(&self.header, &self.token)
+            .json(&json!({ "sort_by_weekly_reset": sort_by_weekly_reset }))
+            .send()
+            .await
+            .context("gateway unreachable")?;
+        ok_empty(response).await
+    }
+
     /// Begin browser provisioning of a new account (`kind` is the admin API's
     /// account family: `claude`, `codex` or `antigravity`). Returns the URL the
     /// operator authorizes at.

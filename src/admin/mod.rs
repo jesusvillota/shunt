@@ -1277,12 +1277,15 @@ async fn pool(State(state): State<AppState>, headers: HeaderMap) -> Response {
     }
     json_secure(json!({
         "providers": providers,
-        // `[server.pool]` is process-wide (one, not one per provider), so this
-        // reflects a runtime `PATCH /admin/api/pool` override when set, else
-        // the config file's own value.
+        // `[server.pool]` is process-wide (one, not one per provider), so these
+        // reflect a runtime `PATCH /admin/api/pool` override when set, else
+        // the config file's own values.
         "sort_by_reset": state
             .accounts
             .effective_sort_by_reset(state.config.server.pool.as_ref()),
+        "sort_by_weekly_reset": state
+            .accounts
+            .effective_sort_by_weekly_reset(state.config.server.pool.as_ref()),
     }))
 }
 
@@ -1297,6 +1300,11 @@ struct PatchPoolSettingsBody {
     /// default, so this needs the explicit `deserialize_some` shim below.
     #[serde(default, deserialize_with = "deserialize_some")]
     sort_by_reset: Option<Option<bool>>,
+    /// Same three-shape semantics as `sort_by_reset`, for
+    /// `[server.pool] sort_by_weekly_reset`. When both overrides are set, the
+    /// weekly-reset ranking wins at selection time.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    sort_by_weekly_reset: Option<Option<bool>>,
 }
 
 /// Maps a present field (of any value, including `null`) to `Some`, so a
@@ -1311,12 +1319,14 @@ where
     T::deserialize(deserializer).map(Some)
 }
 
-/// `PATCH /admin/api/pool` — toggle the process-wide reset-priority sort at
+/// `PATCH /admin/api/pool` — toggle the process-wide reset-priority sorts at
 /// runtime, without editing `shunt.toml`. Mirrors account pause: memory-only,
 /// cleared on restart, and only takes effect where `[server.pool]` is
 /// configured (see `AccountPool::effective_sort_by_reset`). `{"sort_by_reset":
 /// null}` clears a previously set override back to following the config file;
-/// omitting the field entirely leaves the current override untouched.
+/// omitting the field entirely leaves the current override untouched. The same
+/// holds for `sort_by_weekly_reset`, which wins over `sort_by_reset` at
+/// selection time when both are active.
 async fn patch_pool_settings(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1337,6 +1347,15 @@ async fn patch_pool_settings(
         tracing::info!(
             sort_by_reset = ?sort_by_reset,
             "admin: pool sort_by_reset override updated"
+        );
+    }
+    if let Some(sort_by_weekly_reset) = body.sort_by_weekly_reset {
+        state
+            .accounts
+            .set_sort_by_weekly_reset_override(sort_by_weekly_reset);
+        tracing::info!(
+            sort_by_weekly_reset = ?sort_by_weekly_reset,
+            "admin: pool sort_by_weekly_reset override updated"
         );
     }
     json_secure(json!({"ok": true}))

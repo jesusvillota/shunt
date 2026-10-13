@@ -53,6 +53,8 @@ pub enum Effect {
     ClearRanks {
         provider: String,
     },
+    /// Runtime setting for every pooled provider, not just the selection.
+    SetWeeklyReset(bool),
     Delete {
         provider: String,
         kind: &'static str,
@@ -155,6 +157,7 @@ pub struct App {
     /// those and not ones the operator had paused on purpose.
     switched_off: HashMap<String, Vec<String>>,
     overlay: Option<RankOverlay>,
+    weekly_reset_overlay: Option<(bool, Instant)>,
 }
 
 impl App {
@@ -179,6 +182,7 @@ impl App {
             hits: Vec::new(),
             switched_off: HashMap::new(),
             overlay: None,
+            weekly_reset_overlay: None,
         }
     }
 
@@ -245,7 +249,10 @@ impl App {
             if self.collapsed.contains(&provider.name) {
                 continue;
             }
-            for (rank, row) in provider.ordered(self.snapshot.sort_by_reset) {
+            for (rank, row) in provider.ordered(
+                self.snapshot.sort_by_reset,
+                self.snapshot.sort_by_weekly_reset,
+            ) {
                 entries.push(Entry {
                     sel: Sel {
                         provider: provider.name.clone(),
@@ -308,6 +315,13 @@ impl App {
             Ok(snapshot) => {
                 self.snapshot = snapshot;
                 self.apply_overlay();
+                if let Some((value, at)) = self.weekly_reset_overlay {
+                    if self.snapshot.sort_by_weekly_reset == value || at.elapsed() > OVERLAY_TTL {
+                        self.weekly_reset_overlay = None;
+                    } else {
+                        self.snapshot.sort_by_weekly_reset = value;
+                    }
+                }
                 // A line that is gone (account removed, provider dropped) must
                 // not leave an invisible selection that keys still act on.
                 if self.selected.is_some() && self.selected_index().is_none() {
@@ -322,6 +336,26 @@ impl App {
 
     pub fn notify(&mut self, notice: Notice) {
         self.notice = Some((notice, Instant::now()));
+    }
+
+    /// Reflect a successful pool PATCH immediately, even across an older poll.
+    pub fn on_weekly_reset_set(&mut self, value: bool) {
+        self.snapshot.sort_by_weekly_reset = value;
+        self.weekly_reset_overlay = Some((value, Instant::now()));
+    }
+
+    /// Both the config edit and the pool PATCH succeeded.
+    pub fn on_ranks_cleared(&mut self, provider: &str) {
+        let ranks = self.snapshot.provider(provider).map(|p| {
+            p.rows
+                .iter()
+                .map(|r| (r.account.name.clone(), DEFAULT_PRIORITY))
+                .collect()
+        });
+        if let Some(ranks) = ranks {
+            self.set_overlay(provider, ranks);
+        }
+        self.on_weekly_reset_set(false);
     }
 
     pub fn current_notice(&self) -> Option<&Notice> {
@@ -582,19 +616,12 @@ impl App {
             return self.need("Ranking needs at least two accounts in the provider");
         }
         let provider_name = provider.name.clone();
-        match provider.mode() {
-            RankMode::Custom => {
-                let ranks = provider
-                    .rows
-                    .iter()
-                    .map(|r| (r.account.name.clone(), DEFAULT_PRIORITY))
-                    .collect();
-                self.set_overlay(&provider_name, ranks);
-                Effect::ClearRanks {
-                    provider: provider_name,
-                }
-            }
-            RankMode::Balanced => {
+        match provider.mode_with_pool(self.snapshot.sort_by_weekly_reset) {
+            RankMode::Custom => Effect::ClearRanks {
+                provider: provider_name,
+            },
+            RankMode::Balanced => Effect::SetWeeklyReset(true),
+            RankMode::WeeklyReset => {
                 // Start from the order the gateway is using right now, so
                 // switching does not reshuffle anything.
                 let order = self.current_order(&provider_name);
@@ -607,10 +634,13 @@ impl App {
         self.snapshot
             .provider(provider)
             .map(|p| {
-                p.ordered(self.snapshot.sort_by_reset)
-                    .into_iter()
-                    .map(|(_, row)| row.account.name.clone())
-                    .collect()
+                p.ordered(
+                    self.snapshot.sort_by_reset,
+                    self.snapshot.sort_by_weekly_reset,
+                )
+                .into_iter()
+                .map(|(_, row)| row.account.name.clone())
+                .collect()
             })
             .unwrap_or_default()
     }
@@ -646,9 +676,8 @@ impl App {
             return self.need("Select an account to move it up or down the ranking");
         };
         if provider.mode() != RankMode::Custom {
-            return self.need(
-                "Balanced mode has no fixed order — press m to switch to custom order first",
-            );
+            return self
+                .need("This mode has no fixed order — press m to cycle to custom order first");
         }
         let (provider_name, name) = (provider.name.clone(), row.account.name.clone());
         let mut order = self.current_order(&provider_name);

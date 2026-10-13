@@ -17,6 +17,8 @@ pub struct PoolResponse {
     pub providers: Vec<ProviderDto>,
     #[serde(default)]
     pub sort_by_reset: bool,
+    #[serde(default)]
+    pub sort_by_weekly_reset: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -138,6 +140,19 @@ impl Row {
         .min()
     }
 
+    /// Soonest weekly (`7d` / `7d_oi`) reset this account reports, epoch
+    /// seconds. The gateway's governing weekly reset also gates on the
+    /// request's model (Fable or not); the monitor has no model in hand, so
+    /// this takes the earliest weekly signal either window reports — an
+    /// approximation of the ranking the gateway applies.
+    fn weekly_reset(&self) -> Option<u64> {
+        [self.account.reset_7d, self.account.reset_7d_oi]
+            .into_iter()
+            .flatten()
+            .filter(|reset| *reset > 0)
+            .min()
+    }
+
     /// The identity a mutation targets. `None` for a gateway too old to send
     /// `account_ref`.
     pub fn account_ref(&self) -> Option<&str> {
@@ -159,6 +174,8 @@ pub enum RankMode {
     /// Accounts share one priority tier; the gateway balances them by how much
     /// headroom each has left.
     Balanced,
+    /// Equal priorities, ordered by the pool's soonest weekly quota reset.
+    WeeklyReset,
     /// The operator's explicit 1 / 2 / 3 order, kept as account priorities.
     Custom,
 }
@@ -167,6 +184,7 @@ impl RankMode {
     pub fn label(self) -> &'static str {
         match self {
             Self::Balanced => "balanced",
+            Self::WeeklyReset => "weekly reset",
             Self::Custom => "custom order",
         }
     }
@@ -189,6 +207,14 @@ impl ProviderView {
             RankMode::Balanced
         } else {
             RankMode::Custom
+        }
+    }
+
+    /// Explicit priorities take precedence over the process-wide pool mode.
+    pub fn mode_with_pool(&self, sort_by_weekly_reset: bool) -> RankMode {
+        match self.mode() {
+            RankMode::Balanced if sort_by_weekly_reset => RankMode::WeeklyReset,
+            mode => mode,
         }
     }
 
@@ -218,11 +244,16 @@ impl ProviderView {
     /// (`None` for an account that cannot take traffic right now).
     ///
     /// The gateway orders available accounts by priority, then (balanced) by the
-    /// largest burn-rate headroom — or soonest reset when `sort_by_reset` is on —
-    /// with near-quota accounts after the others. An account that is paused,
+    /// largest burn-rate headroom — or soonest weekly reset when
+    /// `sort_by_weekly_reset` is on, else soonest reset when `sort_by_reset`
+    /// is on — with near-quota accounts after the others. An account that is paused,
     /// cooling down, disabled or needing re-login is not tried. In custom mode
     /// every account keeps its place so the operator can still reorder it.
-    pub fn ordered(&self, sort_by_reset: bool) -> Vec<(Option<usize>, &Row)> {
+    pub fn ordered(
+        &self,
+        sort_by_reset: bool,
+        sort_by_weekly_reset: bool,
+    ) -> Vec<(Option<usize>, &Row)> {
         let custom = self.mode() == RankMode::Custom;
         let mut rows: Vec<(usize, &Row)> = self.rows.iter().enumerate().collect();
         // `sort_by` is stable, so pool order is the final tiebreak and the
@@ -232,9 +263,9 @@ impl ProviderView {
             if custom {
                 a.priority()
                     .cmp(&b.priority())
-                    .then_with(|| balanced_cmp(a, b, sort_by_reset))
+                    .then_with(|| balanced_cmp(a, b, sort_by_reset, sort_by_weekly_reset))
             } else {
-                routable.then_with(|| balanced_cmp(a, b, sort_by_reset))
+                routable.then_with(|| balanced_cmp(a, b, sort_by_reset, sort_by_weekly_reset))
             }
         });
         rows.into_iter()
@@ -248,13 +279,21 @@ impl ProviderView {
 }
 
 /// Best account first: not-near-quota before near-quota, then the most
-/// headroom (no reading counts as plenty), or the soonest reset.
-fn balanced_cmp(a: &Row, b: &Row, sort_by_reset: bool) -> Ordering {
+/// headroom (no reading counts as plenty), the soonest weekly reset, or the
+/// soonest reset.
+fn balanced_cmp(a: &Row, b: &Row, sort_by_reset: bool, sort_by_weekly_reset: bool) -> Ordering {
     a.account
         .near_quota
         .cmp(&b.account.near_quota)
         .then_with(|| {
-            if sort_by_reset {
+            if sort_by_weekly_reset {
+                match (a.weekly_reset(), b.weekly_reset()) {
+                    (Some(x), Some(y)) => x.cmp(&y),
+                    (Some(_), None) => Ordering::Less,
+                    (None, Some(_)) => Ordering::Greater,
+                    (None, None) => Ordering::Equal,
+                }
+            } else if sort_by_reset {
                 match (a.soonest_reset(), b.soonest_reset()) {
                     (Some(x), Some(y)) => x.cmp(&y),
                     (Some(_), None) => Ordering::Less,
@@ -276,6 +315,7 @@ fn balanced_cmp(a: &Row, b: &Row, sort_by_reset: bool) -> Ordering {
 pub struct Snapshot {
     pub providers: Vec<ProviderView>,
     pub sort_by_reset: bool,
+    pub sort_by_weekly_reset: bool,
 }
 
 impl Snapshot {
@@ -299,6 +339,7 @@ impl Snapshot {
         Self {
             providers,
             sort_by_reset: response.sort_by_reset,
+            sort_by_weekly_reset: response.sort_by_weekly_reset,
         }
     }
 
@@ -328,13 +369,18 @@ mod tests {
                 accounts,
             }],
             sort_by_reset: false,
+            ..Default::default()
         })
         .providers
         .remove(0)
     }
 
-    fn order(view: &ProviderView, by_reset: bool) -> Vec<(Option<usize>, String)> {
-        view.ordered(by_reset)
+    fn order(
+        view: &ProviderView,
+        by_reset: bool,
+        by_weekly_reset: bool,
+    ) -> Vec<(Option<usize>, String)> {
+        view.ordered(by_reset, by_weekly_reset)
             .into_iter()
             .map(|(rank, row)| (rank, row.account.name.clone()))
             .collect()
@@ -347,6 +393,7 @@ mod tests {
                         {"name":"b"}]}]}"#;
         let snap = Snapshot::from_response(serde_json::from_str(json).unwrap());
         assert!(snap.sort_by_reset);
+        assert!(!snap.sort_by_weekly_reset);
         let p = snap.provider("claude").unwrap();
         assert_eq!(p.rows[0].state, AccountState::Paused);
         assert_eq!(p.rows[0].priority(), 3);
@@ -388,7 +435,7 @@ mod tests {
         let v = view(vec![low, paused, near, high, plenty]);
         assert_eq!(v.mode(), RankMode::Balanced);
         assert_eq!(
-            order(&v, false),
+            order(&v, false, false),
             [
                 (Some(1), "plenty".to_string()),
                 (Some(2), "high".to_string()),
@@ -407,8 +454,39 @@ mod tests {
         sooner.reset_7d = Some(2_000);
         let none = acct("none");
         let v = view(vec![none, later, sooner]);
-        let names: Vec<_> = order(&v, true).into_iter().map(|(_, n)| n).collect();
+        let names: Vec<_> = order(&v, true, false).into_iter().map(|(_, n)| n).collect();
         assert_eq!(names, ["sooner", "later", "none"]);
+    }
+
+    #[test]
+    fn balanced_can_follow_the_gateways_weekly_reset_setting() {
+        // Weekly mode ignores the 5h window: `later_weekly` recovers its 5h
+        // window first, but `sooner_weekly`'s weekly window replenishes
+        // sooner, so it ranks first. Unknown weekly resets sort last.
+        let mut sooner_weekly = acct("sooner_weekly");
+        sooner_weekly.reset_5h = Some(9_000);
+        sooner_weekly.reset_7d = Some(2_000);
+        let mut later_weekly = acct("later_weekly");
+        later_weekly.reset_5h = Some(1_000);
+        later_weekly.reset_7d = Some(8_000);
+        let mut no_weekly = acct("no_weekly");
+        no_weekly.reset_5h = Some(500);
+        let v = view(vec![no_weekly, later_weekly, sooner_weekly]);
+        let names: Vec<_> = order(&v, false, true).into_iter().map(|(_, n)| n).collect();
+        assert_eq!(names, ["sooner_weekly", "later_weekly", "no_weekly"]);
+    }
+
+    #[test]
+    fn weekly_reset_wins_over_soonest_reset_when_both_are_set() {
+        let mut sooner_weekly = acct("sooner_weekly");
+        sooner_weekly.reset_5h = Some(9_000);
+        sooner_weekly.reset_7d = Some(2_000);
+        let mut sooner_overall = acct("sooner_overall");
+        sooner_overall.reset_5h = Some(1_000);
+        sooner_overall.reset_7d = Some(8_000);
+        let v = view(vec![sooner_overall, sooner_weekly]);
+        let names: Vec<_> = order(&v, true, true).into_iter().map(|(_, n)| n).collect();
+        assert_eq!(names, ["sooner_weekly", "sooner_overall"]);
     }
 
     #[test]
@@ -423,7 +501,7 @@ mod tests {
         let v = view(vec![a, b, c]);
         assert_eq!(v.mode(), RankMode::Custom);
         assert_eq!(
-            order(&v, false),
+            order(&v, false, false),
             [
                 (Some(1), "b".to_string()),
                 (Some(2), "a".to_string()),
@@ -440,6 +518,18 @@ mod tests {
         b.priority = Some(5);
         assert_eq!(view(vec![a, b]).mode(), RankMode::Balanced);
         assert_eq!(view(vec![]).mode(), RankMode::Balanced);
+    }
+
+    #[test]
+    fn weekly_reset_mode_applies_only_without_custom_priorities() {
+        let equal = view(vec![acct("a"), acct("b")]);
+        assert_eq!(equal.mode_with_pool(false), RankMode::Balanced);
+        assert_eq!(equal.mode_with_pool(true), RankMode::WeeklyReset);
+        let mut custom = equal;
+        custom.rows[0].account.priority = Some(1);
+        assert_eq!(custom.mode_with_pool(false), RankMode::Custom);
+        assert_eq!(custom.mode_with_pool(true), RankMode::Custom);
+        assert_eq!(RankMode::WeeklyReset.label(), "weekly reset");
     }
 
     #[test]

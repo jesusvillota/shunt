@@ -239,6 +239,14 @@ pub struct PoolConfig {
     /// within their priority tier. Off by default.
     #[serde(default)]
     pub sort_by_reset: bool,
+    /// When true, available accounts in the pool tier sort by their governing
+    /// weekly (`7d` / `7d_oi`) reset timestamp ascending — soonest weekly
+    /// reset first — rather than by burn-rate headroom. Accounts with no
+    /// weekly reset signal sort last within their priority tier. Takes
+    /// precedence over [`Self::sort_by_reset`] when both are set. Off by
+    /// default.
+    #[serde(default)]
+    pub sort_by_weekly_reset: bool,
     /// Poll Claude's `/api/oauth/usage`, Codex's `/wham/usage`, and
     /// Antigravity's `retrieveUserQuotaSummary` every N seconds for refreshable
     /// accounts. Unset or `0` disables polling; positive values below 60 are
@@ -293,6 +301,7 @@ impl Default for PoolConfig {
             default_threshold_fable: None,
             burn_rate_avoidance: false,
             sort_by_reset: false,
+            sort_by_weekly_reset: false,
             usage_refresh_seconds: None,
             state_path: None,
             ramp_initial_concurrency: None,

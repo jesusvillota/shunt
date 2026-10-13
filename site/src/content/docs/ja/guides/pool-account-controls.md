@@ -66,3 +66,37 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
 フィールドを完全に省略すると何もしません — 現在のオーバーライド(またはその不在)をそのまま残します。明示的な `null` だけが解除します。
 
 `GET /admin/api/pool` は有効な値(オーバーライドまたは設定値)をトップレベルの `sort_by_reset` ブール値として報告します。`[server.pool]` 自体が存在しない場合、この設定はまったく効果を持ちません — この設定が変更するはずのレガシー選択パス自体が実行されないためです — したがって `[server.pool]` が存在するまでは、ランタイムの切り替えも `GET /admin/api/pool` が報告する値も意味を持ちません。
+
+## 週間リセットが最も早い順に並べ替える
+
+`[server.pool] sort_by_weekly_reset`(デフォルト `false`)は、その並べ替えを週間ウィンドウに絞ります。全ウィンドウの中で最も早いリセットではなく、利用可能なアカウントを管理対象の週間リセット(`7d`、Fable モデルでは `7d_oi`)の昇順に並べます — 週間制限が最も早く補充されるアカウントが最初に試され、週間リセットの兆候がないアカウントは最後に並びます。狙いは、週間補充が最も近いアカウントから消費し、残りは予備として残すことです。両方のフラグが設定された場合、週間リセット順が優先されます。
+
+`shunt.toml` で設定:
+
+```toml
+[server.pool]
+sort_by_weekly_reset = true
+```
+
+または直接ランタイムに切り替え:
+
+```bash
+curl -X PATCH "$SHUNT_URL/admin/api/pool" \
+  -H "x-shunt-admin-token: $ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"sort_by_weekly_reset": true}'
+```
+
+`sort_by_reset` と同様に、ランタイムの切り替えは解除されるかプロセスが再起動するまで設定ファイルの値を上書きします。明示的に解除するには `null` を送り、フィールドの省略は何もしません。`GET /admin/api/pool` は有効な値をトップレベルの `sort_by_weekly_reset` ブール値として報告し、`[server.pool]` 自体が存在しない場合、この設定もまったく効果を持ちません。
+
+## 端末でのランキング切り替え
+
+`shunt tui`(`--features tui` でビルド)でプロバイダーのヘッダーまたはアカウントを選び、`m` を押します。アカウントが 2 つ以上ある場合、**custom order → balanced → weekly reset → custom order** の順に切り替わります。
+
+- **Custom order → balanced** は、そのプロバイダーの優先順位を `shunt.toml` から削除し、プール API に `{"sort_by_weekly_reset": false}` を送ります。
+- **Balanced → weekly reset** は、設定ファイルを編集せずに `{"sort_by_weekly_reset": true}` を送ります。
+- **Weekly reset → custom order** は、現在表示されている順序を、そのプロバイダーの優先順位 `1, 2, 3…` として保存します。全体の週間リセット設定は有効なままです。
+
+週間リセットの切り替えは **すべてのプール対象プロバイダー** に影響します。カスタム優先順位が優先されるため、それらのプロバイダーは引き続き `custom order` と表示されます。Balanced に戻すと週間リセットを全体で無効にし、`sort_by_reset` は変更しません。ランタイムの上書きは解除またはゲートウェイの再起動で終了しますが、カスタム優先順位は再起動後も残ります。TUI は `[server.pool]` を書き換えません。設定の編集が成功して API 呼び出しが失敗した場合は、部分的な変更を報告し、実際の状態を再取得します。
+
+週間リセットには `[server.pool]` と `sort_by_weekly_reset` をサポートするゲートウェイが必要です。有効な値が false のままの場合、TUI は設定が無効であることを報告します。

@@ -46,6 +46,7 @@ fn app(providers: Vec<ProviderDto>) -> App {
     app.on_poll(Ok(Snapshot::from_response(PoolResponse {
         providers,
         sort_by_reset: false,
+        ..Default::default()
     })));
     app
 }
@@ -126,6 +127,38 @@ fn custom_ranking_shows_the_chosen_numbers() {
         .unwrap()
         .trim_start()
         .starts_with('2'));
+}
+
+#[test]
+fn weekly_reset_header_and_rows_follow_the_pool_flag_but_custom_stays_custom() {
+    let mut later = acct("later");
+    later.reset_7d = Some(8_000);
+    let mut sooner = acct("sooner");
+    sooner.reset_7d = Some(2_000);
+    let mut ranked = acct("ranked");
+    ranked.priority = Some(1);
+    let mut app = app(vec![
+        provider("anthropic", "claude_oauth", vec![later, sooner]),
+        provider("codex", "chatgpt_oauth", vec![ranked, acct("next")]),
+    ]);
+    app.snapshot.sort_by_weekly_reset = true;
+    let (screen, _) = draw(&mut app, 120, 18);
+    assert!(screen.contains("ranking: weekly reset"), "{screen}");
+    assert!(screen.contains("ranking: custom order"), "{screen}");
+    assert!(screen.find("sooner").unwrap() < screen.find("later").unwrap());
+}
+
+#[test]
+fn help_describes_the_three_mode_cycle_and_global_scope() {
+    let mut app = app(vec![]);
+    app.show_help = true;
+    let (screen, _) = draw(&mut app, 120, 34);
+    assert!(
+        screen.contains("custom order → balanced → weekly reset → custom order"),
+        "{screen}"
+    );
+    assert!(screen.contains("ALL pooled providers"), "{screen}");
+    assert!(screen.contains("until gateway restart"), "{screen}");
 }
 
 #[test]

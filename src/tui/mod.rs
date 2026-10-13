@@ -56,6 +56,8 @@ enum Msg {
     Input(Event),
     Pool(Result<Snapshot, String>),
     Notice(Notice),
+    WeeklyResetSet(bool),
+    RanksCleared(String),
     AddStarted(Result<String, String>),
     /// `Err`: the gateway refused the code (the dialog stays open to retry).
     /// `Ok`: the account is stored; the notice says whether the config edit worked too.
@@ -302,13 +304,51 @@ fn perform(ctx: &Ctx, effect: Effect) {
                     .edit_config(move |text| config_edit::clear_priorities(text, &target))
                     .await;
                 ctx.say(match result {
-                    Ok(path) => Notice::Info(format!(
-                        "{provider}: back to balanced ({} updated)",
-                        file_name(&path)
-                    )),
+                    Ok(path) => match ctx.client.set_sort_by_weekly_reset(Some(false)).await {
+                        Ok(()) => {
+                            let _ = ctx.tx.send(Msg::RanksCleared(provider.clone()));
+                            Notice::Info(format!(
+                                "{provider}: balanced ({} updated); weekly reset off for all providers",
+                                file_name(&path)
+                            ))
+                        }
+                        Err(e) => Notice::Error(format!(
+                            "{provider}: priorities cleared in {}, but weekly reset could not be disabled: {e:#}",
+                            file_name(&path)
+                        )),
+                    },
                     Err(e) => Notice::Error(format!("{e:#}")),
                 });
                 ctx.refresh_soon(true);
+            });
+        }
+        Effect::SetWeeklyReset(value) => {
+            tokio::spawn(async move {
+                let notice = match ctx.client.set_sort_by_weekly_reset(Some(value)).await {
+                    Ok(()) => match ctx.client.fetch_pool().await {
+                        Ok(snapshot) => {
+                            let effective = snapshot.sort_by_weekly_reset;
+                            let _ = ctx.tx.send(Msg::Pool(Ok(snapshot)));
+                            let _ = ctx.tx.send(Msg::WeeklyResetSet(effective));
+                            if value && !effective {
+                                Notice::Info(
+                                    "weekly reset is inactive; configure [server.pool] and use a gateway with weekly-reset support".into(),
+                                )
+                            } else {
+                                Notice::Info(format!(
+                                    "weekly reset {} for all pooled providers (until gateway restart)",
+                                    if effective { "on" } else { "off" }
+                                ))
+                            }
+                        }
+                        Err(e) => Notice::Error(format!(
+                            "weekly-reset setting updated, but refreshing the pool failed: {e:#}"
+                        )),
+                    },
+                    Err(e) => Notice::Error(format!("{e:#}")),
+                };
+                ctx.say(notice);
+                ctx.refresh_soon(false);
             });
         }
         Effect::Delete {
@@ -474,6 +514,14 @@ async fn event_loop(
                 app.notify(notice);
                 Effect::None
             }
+            Msg::WeeklyResetSet(value) => {
+                app.on_weekly_reset_set(value);
+                Effect::None
+            }
+            Msg::RanksCleared(provider) => {
+                app.on_ranks_cleared(&provider);
+                Effect::None
+            }
             Msg::AddStarted(result) => {
                 if let Some(dialog) = &mut app.dialog {
                     dialog.on_started(result);
@@ -519,6 +567,9 @@ async fn event_loop(
     poller.abort();
     outcome
 }
+
+#[cfg(test)]
+mod runtime_tests;
 
 #[cfg(test)]
 mod tests {

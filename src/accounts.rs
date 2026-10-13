@@ -612,6 +612,9 @@ pub struct AccountPool {
     /// not one per provider), so this override is too. `None` defers to the
     /// config file's own value; memory-only, cleared on restart.
     sort_by_reset_override: Mutex<Option<bool>>,
+    /// Runtime override for `[server.pool] sort_by_weekly_reset`, mirroring
+    /// `sort_by_reset_override`. Same process-wide, memory-only semantics.
+    sort_by_weekly_reset_override: Mutex<Option<bool>>,
 }
 
 #[derive(Debug)]
@@ -1143,16 +1146,29 @@ impl AccountPool {
             .collect::<Vec<_>>();
         // Priority defines custom-order tiers. Within a tier, balanced mode
         // prefers the account with the most projected headroom. The explicit
-        // sort-by-reset setting replaces that tiebreak with soonest reset.
+        // sort-by-reset settings replace that tiebreak with soonest reset:
+        // `sort_by_weekly_reset` (governing weekly reset) wins over
+        // `sort_by_reset` (earliest across windows) when both are set.
         // Stable sorting preserves the hash/round-robin rotation as the final
         // tiebreak when the live quota signals are identical or unknown.
+        let sort_by_weekly_reset = self.effective_sort_by_weekly_reset(pool);
         let sort_by_reset = self.effective_sort_by_reset(pool);
         available_under.sort_by(|&left, &right| {
             accounts[left]
                 .priority
                 .cmp(&accounts[right].priority)
                 .then_with(|| {
-                    if sort_by_reset {
+                    if sort_by_weekly_reset {
+                        // Soonest weekly reset first; None (unknown) sorts last.
+                        let l = snapshots[left].2;
+                        let r = snapshots[right].2;
+                        match (l, r) {
+                            (Some(lt), Some(rt)) => lt.cmp(&rt),
+                            (Some(_), None) => std::cmp::Ordering::Less,
+                            (None, Some(_)) => std::cmp::Ordering::Greater,
+                            (None, None) => std::cmp::Ordering::Equal,
+                        }
+                    } else if sort_by_reset {
                         // Soonest reset first; None (unknown) sorts last.
                         let l = snapshots[left].3;
                         let r = snapshots[right].3;
@@ -1196,10 +1212,30 @@ impl AccountPool {
                 .priority
                 .cmp(&accounts[right].priority)
                 .then_with(|| {
-                    snapshots[right]
-                        .1
-                        .headroom
-                        .total_cmp(&snapshots[left].1.headroom)
+                    if sort_by_weekly_reset {
+                        let l = snapshots[left].2;
+                        let r = snapshots[right].2;
+                        match (l, r) {
+                            (Some(lt), Some(rt)) => lt.cmp(&rt),
+                            (Some(_), None) => std::cmp::Ordering::Less,
+                            (None, Some(_)) => std::cmp::Ordering::Greater,
+                            (None, None) => std::cmp::Ordering::Equal,
+                        }
+                    } else if sort_by_reset {
+                        let l = snapshots[left].3;
+                        let r = snapshots[right].3;
+                        match (l, r) {
+                            (Some(lt), Some(rt)) => lt.cmp(&rt),
+                            (Some(_), None) => std::cmp::Ordering::Less,
+                            (None, Some(_)) => std::cmp::Ordering::Greater,
+                            (None, None) => std::cmp::Ordering::Equal,
+                        }
+                    } else {
+                        snapshots[right]
+                            .1
+                            .headroom
+                            .total_cmp(&snapshots[left].1.headroom)
+                    }
                 })
         });
 
@@ -1782,6 +1818,30 @@ impl AccountPool {
             .lock()
             .expect("account health lock poisoned")
             .unwrap_or(pool.sort_by_reset)
+    }
+
+    /// Set (or clear, with `None`) the runtime override of
+    /// `sort_by_weekly_reset`. Same process-wide, memory-only semantics as
+    /// [`Self::set_sort_by_reset_override`].
+    pub fn set_sort_by_weekly_reset_override(&self, value: Option<bool>) {
+        *self
+            .sort_by_weekly_reset_override
+            .lock()
+            .expect("account health lock poisoned") = value;
+    }
+
+    /// Effective `sort_by_weekly_reset`: the runtime override when set, else
+    /// the config file's own `[server.pool] sort_by_weekly_reset`. Always
+    /// `false` when `[server.pool]` is absent, for the same reason as
+    /// [`Self::effective_sort_by_reset`].
+    pub fn effective_sort_by_weekly_reset(&self, pool: Option<&PoolConfig>) -> bool {
+        let Some(pool) = pool else {
+            return false;
+        };
+        self.sort_by_weekly_reset_override
+            .lock()
+            .expect("account health lock poisoned")
+            .unwrap_or(pool.sort_by_weekly_reset)
     }
 
     /// Set or clear the needs-re-login mark on every pool entry backed by one
@@ -10843,6 +10903,311 @@ mod tests {
         // Clearing the override reverts to the config's own value.
         pool.set_sort_by_reset_override(None);
         assert!(!pool.effective_sort_by_reset(Some(&cfg)));
+    }
+
+    #[test]
+    fn sort_by_weekly_reset_ranks_soonest_weekly_reset_first() {
+        // Weekly-reset mode ranks by the governing weekly (`7d`) reset even
+        // when the 5h resets would rank the opposite way: the account whose
+        // weekly window replenishes first is consumed first.
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b"), account("c")];
+        let cfg = PoolConfig {
+            sort_by_weekly_reset: true,
+            ..Default::default()
+        };
+        let session = "sort-by-weekly-reset";
+        let now = unix_now();
+        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let sticky = rotation[0];
+        pool.note_quota(
+            "anthropic",
+            &accounts[sticky],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.99".to_string(),
+            )]),
+        );
+        let others: Vec<usize> = (0..accounts.len()).filter(|&i| i != sticky).collect();
+        let (sooner_weekly, later_weekly) = (others[0], others[1]);
+        // `sooner_weekly` has the sooner weekly reset but a *later* 5h reset,
+        // so `sort_by_reset` (min over windows) would rank it last.
+        pool.note_quota(
+            "anthropic",
+            &accounts[sooner_weekly],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 16_200).to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-reset",
+                    (now + 3_600).to_string(),
+                ),
+            ]),
+        );
+        pool.note_quota(
+            "anthropic",
+            &accounts[later_weekly],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 1_800).to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-reset",
+                    (now + 30_000).to_string(),
+                ),
+            ]),
+        );
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(
+            order[0], sooner_weekly,
+            "soonest weekly reset sorts first, even with a later 5h reset"
+        );
+        assert_eq!(order[1], later_weekly);
+        assert_eq!(order.last(), Some(&sticky), "near sticky sorts last");
+    }
+
+    #[test]
+    fn sort_by_weekly_reset_pushes_unknown_weekly_reset_last() {
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b"), account("c")];
+        let cfg = PoolConfig {
+            sort_by_weekly_reset: true,
+            ..Default::default()
+        };
+        let session = "sort-by-weekly-reset-unknown";
+        let now = unix_now();
+        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let sticky = rotation[0];
+        pool.note_quota(
+            "anthropic",
+            &accounts[sticky],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.99".to_string(),
+            )]),
+        );
+        let others: Vec<usize> = (0..accounts.len()).filter(|&i| i != sticky).collect();
+        let (known, unknown) = (others[0], others[1]);
+        pool.note_quota(
+            "anthropic",
+            &accounts[known],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-7d-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-reset",
+                    (now + 3_600).to_string(),
+                ),
+            ]),
+        );
+        // `unknown` stays under quota with a 5h signal but no weekly reset, so
+        // weekly mode must place it after the account with a known weekly reset
+        // even though its 5h reset is known and sooner.
+        pool.note_quota(
+            "anthropic",
+            &accounts[unknown],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 1_800).to_string(),
+                ),
+            ]),
+        );
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(
+            order[0], known,
+            "the account with a known weekly reset sorts first"
+        );
+        assert_eq!(
+            order[1], unknown,
+            "the account with no weekly reset signal sorts after a known one"
+        );
+        assert_eq!(order.last(), Some(&sticky), "near sticky sorts last");
+    }
+
+    #[test]
+    fn sort_by_weekly_reset_wins_over_sort_by_reset_when_both_are_set() {
+        // Both flags on: the weekly window decides, not the minimum over all
+        // windows.
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b"), account("c")];
+        let cfg = PoolConfig {
+            sort_by_reset: true,
+            sort_by_weekly_reset: true,
+            ..Default::default()
+        };
+        let session = "sort-by-weekly-reset-precedence";
+        let now = unix_now();
+        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let sticky = rotation[0];
+        pool.note_quota(
+            "anthropic",
+            &accounts[sticky],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.99".to_string(),
+            )]),
+        );
+        let others: Vec<usize> = (0..accounts.len()).filter(|&i| i != sticky).collect();
+        let (sooner_weekly, sooner_5h) = (others[0], others[1]);
+        pool.note_quota(
+            "anthropic",
+            &accounts[sooner_weekly],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 16_200).to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-reset",
+                    (now + 3_600).to_string(),
+                ),
+            ]),
+        );
+        pool.note_quota(
+            "anthropic",
+            &accounts[sooner_5h],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-5h-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-5h-reset",
+                    (now + 1_800).to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-utilization",
+                    "0.3".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-reset",
+                    (now + 30_000).to_string(),
+                ),
+            ]),
+        );
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(
+            order[0], sooner_weekly,
+            "weekly reset wins over the sooner 5h reset when both flags are set"
+        );
+        assert_eq!(order[1], sooner_5h);
+        assert_eq!(order.last(), Some(&sticky), "near sticky sorts last");
+    }
+
+    #[test]
+    fn sort_by_weekly_reset_runtime_override_wins_over_config_and_is_reversible() {
+        let pool = AccountPool::new();
+        let accounts = vec![account("a"), account("b"), account("c")];
+        let cfg = PoolConfig::default(); // sort_by_weekly_reset: false in the file.
+        let session = "sort-by-weekly-reset-override";
+        let now = unix_now();
+        let rotation = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        let sticky = rotation[0];
+        pool.note_quota(
+            "anthropic",
+            &accounts[sticky],
+            &quota_headers(&[(
+                "anthropic-ratelimit-unified-5h-utilization",
+                "0.99".to_string(),
+            )]),
+        );
+        let others: Vec<usize> = (0..accounts.len()).filter(|&i| i != sticky).collect();
+        let (sooner_weekly, later_weekly) = (others[0], others[1]);
+        // Utilizations are deliberately unequal, and chosen so headroom order
+        // disagrees with weekly-reset order: `sooner_weekly`'s near reset and
+        // high utilization make its projected margin negative, while
+        // `later_weekly`'s far reset and low utilization give it a large
+        // positive margin.
+        pool.note_quota(
+            "anthropic",
+            &accounts[sooner_weekly],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-7d-utilization",
+                    "0.9".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-reset",
+                    (now + 3_600).to_string(),
+                ),
+            ]),
+        );
+        pool.note_quota(
+            "anthropic",
+            &accounts[later_weekly],
+            &quota_headers(&[
+                (
+                    "anthropic-ratelimit-unified-7d-utilization",
+                    "0.05".to_string(),
+                ),
+                (
+                    "anthropic-ratelimit-unified-7d-reset",
+                    (now + 30_000).to_string(),
+                ),
+            ]),
+        );
+
+        // Config says headroom order; that is what an un-overridden pool uses.
+        assert!(!pool.effective_sort_by_weekly_reset(Some(&cfg)));
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(
+            order[0], later_weekly,
+            "headroom order: larger margin sorts first"
+        );
+
+        // The runtime override flips ranking to weekly-reset order without
+        // touching the config file.
+        pool.set_sort_by_weekly_reset_override(Some(true));
+        assert!(pool.effective_sort_by_weekly_reset(Some(&cfg)));
+        let order = pool.select_order("anthropic", &accounts, Some(session), None, Some(&cfg));
+        assert_eq!(
+            order[0], sooner_weekly,
+            "override: soonest weekly reset sorts first"
+        );
+        assert_eq!(order[1], later_weekly);
+
+        // Clearing the override reverts to the config's own value.
+        pool.set_sort_by_weekly_reset_override(None);
+        assert!(!pool.effective_sort_by_weekly_reset(Some(&cfg)));
+
+        // Without `[server.pool]` the override is inert and never reported.
+        pool.set_sort_by_weekly_reset_override(Some(true));
+        assert!(!pool.effective_sort_by_weekly_reset(None));
+        pool.set_sort_by_weekly_reset_override(None);
     }
 
     #[test]

@@ -66,3 +66,37 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
 필드를 아예 생략하면 아무 효과가 없습니다 — 현재 오버라이드(또는 그 부재)를 그대로 둡니다; 명시적인 `null`만이 해제합니다.
 
 `GET /admin/api/pool`은 유효한 값(오버라이드 또는 설정값)을 최상위 `sort_by_reset` 불리언으로 보고합니다. `[server.pool]` 자체가 없으면 이 설정은 전혀 효과가 없습니다 — 이 설정이 바꾸려는 레거시 선택 경로 자체가 실행되지 않기 때문입니다 — 따라서 `[server.pool]`이 존재하기 전까지는 런타임 토글과 `GET /admin/api/pool`이 보고하는 값 모두 아무 의미가 없습니다.
+
+## 주간 리셋이 가장 빠른 순서로 정렬하기
+
+`[server.pool] sort_by_weekly_reset`(기본값 `false`)은 그 정렬을 주간 윈도우로 좁힙니다: 모든 윈도우 중 가장 이른 리셋이 아니라, 사용 가능한 계정을 관리 주간 리셋(`7d`, Fable 모델은 `7d_oi`) 기준 오름차순으로 정렬합니다 — 주간 한도가 가장 먼저 보충되는 계정을 먼저 시도하고, 주간 리셋 신호가 없는 계정은 맨 뒤로 정렬합니다. 주간 리필이 가장 임박한 계정부터 소진시키고 나머지는 남겨두려는 것입니다. 두 플래그가 모두 설정되면 주간 리셋 순서가 우선합니다.
+
+`shunt.toml`에서 설정:
+
+```toml
+[server.pool]
+sort_by_weekly_reset = true
+```
+
+또는 직접 런타임에 토글:
+
+```bash
+curl -X PATCH "$SHUNT_URL/admin/api/pool" \
+  -H "x-shunt-admin-token: $ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"sort_by_weekly_reset": true}'
+```
+
+`sort_by_reset`과 마찬가지로, 런타임 토글은 해제되거나 프로세스가 재시작될 때까지 설정 파일의 값을 덮어쓰며, 명시적으로 해제하려면 `null`을 보내고 필드를 생략하면 아무 효과가 없습니다. `GET /admin/api/pool`은 유효한 값을 최상위 `sort_by_weekly_reset` 불리언으로 보고하며, `[server.pool]` 자체가 없으면 이 설정 역시 전혀 효과가 없습니다.
+
+## 터미널 순위 모드 전환
+
+`shunt tui`(`--features tui`로 빌드)에서 공급자 헤더나 계정을 선택하고 `m`을 누릅니다. 계정이 두 개 이상이면 **custom order → balanced → weekly reset → custom order** 순서로 전환됩니다.
+
+- **Custom order → balanced**는 해당 공급자의 우선순위를 `shunt.toml`에서 제거하고 풀 API에 `{"sort_by_weekly_reset": false}`를 보냅니다.
+- **Balanced → weekly reset**는 설정 파일을 편집하지 않고 `{"sort_by_weekly_reset": true}`를 보냅니다.
+- **Weekly reset → custom order**는 현재 표시된 순서를 해당 공급자의 우선순위 `1, 2, 3…`으로 저장합니다. 전역 주간 리셋 설정은 계속 켜져 있습니다.
+
+주간 리셋 스위치는 **모든 풀 공급자**에 영향을 줍니다. 사용자 지정 우선순위가 먼저 적용되므로 해당 공급자는 계속 `custom order`로 표시됩니다. Balanced로 돌아가면 주간 리셋을 전역으로 끄며 `sort_by_reset`은 변경하지 않습니다. 런타임 덮어쓰기는 해제하거나 게이트웨이를 재시작할 때 끝나지만 사용자 지정 우선순위는 유지됩니다. TUI는 `[server.pool]`을 쓰지 않습니다. 설정 편집이 성공하고 API 호출이 실패하면 부분 변경을 알리고 실제 상태를 새로 조회합니다.
+
+주간 리셋에는 `[server.pool]`과 `sort_by_weekly_reset`을 지원하는 게이트웨이가 필요합니다. 유효한 값이 계속 false이면 TUI는 설정이 비활성 상태라고 알립니다.

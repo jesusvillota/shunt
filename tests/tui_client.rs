@@ -13,6 +13,8 @@ use shunt::{
 const WRITE_KEY: &str = "tui-write-0123456789abcdef0123456789";
 const READ_KEY: &str = "tui-read-0123456789abcdef01234567890";
 
+mod common;
+
 fn config() -> Config {
     let mut config = Config::default();
     let anthropic = config.providers.get_mut("anthropic").unwrap();
@@ -56,6 +58,7 @@ fn config() -> Config {
 
 #[tokio::test]
 async fn polls_pauses_resumes_and_starts_provisioning() {
+    let _env = common::set_env(&[]).await;
     let config = config();
     let Ok(listener) = tokio::net::TcpListener::bind(config.server.bind_addr().unwrap()).await
     else {
@@ -93,6 +96,16 @@ async fn polls_pauses_resumes_and_starts_provisioning() {
     assert_ne!(resumed.providers[0].rows[0].state, AccountState::Paused);
     assert!(resumed.providers[0].is_on());
 
+    // The TUI's weekly-reset switch is global and supports an explicit clear.
+    assert!(!resumed.sort_by_weekly_reset);
+    writer.set_sort_by_weekly_reset(Some(true)).await.unwrap();
+    assert!(writer.fetch_pool().await.unwrap().sort_by_weekly_reset);
+    writer.set_sort_by_weekly_reset(Some(false)).await.unwrap();
+    assert!(!writer.fetch_pool().await.unwrap().sort_by_weekly_reset);
+    writer.set_sort_by_weekly_reset(Some(true)).await.unwrap();
+    writer.set_sort_by_weekly_reset(None).await.unwrap();
+    assert!(!writer.fetch_pool().await.unwrap().sort_by_weekly_reset);
+
     // Provisioning: the start call yields an authorize URL (no upstream call is
     // made); completing without a valid code is refused with the gateway's reason.
     let url = writer.start_account("claude", "pool-b").await.unwrap();
@@ -115,6 +128,9 @@ async fn polls_pauses_resumes_and_starts_provisioning() {
     assert!(format!("{:#}", refused.unwrap_err()).contains("read-only"));
     let refused = reader.delete_account("claude", "missing").await;
     assert!(format!("{:#}", refused.unwrap_err()).contains("read-only"));
+    let refused = reader.set_sort_by_weekly_reset(Some(true)).await;
+    assert!(format!("{:#}", refused.unwrap_err()).contains("read-only"));
+    assert!(!writer.fetch_pool().await.unwrap().sort_by_weekly_reset);
 
     // Deleting a missing managed account is idempotent at the admin API.
     writer.delete_account("claude", "missing").await.unwrap();

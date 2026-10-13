@@ -15,7 +15,7 @@ use ratatui::{
 use super::{
     add::{AddFlow, Step},
     app::{App, DeleteConfirm, Entry, Notice, Sel},
-    model::{AccountDto, AccountState, ProviderView, RankMode},
+    model::{AccountDto, AccountState, ProviderView},
 };
 
 const BAR_WIDTH: usize = 8;
@@ -103,7 +103,7 @@ fn state_style(state: AccountState) -> Style {
     }
 }
 
-fn provider_line(entry: &Entry<'_>, collapsed: bool) -> Line<'static> {
+fn provider_line(entry: &Entry<'_>, collapsed: bool, weekly_reset: bool) -> Line<'static> {
     let provider = entry.provider;
     let (switch, switch_style) = if provider.is_on() {
         (
@@ -113,10 +113,7 @@ fn provider_line(entry: &Entry<'_>, collapsed: bool) -> Line<'static> {
     } else {
         (" OFF", Style::new().fg(Color::White).bg(Color::Red).bold())
     };
-    let mode = match provider.mode() {
-        RankMode::Balanced => "balanced",
-        RankMode::Custom => "custom order",
-    };
+    let mode = provider.mode_with_pool(weekly_reset).label();
     let count = provider.rows.len();
     let detail = if count == 0 {
         "no accounts · press a to add one".to_string()
@@ -306,7 +303,11 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
         }
         current_provider = Some(entry.sel.provider.clone());
         let mut line = if entry.row.is_none() {
-            provider_line(&entry, app.collapsed.contains(&entry.sel.provider))
+            provider_line(
+                &entry,
+                app.collapsed.contains(&entry.sel.provider),
+                app.snapshot.sort_by_weekly_reset,
+            )
         } else {
             account_line(&entry, now)
         };
@@ -362,11 +363,11 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         format!("↑↓ or click: select{unhide} · a: add account · ?: help · q: quit")
     } else if app.header_selected() {
         format!(
-            "p pause/resume all · Space fold · m ranking mode · h hide{unhide} · a add · Esc deselect · ? help · q quit"
+            "p pause/resume all · Space fold · m cycle ranking · h hide{unhide} · a add · Esc deselect · ? help · q quit"
         )
     } else {
         format!(
-            "p pause · h hide{unhide} · m ranking mode · Shift+↑↓ move · a add · d delete · Esc deselect · ? help · q quit"
+            "p pause · h hide{unhide} · m cycle ranking · Shift+↑↓ move · a add · d delete · Esc deselect · ? help · q quit"
         )
     };
     // ponytail: notice gets its own line so the hints below never hide.
@@ -562,8 +563,9 @@ fn render_help(frame: &mut Frame, area: Rect) {
         "  Space           pause the selected account; on a provider header, fold or unfold it",
         "  h               hide the selected provider (display only — it still routes traffic)",
         "  u               unhide one hidden provider (picker)",
-        "  m               ranking mode for the provider:",
-        "                    balanced     the gateway spreads load by remaining headroom",
+        "  m               cycle custom order → balanced → weekly reset → custom order",
+        "                    balanced     headroom (or configured soonest-reset order)",
+        "                    weekly reset earliest weekly refill; affects ALL pooled providers",
         "                    custom order your own 1, 2, 3… — number 1 is drawn first",
         "  Shift+↑↓ / K J  on an account: move it up/down the custom order;",
         "                  on a provider header: move the whole section",
@@ -573,14 +575,15 @@ fn render_help(frame: &mut Frame, area: Rect) {
         "",
         "Pause/switch-off last until the gateway restarts. Hiding and section order",
         "are this terminal's own display preferences (~/.shunt/top.json); routing",
-        "is untouched. Ranking and explicit pool membership are saved in shunt.toml;",
-        "delete also removes the credential.",
+        "is untouched. Custom order and pool membership are saved in shunt.toml.",
+        "Balanced disables weekly reset for all providers until gateway restart.",
+        "Weekly reset lasts until gateway restart; delete removes the credential.",
         "Open conversations stay on the account they started with.",
         "",
         "Press any key to close.",
     ]
     .join("\n");
-    let rect = popup(area, 84, 27);
+    let rect = popup(area, 88, 29);
     frame.render_widget(Clear, rect);
     frame.render_widget(
         Paragraph::new(text).block(Block::bordered().title(" Help ")),
