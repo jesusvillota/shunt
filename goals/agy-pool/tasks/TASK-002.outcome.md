@@ -14,8 +14,13 @@
   and no `quota_buckets` for each of the six accounts. The live `/usage` reply
   supplies weekly quota only. See the exact output below.
 - [ ] Format, all-feature clippy, and all-feature workspace tests pass.
-  Evidence: verification is in progress; this checklist will be updated before
-  the final blocked handoff.
+  Evidence: `cargo fmt --all --check` and
+  `cargo clippy --all-targets --all-features -- -D warnings` passed. The full
+  chained command exited 101 in `cargo test --all-features --workspace`:
+  `streaming_finishes_when_a_descendant_holds_stdout_open` timed out at
+  `tests/antigravity_process.rs:324`. Library tests: 3073 passed, 2 ignored;
+  CLI unit tests: 43 passed. Tests after this failing integration target were
+  not reached. The exact failure tail is below.
 
 ## Summary
 
@@ -31,6 +36,11 @@ The existing gateway was inspected; no scratch gateway was started.
 
 Verified source revision: `f744eef33950729c2e2f19becc219d857cad29ee`.
 Session evidence date: 2026-10-14. Branch: `goal/agy-pool/task-002`.
+Rebased without conflicts onto `origin/main` at
+`622fe71633e8a00c49e575b1042b40aa5a515168`; checks ran at `afbcb36`.
+The upstream coordinator has created `DEC-002` from this request; it remains
+`proposed`, so this handoff still requires a decision. No upstream goal file
+was edited by this worker.
 
 Documentation surfaces considered: README, `docs/`, and site translations need
 no implementation update because behavior has not changed. `wiki/` is generated
@@ -157,3 +167,39 @@ antigravity (antigravity_oauth)
   personal       ok                     5h — (reset —) · 7d — (reset —) · cooldown —
   cemfi          ok                     5h — (reset —) · 7d — (reset —) · cooldown —
 ```
+
+## Local verification
+
+The first full command failed because `ui/dist` was absent. Built the documented
+prerequisite with `npm ci && npm run build` in `ui/` (exit 0), then reran:
+
+```sh
+cargo fmt --all --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-features --workspace
+```
+
+Format and clippy passed. The command exited **101**, with this final tail:
+
+```text
+---- streaming_finishes_when_a_descendant_holds_stdout_open stdout ----
+
+thread 'streaming_finishes_when_a_descendant_holds_stdout_open' (73378360) panicked at tests/antigravity_process.rs:324:6:
+the turn must finish within the guard rather than hang: Elapsed(())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+failures:
+    streaming_finishes_when_a_descendant_holds_stdout_open
+
+test result: FAILED. 11 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.03s
+
+error: test failed, to rerun pass `--test antigravity_process`
+```
+
+This branch changes only the outcome. No process/streaming test was weakened or
+changed. Generated UI assets and dependencies are ignored and are not committed.
+GitHub Actions were not inspected or run, per the workspace instructions.
+
+The isolated rerun passed (exit 0):
+`cargo test --all-features --test antigravity_process streaming_finishes_when_a_descendant_holds_stdout_open -- --exact`.
+Result: 1 passed, 0 failed, 11 filtered out, in 0.38s. This does not change the
+failed full-suite result. An `agent-note bug` records the timing-sensitive
+failure outside this task's scope, after checking for a duplicate.
