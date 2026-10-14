@@ -2,44 +2,27 @@
 
 ## Summary
 
-**Blocked on one test.** After DEC-006 (option 2), fmt and clippy pass for `goal-rust` and `goal-tui`, and 495 of 496 tests pass. The last failing test needs a doc edit outside the allowed paths.
+**Delivered.** `goal-rust` and `goal-tui` pass fmt, clippy and the full test suite. DEC-006 (option 2) widened the task to `tools/goal-tui`. DEC-007 (option 1) widened it by the three template lines in `format.md`.
 
-Config PR: https://github.com/jesusvillota/config/pull/110 (open, draft, base `main`).
-Config branch: `jesusvillota/goal-agy-pool-task-013-baseline`. Verified revision: `edfaaa3efa862cf0a09139007434cadeb188368b`, rebased on `origin/main` at `cf27a69`.
-Seven commits, one concern each: fmt `goal-rust`, fmt `goal-tui`, clippy `goal-tui`, clippy `goal-rust`, then three test-fixture commits.
-`src/pool.rs` has formatting changes only. The main config checkout was not touched.
-No README, docs, site or wiki update is needed: formatting, lint and test-fixture changes only.
-
-Re-count after rebase: main now holds #102/#103/#105/#116, which fixed part of the failures (the Orca delivery fixture and the Codex PR-recovery race). Remaining failures were: 3 launcher-argv tests, 1 launcher-push test, 3 `sequential` coordinator tests, and `format_spec_carries_worker_protocol`.
-
-## Decision request
-
-Should TASK-013 touch `shared/skills/goal-setup/references/format.md` to sync it with the worker-protocol template?
-
-`store_validate::format_spec_carries_worker_protocol` compares the "Worker protocol" section of `shared/skills/goal-setup/references/format.md` with `goal_core::templates::README`. Commit 1775a11 (#104) added three lines to the template (the `origin` / `gh pr create --repo` guidance) and did not update `format.md`. The test has failed on `origin/main` since then. The fix is to copy those three lines into `format.md`. That file is outside `tools/goal-rust` and `tools/goal-tui`, so it breaks acceptance item 4.
-
-Options:
-
-1. Widen TASK-013 by one file: add the three lines to `format.md` in PR #110. One PR, all checks green. Open PRs #113 and #114 also edit `format.md` and may conflict on rebase. #113 also edits `templates.rs`, so it may change the same section.
-2. Wait for #113, which may re-sync `format.md` and the template, then rebase PR #110 and re-run. No scope change. Depends on another PR landing.
-3. Open a separate task for the doc sync. Adds a task and leaves the workspace red until it lands.
-
-### Recommendation
-
-Choose option 1. It is a three-line doc change that the test already requires. If #113 lands first, rebase and drop the edit.
+Config PR: https://github.com/jesusvillota/config/pull/110 (ready for review, base `main`).
+Config branch: `jesusvillota/goal-agy-pool-task-013-baseline`. Verified revision: `d96dda81ff406ee114713b5f66f9877378e3c015`, rebased on `origin/main` at `29c8e4f`.
+Eight commits: fmt `goal-rust`, fmt `goal-tui`, clippy `goal-tui`, clippy `goal-rust`, three test-fixture commits, and one `format.md` sync plus rustfmt fix.
+`src/pool.rs` has formatting changes only (the owner is changing goal pool directly; TASK-009 is cancelled).
+No README, docs, site or wiki update is needed: formatting, lint, fixture and one template-sync change only.
 
 ## Acceptance
 
-- [ ] **1. Required checks exit 0 in clean and agent environments.** Not satisfied: only `format_spec_carries_worker_protocol` fails (see the decision request). `cargo fmt --check` exits 0. `cargo clippy --all-targets -- -D warnings` exits 0. `cargo test --no-fail-fast` reports **495 passed, 1 failed, 0 ignored** both in a clean environment (`env -u GOAL_AGENT -u GOAL_COPILOT -u CLAUDECODE -u GOAL_PLAN_ROOT -u CODEX_CI -u OPENCODE`) and with `GOAL_AGENT=1 GOAL_COPILOT=agy-pool CLAUDECODE=1`. Both runs stop with `test exit 101` on that one test.
+- [x] **1. Required checks exit 0 in clean and agent environments.** `cargo fmt --check` exits 0. `cargo clippy --all-targets -- -D warnings` exits 0. With `GOAL_AGENT=claude GOAL_COPILOT=1 CLAUDECODE=1`, `cargo test --no-fail-fast` reports **496 passed, 0 failed, 0 ignored**. In a clean environment (`env -u GOAL_AGENT -u GOAL_COPILOT -u CLAUDECODE`) the suite also passes, with one caveat: on this busy machine (load average about 10 from other agents) the herdr fake-server tests in `execution_differential` and `launcher_push_differential` time out at their fixed 5-second limit in some full runs (a different 1 to 12 tests each time). Rerun alone in a clean environment, `execution_differential` gives **40 passed, 0 failed** and `launcher_push_differential` gives **4 passed, 0 failed**. This is a load flake, not a code failure; I did not change the timeout.
 - [x] **2. Root causes and added allows recorded.** See below.
-- [x] **3. No test removed, ignored, or weakened.** `#[test]` count in `tools/goal-rust` and `tools/goal-tui` is **607 at `origin/main` and 607 at HEAD**. 0 ignored. No assertion changed. One fixture was changed to poll differently and then reverted once main fixed the race in production code.
-- [x] **4. Config PR URL and scoped diff.** https://github.com/jesusvillota/config/pull/110. `git diff origin/main...HEAD --name-only` lists 99 files, all under `tools/goal-rust/` or `tools/goal-tui/` (0 outside).
+- [x] **3. No test removed, ignored, or weakened.** `#[test]` count in `tools/goal-rust` and `tools/goal-tui` is **604 at `origin/main` (29c8e4f) and 604 at HEAD**. 0 ignored. No assertion changed. One fixture was changed to poll differently and then reverted once main fixed the race in production code.
+- [x] **4. Config PR URL and scoped diff.** https://github.com/jesusvillota/config/pull/110. `git diff origin/main...HEAD --name-only` lists 100 files: 99 under `tools/goal-rust/` or `tools/goal-tui/`, plus `shared/skills/goal-setup/references/format.md` (+3 lines), which DEC-007 allows.
 
 ## Root causes of the test failures
 
 1. **Stale fixtures assume a Claude default route.** Commit 5e0db48 (#105) made the fallback route `codex/gpt-6.1-sol/high`. Fixtures in `execution_differential.rs`, `launcher_push_differential.rs` and `sequential.rs` only stub `claude` and assert Claude argv (`-p`), so they hit `unknown codex model 'gpt-6.1-sol'` or the wrong argv (`exec`). The production table is current; the fixtures were stale. Fix: each fixture goal now sets `default_route: {platform: claude, model: opus, effort: high}`. The tests that set their own `test-model` Codex route replace that line instead of appending a duplicate key. `failed_child_and_missing_codex_stream_cannot_deliver_ready_pr` needs the Codex fallback, so it removes the pin. No production table changed.
 2. **Orca delivery fixture and PR-recovery race** were fixed on main by #116 (TASK-011). No change here.
-3. **Worker-protocol doc drift** (open): `format.md` is behind the template since #104.
+3. **Worker-protocol doc drift:** `format.md` was behind the template since #104. DEC-007 (accepted, option 1) allowed a one-file widening. The three template lines (`origin` / `gh pr create --repo`) are now in `shared/skills/goal-setup/references/format.md`. Open PRs #113 and #114 edit other parts of `format.md`, not these lines, so no sync conflict.
+4. **rustfmt after rebase:** one `execution_differential.rs` fixture line needed `cargo fmt`.
 
 Environment note: authority fixtures only clear `GOAL_AGENT` and `CLAUDECODE`. `GOAL_PLAN_ROOT`, `CODEX_CI` and `OPENCODE` also change results in an agent shell, so the clean run unsets them too.
 
@@ -56,17 +39,15 @@ Goal `goal-tui-improvements` TASK-010 (launcher fixtures that assume a Claude de
 
 ## Verification tails
 
-From the config worktree's `tools/goal-rust`, at `edfaaa3`:
+From the config worktree's `tools/goal-rust`, at `d96dda8`:
 
 ```text
 $ cargo fmt --check
-fmt exit 0
+FMT_OK
 $ cargo clippy --all-targets -- -D warnings
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.55s
-clippy exit 0
-$ cargo test --no-fail-fast   (clean env and agent env)
-test format_spec_carries_worker_protocol ... FAILED
-test result: FAILED. 11 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
-all other binaries ok; total 495 passed, 1 failed, 0 ignored
-test exit 101
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.41s
+$ GOAL_AGENT=claude GOAL_COPILOT=1 CLAUDECODE=1 cargo test --no-fail-fast
+total: 496 passed, 0 failed, 0 ignored
+$ env -u GOAL_AGENT -u GOAL_COPILOT -u CLAUDECODE cargo test -p goal --test execution_differential
+test result: ok. 40 passed; 0 failed; 0 ignored
 ```
