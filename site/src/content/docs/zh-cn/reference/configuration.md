@@ -270,14 +270,29 @@ headers = { "x-api-key" = "..." }
 | `burn_rate_avoidance` | `false` | 同时避开按预测会在窗口重置之前耗尽其软阈值的账户 |
 | `sort_by_reset` | `false` | 按配额重置时间最早排序(升序;未知重置排最后)可用账户,而不是按燃烧速率余量排序。可在不编辑 `shunt.toml` 的情况下,通过管理仪表盘或 `PATCH /admin/api/pool` 在运行时切换 —— 参见[账户池控制](/zh-cn/guides/pool-account-controls/) |
 | `sort_by_weekly_reset` | `false` | 按管理性周(`7d`,Fable 模型为 `7d_oi`)重置时间最早排序(升序;未知周重置排最后)可用账户,而不是按燃烧速率余量排序。与 `sort_by_reset` 同时设置时按周顺序优先。可在不编辑 `shunt.toml` 的情况下,通过 `PATCH /admin/api/pool` 在运行时切换 —— 参见[账户池控制](/zh-cn/guides/pool-account-controls/) |
-| `usage_refresh_seconds` | 禁用(`0`/未设置) | Claude `GET /api/oauth/usage`、Codex `GET /wham/usage` 和 Antigravity `POST :retrieveUserQuotaSummary` 的轮询间隔(秒);低于 60 的正值会向上取到 60 秒下限 |
+| `usage_refresh_seconds` | 禁用(`0`/未设置) | Claude `GET /api/oauth/usage`、Codex `GET /wham/usage` 和 Antigravity agy `/usage` / HTTP `POST :retrieveUserQuotaSummary` 的轮询间隔(秒);低于 60 的正值会向上取到 60 秒下限 |
 | `state_path` | 未设置 | 用于持久化池中按账户配额状态的文件;重启时从最后观测到的使用率热启动,而非从空池开始。未设置则禁用持久化(默认) |
 | `ramp_initial_concurrency` | 禁用(`0`/未设置) | 风暴控制:对刚开始承接流量的账户身份的初始并发准入额度。`0` 或未设置则禁用准入门控 |
 | `reprobe_seconds` | 只要该表存在就是 `900`;`0` 则禁用 | 对陈旧的近配额 Codex/ChatGPT 账户进行机会性重新探测的间隔(秒);低于 60 的正值会向上取到 60 秒下限。`0` 禁用重新探测;若 `[server.pool]` 本身不存在,无论该值为何都禁用重新探测(#135 之前的行为)。非 WebSocket 的 outbound Responses 选择和可选的 inbound Codex HTTP 端点会保留重新探测;WebSocket 启用时的 outbound 选择会禁用重新探测 |
 
-对每个窗口 `X`,生效的软阈值按账户 `threshold_X` → 账户 `threshold` → `default_threshold_X` → `default_threshold` → `hard_threshold` 的顺序解析,并以 `hard_threshold` 为上限。所有阈值都是 `[0.0, 1.0]` 范围内的使用率。真正参与选择阈值与 burn-rate 的两个家族是 Anthropic 与 Codex/ChatGPT:Anthropic 使用 `anthropic-ratelimit-unified-*` 头部,Codex/ChatGPT 使用 `x-codex-*` 的 5 小时/周窗口(Codex 没有 Fable 专用 `7d_oi`)。`usage_refresh_seconds` 也会通过 Code Assist 的 `retrieveUserQuotaSummary` RPC 轮询 imported `antigravity_oauth` 账户。Antigravity summary 返回两个共享配额池:**Gemini Models** 和 **Claude + GPT Models**;若账号方案提供相应窗口,每个池都有 5 小时和每周窗口。这些值仅在仪表盘展示,不参与池选择。
+Antigravity 配额轮询在账户设置了 `profile_dir` 且 agy 版本不低于 1.1.11 时，优先使用 `agy -p /usage --output-format json --print-timeout 20s`。设置 `[server.pool] usage_refresh_seconds = 60` 即可启用。账户配置目录是该账户登录 agy 时使用的现有 HOME 目录；`~` 会展开，相对路径以网关工作目录为基准。探测器设置子进程的 `HOME`/`USERPROFILE`，移除宿主的 Google/Gemini 凭据。没有配置目录的账户不会使用宿主的登录状态，也不会传入 `--disable-slash-commands`。配置目录缺失、CLI 不受支持或失败时，使用同一账户的现有 HTTP `retrieveUserQuotaSummary` 路径，但要求凭据可刷新。响应包含 `num_turns > 0` 时，所有 CLI 配额探测会停止，直到网关重启；HTTP 回退仍继续。子进程限制为 25 秒和 1 MiB 输出。`GET /admin/api/pool` 只显示上游实际报告的 Gemini 和 Claude + GPT 5h/每周配额桶，不补造缺失的窗口。`token_env` 账户仍被排除，账户选择行为不变。
 
-正的 `usage_refresh_seconds` 会启动后台轮询器,分别读取 Claude 的官方 usage API、Codex/ChatGPT 的非官方 `wham/usage` 以及 Antigravity 的非公开 `retrieveUserQuotaSummary` RPC;未设置或为 `0` 时禁用(默认)。只轮询 imported(可刷新)账户;长期 `claude setup-token` 与 `token_env` 凭据会被跳过。Claude 会对账每个报告窗口的用量、重置时刻和用量观测时间,status 的新鲜度仍来自响应头。Codex 会对账用量与观测时间,重置元数据来自响应,status 元数据仍来自头部;未来的已存重置会保留,已经过去的重置会在写入新用量前清除,wham 的 `reset_at` 不会被当作实际重置元数据。Antigravity 会通过现有 daily-host resolver 规范化生产主机写法,并只把 Gemini / Claude+GPT 的 grouped windows 写入仪表盘 quota-bucket 字段,不会写入通用的选择 quota state。非公开 schema 采用 fail-soft 解析;轮询间隔在启动时固定,配置重载不会启动、停止或重新调整轮询器。
+```toml
+[server.pool]
+usage_refresh_seconds = 60
+
+[[providers.antigravity.accounts]]
+name = "personal"
+profile_dir = "~/agy-personal"
+
+[[providers.antigravity.accounts]]
+name = "work"
+```
+
+
+对每个窗口 `X`,生效的软阈值按账户 `threshold_X` → 账户 `threshold` → `default_threshold_X` → `default_threshold` → `hard_threshold` 的顺序解析,并以 `hard_threshold` 为上限。所有阈值都是 `[0.0, 1.0]` 范围内的使用率。真正参与选择阈值与 burn-rate 的两个家族是 Anthropic 与 Codex/ChatGPT:Anthropic 使用 `anthropic-ratelimit-unified-*` 头部,Codex/ChatGPT 使用 `x-codex-*` 的 5 小时/周窗口(Codex 没有 Fable 专用 `7d_oi`)。`usage_refresh_seconds` 也会通过 Code Assist 的 优先使用 agy `/usage`，以 `retrieveUserQuotaSummary` HTTP 回退 RPC 轮询 imported `antigravity_oauth` 账户。Antigravity summary 返回两个共享配额池:**Gemini Models** 和 **Claude + GPT Models**;若账号方案提供相应窗口,每个池都有 5 小时和每周窗口。这些值仅在仪表盘展示,不参与池选择。
+
+正的 `usage_refresh_seconds` 会启动后台轮询器,分别读取 Claude 的官方 usage API、Codex/ChatGPT 的非官方 `wham/usage` 以及 Antigravity 的非公开 优先使用 agy `/usage`，以 `retrieveUserQuotaSummary` HTTP 回退 RPC;未设置或为 `0` 时禁用(默认)。只轮询 imported(可刷新)账户;长期 `claude setup-token` 与 `token_env` 凭据会被跳过。Claude 会对账每个报告窗口的用量、重置时刻和用量观测时间,status 的新鲜度仍来自响应头。Codex 会对账用量与观测时间,重置元数据来自响应,status 元数据仍来自头部;未来的已存重置会保留,已经过去的重置会在写入新用量前清除,wham 的 `reset_at` 不会被当作实际重置元数据。Antigravity 会通过现有 daily-host resolver 规范化生产主机写法,并只把 Gemini / Claude+GPT 的 grouped windows 写入仪表盘 quota-bucket 字段,不会写入通用的选择 quota state。非公开 schema 采用 fail-soft 解析;轮询间隔在启动时固定,配置重载不会启动、停止或重新调整轮询器。
 
 `state_path` 会把池的配额状态(所有 provider 账户的按窗口使用率与各窗口自身的重置时刻,使用率和 status 的独立观测时间及捕获的 status 重置边界)写入磁盘。不设置时,重启会从空池开始:每个账户在重启后首个响应之前都显示为未观测,这会禁用 burn-rate 规避,并使 `GET /usage` 在流量重新填充池之前返回空值。该文件是尽力而为的缓存,而非权威来源 —— 配额无论如何都会从上游响应重新导出,因此文件缺失、陈旧或损坏只会导致冷启动,绝不会导致启动失败。写入使用私有 temp 文件(Unix 上为 `0600`)并将其原子重命名覆盖目标,且仅在配额发生变化时按后台定时器进行。写入失败时会在下一个 tick 重试。冷却不会被持久化(重启即失效),恢复的窗口中重置已过期的会在恢复时的 import 阶段、首次选择或 snapshot 之前丢弃。使用率在自身观测时间上限和该窗口的重置之间较早者到达时过期;仅上限经过时该窗口的未来重置仍可保留。按窗口 status 在自身观测时间上限和观测时捕获的 status 重置边界之间较早者到达时过期,捕获边界也会随 status 清除。版本2文件通过明确的迁移路径重写为版本3;版本3的无重置 status 在仅重置更新后仍保持无重置。路径在启动时固定;配置重载不会启动、停止或改变持久化路径。
 

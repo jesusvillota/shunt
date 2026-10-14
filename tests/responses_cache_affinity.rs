@@ -104,6 +104,7 @@ async fn a_metadata_only_client_reaches_the_upstream_with_matching_affinity_fiel
         auth: Some(UpstreamAuth::Map(AuthMap::ChatgptOauth {
             account: None,
             accounts: Some(vec![AccountSelection::Inline(AccountConfig {
+                profile_dir: None,
                 name: "test-account".to_string(),
                 credentials: None,
                 token_env: Some("CACHE_AFFINITY_TEST_TOKEN".to_string()),

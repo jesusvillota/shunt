@@ -30,6 +30,52 @@ shunt 0.41.0. Re-checked against `main` @ 6e7ccb1.
 > "Antigravity cannot be observed"; the HTTP transport's own login does reach them
 > (see "Superseded" above).
 
+## Current read-only slash-command source (2026-10-14)
+
+Antigravity quota polling uses `agy -p /usage --output-format json --print-timeout 20s` first when
+an account has `profile_dir` and agy is version 1.1.11 or newer. Set `[server.pool]
+usage_refresh_seconds = 60` to enable polling. An account profile is the existing HOME directory
+used for that account's agy sign-in; `~` expands and relative paths resolve from the gateway working
+directory.
+
+The probe sets child `HOME`/`USERPROFILE`, strips ambient Google/Gemini credentials, and never uses
+an ambient login for an account without a profile. It never passes `--disable-slash-commands`.
+Missing, unsupported, or failed CLI profiles use the same account's existing HTTP
+`retrieveUserQuotaSummary` path when its credentials are refreshable. A reply with `num_turns > 0`
+disables all CLI quota probes until gateway restart; HTTP fallback continues. The child has a
+25-second deadline and a 1 MiB output limit.
+
+Only reported Gemini and Claude + GPT 5h/weekly buckets appear in `GET /admin/api/pool`; missing
+windows stay absent. `token_env` accounts remain excluded. Account selection is unchanged.
+
+```toml
+[server.pool]
+usage_refresh_seconds = 60
+
+[[providers.antigravity.accounts]]
+name = "personal"
+profile_dir = "~/agy-personal"
+
+[[providers.antigravity.accounts]]
+name = "work" # HTTP fallback; no CLI profile configured
+```
+
+DEC-001 option C and DEC-002 option A select this source and HTTP fallback.
+The current agy 1.3.4 capture reports two weekly buckets, `num_turns: 0`, and
+zero token usage. It does not report 5h quota. The earlier Google API probes
+below used the CLI token directly; the slash command owns its quota lookup.
+
+Fixture evidence is deliberately separate:
+
+- `tests/fixtures/agy-usage-weekly-captured.json`: captured agy 1.3.4 output on
+  2026-10-14. Only redundant response text and conversation metadata were removed.
+- `tests/fixtures/agy-usage-four-windows-schema.json`: representative schema
+  example, not a live capture. It checks all four grouped labels and their order.
+
+No CLI credential is imported into shunt. The normal HTTP credential refresh
+and writeback behavior stays unchanged. Failed observations retain the prior
+pool snapshot. The latch lasts through config reloads and polling ticks.
+
 ## The question
 
 `shunt-usage` / the admin surface shows a `GEMINI` row that reads

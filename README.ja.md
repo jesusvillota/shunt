@@ -135,6 +135,8 @@ codex-fallback = "gpt-5.6-sol"
 | `antigravity` | `antigravity` | Antigravity OAuth | `daily-cloudcode-pa.googleapis.com` — HTTP 経由の Google Antigravity バックエンド、`~/.shunt/antigravity-auth.json`（`shunt login antigravity`）を使用（または `shunt login antigravity --name` で `~/.shunt/accounts/antigravity` 以下に名前付きアカウントを作成し `accounts = [...]` で選択） |
 | `antigravity-cli` | `antigravity_cli` | なし（ローカル CLI） | **非推奨。** ローカルの `agy` バイナリ — サブプロセス経由で同じバックエンドを利用。上記の `antigravity` に置き換えられました |
 
+Antigravity のクォータ取得は、アカウントごとの任意の `profile_dir` で agy `/usage`（1.1.11 以上）を使い、既存 HTTP 経路にフォールバックします。`[server.pool] usage_refresh_seconds = 60` で有効化します。報告された Gemini と Claude + GPT の期間だけを表示し、モデルターンを検出すると再起動まで CLI 取得を停止します。[設定リファレンス](https://shunt.sh/ja/reference/configuration/)を参照してください。
+
 順序付きの `[[upstreams]]` エントリーはこれに加えて `kimi`、`kimi-code`、`zhipu`、`minimax-cn`、`opencode` のプリセットも受け付け、各バックエンドの `kind`、`base_url`、デフォルト認証を補完します。
 
 プロバイダーごとのセットアップ、モデル id、注意点は[プロバイダー](https://shunt.sh/ja/guides/providers/)にまとまっています。xAI の OAuth ティア制限（[xAI / Grok](https://shunt.sh/ja/guides/xai/)）、Cursor のエージェントモードのプレフィックス（[Cursor](https://shunt.sh/ja/providers/cursor/)）、Antigravity の 2 つのトランスポートと `kind = "antigravity"` の移行（[Antigravity](https://shunt.sh/ja/providers/antigravity/)）もそこにあります。

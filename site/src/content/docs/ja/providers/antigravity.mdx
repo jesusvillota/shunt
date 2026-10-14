@@ -252,10 +252,7 @@ Gemini モデルは一つのクォータプールを共有し、Claude と GPT �
 
 ## 使用量レポート
 
-`usage_refresh_seconds` を設定すると、imported（更新可能）な `antigravity_oauth` アカウントごとに
-Code Assist の `retrieveUserQuotaSummary` RPC をポーリングします。本番の
-`cloudcode-pa.googleapis.com` を指定した設定は、推論やモデルカタログと同様に Antigravity の
-`daily-cloudcode-pa.googleapis.com` コントロールプレーンへ正規化されます。
+Antigravity のクォータ取得は、アカウントに `profile_dir` があり agy が 1.1.11 以上の場合、`agy -p /usage --output-format json --print-timeout 20s` を優先します。`[server.pool] usage_refresh_seconds = 60` で取得を有効にします。プロファイルは、そのアカウントで agy にログインした既存の HOME ディレクトリです。`~` を展開し、相対パスはゲートウェイの作業ディレクトリを基準に解決します。子プロセスの `HOME`/`USERPROFILE` を設定し、ホストの Google/Gemini 認証情報を除去します。プロファイルがないアカウントにホストのログインは使いません。`--disable-slash-commands` も渡しません。プロファイルがない場合や CLI が未対応または失敗した場合、更新可能な同じアカウントの既存 HTTP `retrieveUserQuotaSummary` を使います。応答の `num_turns > 0` を検出すると、ゲートウェイを再起動するまで全 CLI クォータ取得を停止します。HTTP の代替経路は継続します。子プロセスの上限は 25 秒と出力 1 MiB です。`GET /admin/api/pool` には実際に報告された Gemini と Claude + GPT の 5h/週次バケットだけを表示します。欠けた期間は生成しません。`token_env` アカウントは対象外のままで、アカウント選択は変更しません。
 
 応答はモデルごとの独立クォータではなく、**Gemini Models** と **Claude + GPT Models** という
 2 つの共有モデルファミリーのクォータプールに分かれます。アカウントのプランで提供される場合、

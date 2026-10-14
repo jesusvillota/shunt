@@ -1,5 +1,5 @@
 //! Background poller for OAuth usage APIs — Claude's official one, Codex's
-//! private `wham/usage` one, and Antigravity's Code Assist `retrieveUserQuotaSummary` one.
+//! private `wham/usage` one, and Antigravity's agy `/usage` with Code Assist HTTP fallback.
 //!
 //! When `[server.pool] usage_refresh_seconds` is set, this spawns one task at
 //! boot that periodically polls, for every imported (refreshable) account:
@@ -25,7 +25,8 @@
 //! so its poll is the account's only quota signal rather than a reconciliation
 //! layer.
 //!
-//! Eligibility: only imported logins can call these endpoints. A long-lived
+//! Eligibility: HTTP endpoints require imported logins; Antigravity CLI probes
+//! require an explicit per-account profile. A long-lived
 //! Claude `setup-token`, and a `token_env`-supplied credential of any family,
 //! are treated as static and skipped, mirroring the adapters'
 //! non-refreshable 401 handling. The Codex arm additionally only polls
@@ -80,6 +81,7 @@ pub fn spawn_usage_poller(state: AppState) {
         "starting OAuth usage-API poller (Claude, Codex, Antigravity)"
     );
     tokio::spawn(async move {
+        let mut agy_probe = antigravity::usage_cli::UsageProbe::default();
         let mut ticker = tokio::time::interval(Duration::from_secs(interval));
         // A poll that runs long (or a suspend/resume) must not make the ticker
         // fire a burst of catch-up ticks — that would hammer the usage API. Skip
@@ -89,7 +91,7 @@ pub fn spawn_usage_poller(state: AppState) {
         // startup and then refreshed every `interval` seconds.
         loop {
             ticker.tick().await;
-            poll_all(&state).await;
+            poll_all_with_probe(&state, &mut agy_probe).await;
         }
     });
 }
@@ -100,7 +102,12 @@ pub fn spawn_usage_poller(state: AppState) {
 /// are cached by their full physical account key for this tick. The key keeps
 /// Claude and ChatGPT store families separate while allowing every provider
 /// alias to receive the same observation.
+#[cfg(test)]
 async fn poll_all(state: &AppState) {
+    poll_all_with_probe(state, &mut antigravity::usage_cli::UsageProbe::default()).await;
+}
+
+async fn poll_all_with_probe(state: &AppState, agy_probe: &mut antigravity::usage_cli::UsageProbe) {
     let state = state.refreshed();
     let mut cached = HashMap::<AccountKey, CachedUsage>::new();
     let mut pending = HashMap::<AccountKey, Vec<(String, AccountConfig)>>::new();
@@ -287,12 +294,13 @@ async fn poll_all(state: &AppState) {
                     if applied.contains(&(key.clone(), name.clone())) {
                         continue;
                     }
-                    if !antigravity_account_is_refreshable(account).await {
-                        continue;
-                    }
-                    let Some(buckets) =
-                        fetch_antigravity_usage(&state.http_client, &provider.base_url, account)
-                            .await
+                    let Some(buckets) = fetch_antigravity_usage_with_probe(
+                        &state.http_client,
+                        &provider.base_url,
+                        account,
+                        agy_probe,
+                    )
+                    .await
                     else {
                         continue;
                     };
@@ -392,6 +400,32 @@ async fn fetch_codex_usage(
 /// Fetch and parse one Antigravity account's grouped model-family quota windows without
 /// mutating pool state. Empty bucket lists and every failure stay uncached so a
 /// later alias can retry.
+async fn fetch_antigravity_usage_with_probe(
+    client: &reqwest::Client,
+    base_url: &str,
+    account: &AccountConfig,
+    probe: &mut antigravity::usage_cli::UsageProbe,
+) -> Option<Vec<QuotaBucketSnapshot>> {
+    if account.token_env.is_some() {
+        return None;
+    }
+    if let Some(profile) = account.profile_dir.as_deref() {
+        match probe.fetch(profile).await {
+            Ok(buckets) => {
+                tracing::debug!(account = %account.name, "usage poller: agy /usage applied");
+                return Some(buckets);
+            }
+            Err(error) => {
+                tracing::debug!(account = %account.name, %error, "usage poller: agy unavailable; trying HTTP quota fallback");
+            }
+        }
+    }
+    if !antigravity_account_is_refreshable(account).await {
+        return None;
+    }
+    fetch_antigravity_usage(client, base_url, account).await
+}
+
 async fn fetch_antigravity_usage(
     client: &reqwest::Client,
     base_url: &str,
@@ -2968,6 +3002,71 @@ mod tests {
         assert_eq!(snap[0].utilization_5h, None);
         assert_eq!(snap[0].utilization_7d, None);
 
+        let _ = std::fs::remove_file(creds);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // Current-thread test protects subprocess environment reads.
+    async fn agy_primary_and_http_fallback_preserve_account_buckets() {
+        use antigravity::usage_cli::tests::FakeAgy;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let _guard = crate::config::CONFIG_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let creds = write_temp("agy-fallback", &antigravity_credential_json(Some("r")));
+        let mut account = antigravity_account_with_credentials(&creds);
+        let fake = FakeAgy::new(
+            include_str!("../tests/fixtures/agy-usage-weekly-captured.json"),
+            "1.3.4",
+        );
+        account.profile_dir = Some(fake.dir.to_string_lossy().into_owned());
+        let mut probe = fake.probe();
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1internal:retrieveUserQuotaSummary"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "groups": [{"displayName":"Gemini Models", "buckets":[{
+                    "bucketId":"gemini-weekly", "remainingFraction":0.6
+                }]}]
+            })))
+            .expect(3)
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::new();
+        let primary =
+            fetch_antigravity_usage_with_probe(&client, &server.uri(), &account, &mut probe)
+                .await
+                .unwrap();
+        assert_eq!(primary.len(), 2);
+        assert!(server.received_requests().await.unwrap().is_empty());
+        // No profile means HTTP only, never the CLI's ambient account.
+        account.profile_dir = None;
+        let fallback =
+            fetch_antigravity_usage_with_probe(&client, &server.uri(), &account, &mut probe)
+                .await
+                .unwrap();
+        assert_eq!(fallback[0].remaining, Some(0.6));
+        assert_eq!(fake.calls(), "version\nusage\n");
+        // A failed CLI profile retains the same account's HTTP fallback.
+        account.profile_dir = Some("/no/such/shunt-agy-profile".into());
+        assert!(
+            fetch_antigravity_usage_with_probe(&client, &server.uri(), &account, &mut probe)
+                .await
+                .is_some()
+        );
+        // A model turn disables the CLI; subsequent calls still use HTTP.
+        account.profile_dir = Some(fake.dir.to_string_lossy().into_owned());
+        std::fs::write(fake.dir.join("reply.json"), r#"{"num_turns":1}"#).unwrap();
+        assert!(
+            fetch_antigravity_usage_with_probe(&client, &server.uri(), &account, &mut probe)
+                .await
+                .is_some()
+        );
+        assert_eq!(fake.calls(), "version\nusage\nusage\n");
+        server.verify().await;
         let _ = std::fs::remove_file(creds);
     }
 

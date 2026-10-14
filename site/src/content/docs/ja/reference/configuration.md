@@ -270,14 +270,29 @@ headers = { "x-api-key" = "..." }
 | `burn_rate_avoidance` | `false` | ウィンドウのリセット前にソフトしきい値を使い切ると予測されるアカウントも回避する |
 | `sort_by_reset` | `false` | バーンレートのヘッドルームではなく、利用可能なアカウントをクォータのリセットが最も早い順(昇順、不明なリセットは最後)に並べ替える。`shunt.toml` を編集せずに、管理ダッシュボードまたは `PATCH /admin/api/pool` でランタイムに切り替え可能 — [プールアカウント制御](/ja/guides/pool-account-controls/)を参照 |
 | `sort_by_weekly_reset` | `false` | バーンレートのヘッドルームではなく、利用可能なアカウントを管理対象の週間(`7d`、Fable モデルでは `7d_oi`)リセットが最も早い順(昇順、不明な週間リセットは最後)に並べ替える。`sort_by_reset` との併用時は週間順が優先される。`shunt.toml` の編集なしに `PATCH /admin/api/pool` でランタイムに切り替え可能 — [プールアカウント制御](/ja/guides/pool-account-controls/)を参照 |
-| `usage_refresh_seconds` | 無効（`0`/未設定） | Claude `GET /api/oauth/usage`、Codex `GET /wham/usage`、Antigravity `POST :retrieveUserQuotaSummary` のポーリング間隔（秒）。60 未満の正の値は 60 秒の下限に切り上げられます |
+| `usage_refresh_seconds` | 無効（`0`/未設定） | Claude `GET /api/oauth/usage`、Codex `GET /wham/usage`、Antigravity agy `/usage` / HTTP `POST :retrieveUserQuotaSummary` のポーリング間隔（秒）。60 未満の正の値は 60 秒の下限に切り上げられます |
 | `state_path` | 未設定 | プールのアカウント単位のクォータ状態を保存するファイル。再起動時に空のプールではなく、最後に観測された使用率からウォームスタートします。未設定で永続化は無効（デフォルト） |
 | `ramp_initial_concurrency` | 無効（`0`/未設定） | ストーム制御: トラフィックを受け始めたばかりのアカウントアイデンティティに対する初期の並行受け入れ許容量。`0` または未設定で受け入れゲーティングは無効 |
 | `reprobe_seconds` | このテーブルが存在すれば `900`。`0` で無効 | 陳腐化した近接クォータの Codex/ChatGPT アカウントに対する日和見的な再プローブ間隔（秒）。60 未満の正の値は 60 秒の下限に切り上げられます。`0` で再プローブは無効。`[server.pool]` 自体が存在しない場合、この値に関係なく再プローブは無効（issue #135 以前の挙動）。WebSocket を使わない outbound Responses 選択とオプションの inbound Codex HTTP エンドポイントは再プローブを維持し、WebSocket 有効時の outbound 選択では無効 |
 
-各ウィンドウ `X` について、有効なソフトしきい値は次の順で解決されます: アカウントの `threshold_X` → アカウントの `threshold` → `default_threshold_X` → `default_threshold` → `hard_threshold`。これは `hard_threshold` を上限としてクランプされます。すべてのしきい値は `[0.0, 1.0]` の使用率の割合であり、範囲外の値は起動時にエラーになります。しきい値とバーンレートのノブが選択に影響するのは Anthropic と Codex/ChatGPT の 2 ファミリーです。Anthropic は `anthropic-ratelimit-unified-*` ヘッダー、Codex/ChatGPT は `x-codex-*` の 5 時間／週次ウィンドウを使います（Codex には Fable 用の `7d_oi` はありません）。`usage_refresh_seconds` は imported の `antigravity_oauth` アカウントも Code Assist の `retrieveUserQuotaSummary` RPC でポーリングします。Antigravity の summary は **Gemini Models** と **Claude + GPT Models** の 2 つの共有クォータプールを返し、プランで提供される場合は各プールに 5 時間と週次のウィンドウがあります。これらはダッシュボード表示専用で、プール選択には使われません。
+Antigravity のクォータ取得は、アカウントに `profile_dir` があり agy が 1.1.11 以上の場合、`agy -p /usage --output-format json --print-timeout 20s` を優先します。`[server.pool] usage_refresh_seconds = 60` で取得を有効にします。プロファイルは、そのアカウントで agy にログインした既存の HOME ディレクトリです。`~` を展開し、相対パスはゲートウェイの作業ディレクトリを基準に解決します。子プロセスの `HOME`/`USERPROFILE` を設定し、ホストの Google/Gemini 認証情報を除去します。プロファイルがないアカウントにホストのログインは使いません。`--disable-slash-commands` も渡しません。プロファイルがない場合や CLI が未対応または失敗した場合、更新可能な同じアカウントの既存 HTTP `retrieveUserQuotaSummary` を使います。応答の `num_turns > 0` を検出すると、ゲートウェイを再起動するまで全 CLI クォータ取得を停止します。HTTP の代替経路は継続します。子プロセスの上限は 25 秒と出力 1 MiB です。`GET /admin/api/pool` には実際に報告された Gemini と Claude + GPT の 5h/週次バケットだけを表示します。欠けた期間は生成しません。`token_env` アカウントは対象外のままで、アカウント選択は変更しません。
 
-正の `usage_refresh_seconds` は、Claude の公式 usage API、Codex/ChatGPT の非公式 `wham/usage`、Antigravity の非公開 `retrieveUserQuotaSummary` RPC を対象にバックグラウンドポーラーを起動します。未設定または `0` で無効（デフォルト）です。ポーリングするのは imported（更新可能）なアカウントだけで、長期の `claude setup-token` と `token_env` 資格情報はスキップします。Claude では報告された各ウィンドウの使用率・リセット時刻・使用率観測時刻を補正し、status の鮮度はヘッダー由来のままです。Codex では使用率とその観測時刻を補正し、リセットメタデータは応答由来、status はヘッダー由来のままです。保存済みの未来のリセットは保持し、経過したものだけを新しい使用率の書き込み前に消去します。wham の `reset_at` は実際のリセットメタデータとして採用しません。Antigravity では本番ホスト表記を既存の daily-host resolver で正規化し、Gemini / Claude+GPT の grouped windows をダッシュボード用フィールドにだけ保存します。generic な選択用 quota state には反映しません。非公開 schema は fail-soft に扱い、間隔は起動時に固定され、設定リロードでは開始・停止・再調整しません。
+```toml
+[server.pool]
+usage_refresh_seconds = 60
+
+[[providers.antigravity.accounts]]
+name = "personal"
+profile_dir = "~/agy-personal"
+
+[[providers.antigravity.accounts]]
+name = "work"
+```
+
+
+各ウィンドウ `X` について、有効なソフトしきい値は次の順で解決されます: アカウントの `threshold_X` → アカウントの `threshold` → `default_threshold_X` → `default_threshold` → `hard_threshold`。これは `hard_threshold` を上限としてクランプされます。すべてのしきい値は `[0.0, 1.0]` の使用率の割合であり、範囲外の値は起動時にエラーになります。しきい値とバーンレートのノブが選択に影響するのは Anthropic と Codex/ChatGPT の 2 ファミリーです。Anthropic は `anthropic-ratelimit-unified-*` ヘッダー、Codex/ChatGPT は `x-codex-*` の 5 時間／週次ウィンドウを使います（Codex には Fable 用の `7d_oi` はありません）。`usage_refresh_seconds` は imported の `antigravity_oauth` アカウントも Code Assist の agy `/usage` を優先し、`retrieveUserQuotaSummary` HTTP フォールバック RPC でポーリングします。Antigravity の summary は **Gemini Models** と **Claude + GPT Models** の 2 つの共有クォータプールを返し、プランで提供される場合は各プールに 5 時間と週次のウィンドウがあります。これらはダッシュボード表示専用で、プール選択には使われません。
+
+正の `usage_refresh_seconds` は、Claude の公式 usage API、Codex/ChatGPT の非公式 `wham/usage`、Antigravity の非公開 agy `/usage` を優先し、`retrieveUserQuotaSummary` HTTP フォールバック RPC を対象にバックグラウンドポーラーを起動します。未設定または `0` で無効（デフォルト）です。ポーリングするのは imported（更新可能）なアカウントだけで、長期の `claude setup-token` と `token_env` 資格情報はスキップします。Claude では報告された各ウィンドウの使用率・リセット時刻・使用率観測時刻を補正し、status の鮮度はヘッダー由来のままです。Codex では使用率とその観測時刻を補正し、リセットメタデータは応答由来、status はヘッダー由来のままです。保存済みの未来のリセットは保持し、経過したものだけを新しい使用率の書き込み前に消去します。wham の `reset_at` は実際のリセットメタデータとして採用しません。Antigravity では本番ホスト表記を既存の daily-host resolver で正規化し、Gemini / Claude+GPT の grouped windows をダッシュボード用フィールドにだけ保存します。generic な選択用 quota state には反映しません。非公開 schema は fail-soft に扱い、間隔は起動時に固定され、設定リロードでは開始・停止・再調整しません。
 
 `state_path` はプールのクォータ状態（すべてのプロバイダーのアカウントについて、ウィンドウごとの使用率と各ウィンドウ固有のリセット時刻、使用率と status の独立した観測時刻およびキャプチャ済み status のリセット境界）をディスクに保存します。設定しない場合、再起動は空のプールから始まり、各アカウントは再起動後の最初のレスポンスまで未観測に見えるため、burn-rate 回避が無効になり、トラフィックでプールが再充填されるまで `GET /usage` は空を返します。このファイルは権威あるソースではなくベストエフォートのキャッシュです — クォータはいずれにせよアップストリームのレスポンスから再導出されるため、ファイルが欠落・陳腐化・破損していてもコールドスタートになるだけで、起動失敗にはなりません。書き込みは非公開の temp ファイル（Unix では `0600`）を対象にアトミックにリネームする方式で、クォータが変化したときだけバックグラウンドタイマーで行われます。書き込みに失敗した場合は次の tick で再試行します。クールダウンは保存されず（再起動で失効）、復元されたウィンドウのうちすでにリセットを過ぎたものは、復元時の import 中に最初の選択または snapshot より前に破棄されます。使用率は自身の観測時刻による上限と、そのウィンドウのリセットの早い方で失効し、上限だけが過ぎた場合はそのウィンドウの未来のリセットが残ります。status は自身の観測時刻による上限と観測時にキャプチャした status リセット境界の早い方で失効し、キャプチャした境界も status とともに消去されます。バージョン2のファイルは明示的な移行経路でバージョン3に書き直され、バージョン3のリセットなし status はリセットのみの更新後もリセットなしのままです。パスは起動時に固定され、設定のリロードでは永続化の開始・停止・パス変更は行われません。
 

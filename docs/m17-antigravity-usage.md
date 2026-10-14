@@ -10,7 +10,9 @@ process.
 
 ## The quota source
 
-The poller calls:
+With an explicit account `profile_dir`, the poller first runs agy `/usage`.
+See the [current CLI observation](notes/antigravity-quota-observation.md).
+Without a profile, or after a CLI failure, the HTTP fallback calls:
 
 `POST {normalized_base}/v1internal:retrieveUserQuotaSummary`
 
@@ -73,7 +75,8 @@ the generic single 5h/7d state would be incorrect.
 
 ## Eligibility
 
-Only imported (refreshable) Antigravity logins are polled. `token_env`
+CLI polling requires an explicit account profile. HTTP fallback requires an
+imported (refreshable) Antigravity login. `token_env`
 credentials are treated as static, and a credential file must contain a
 non-empty top-level `refresh_token`. Credential-file eligibility deserializes
 only that field rather than building a generic JSON value.

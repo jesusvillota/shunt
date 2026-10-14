@@ -245,10 +245,7 @@ Gemini 모델은 하나의 할당량 풀을 공유하며, Claude와 GPT 모델�
 
 ## 사용량 보고
 
-`usage_refresh_seconds`를 설정하면 imported(갱신 가능) `antigravity_oauth` 계정마다 Code Assist
-`retrieveUserQuotaSummary` RPC를 폴링합니다. 프로덕션 `cloudcode-pa.googleapis.com` 설정은 추론 및
-모델 카탈로그 트래픽과 동일하게 Antigravity의 `daily-cloudcode-pa.googleapis.com` 제어 플레인으로
-정규화됩니다.
+Antigravity 쿼터 폴링은 계정에 `profile_dir`이 있고 agy 버전이 1.1.11 이상이면 `agy -p /usage --output-format json --print-timeout 20s`를 먼저 사용합니다. `[server.pool] usage_refresh_seconds = 60`으로 폴링을 켭니다. 계정 프로필은 해당 계정으로 agy에 로그인한 기존 HOME 디렉터리입니다. `~`는 확장되며 상대 경로는 게이트웨이 작업 디렉터리를 기준으로 합니다. 자식 프로세스의 `HOME`/`USERPROFILE`을 설정하고 호스트의 Google/Gemini 자격 증명을 제거합니다. 프로필이 없는 계정에는 호스트의 로그인을 사용하지 않습니다. `--disable-slash-commands`도 전달하지 않습니다. 프로필이 없거나 CLI가 지원되지 않거나 실패하면 갱신 가능한 동일 계정의 기존 HTTP `retrieveUserQuotaSummary` 경로를 사용합니다. 응답에 `num_turns > 0`이 있으면 게이트웨이를 재시작할 때까지 모든 CLI 쿼터 탐침을 중지합니다. HTTP 대체 경로는 계속 작동합니다. 자식 프로세스의 제한은 25초와 출력 1 MiB입니다. `GET /admin/api/pool`에는 실제 보고된 Gemini 및 Claude + GPT 5h/주간 버킷만 표시합니다. 누락된 윈도우는 만들지 않습니다. `token_env` 계정은 계속 제외하며 계정 선택은 변경하지 않습니다.
 
 응답은 모델별 독립 쿼터가 아니라 **Gemini Models**와 **Claude + GPT Models**라는 두 개의 공유
 모델-패밀리 쿼터 풀로 그룹화됩니다. 계정 플랜에서 제공되는 경우 각 그룹은 5시간 및 주간 윈도우를
