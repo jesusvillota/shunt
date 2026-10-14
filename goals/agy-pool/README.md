@@ -22,10 +22,12 @@ flowchart TD
     DEC_001{{"DEC-001 Choose the agy quota source"}}
     TASK_001["TASK-001 Diagnose why the agy pool fails and quota is missing"]
     TASK_002["TASK-002 Read agy quota via the agy /usage command per account"]
+    TASK_003["TASK-003 Make the agy pool rotate and fail over across all accounts"]
   end
   TASK_001 --> DEC_001
   TASK_001 --> TASK_002
   DEC_001 --> TASK_002
+  TASK_001 --> TASK_003
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
