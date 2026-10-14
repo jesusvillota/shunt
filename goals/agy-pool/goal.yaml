@@ -10,7 +10,6 @@ milestones:
   - {id: M-1, title: Working agy pool with quota, success: [SC-1, SC-2], exit: "All M-1 PRs merged and live smoke shows per-account quota and multi-account rotation"}
 policy:
   decide: human
-  orchestrate: agent
   orchestrator_mode: interactive
   routing: fixed
   orchestrator: {platform: claude, model: sonnet, effort: medium}

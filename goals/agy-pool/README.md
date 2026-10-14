@@ -26,7 +26,6 @@ flowchart TD
     TASK_004["TASK-004 Quota-aware account selection and live end-to-end smoke"]
   end
   TASK_001 --> DEC_001
-  TASK_001 --> TASK_002
   DEC_001 --> TASK_002
   TASK_001 --> TASK_003
   TASK_002 --> TASK_004
