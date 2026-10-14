@@ -4,7 +4,7 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use serde_json::{json, Value};
 use shunt::{
-    accounts::{AccountPool, QuotaBucketSnapshot, StoreFamily},
+    accounts::{AccountPool, QuotaBucketSnapshot},
     config::{AccountConfig, Config},
     server,
 };
@@ -17,6 +17,7 @@ mod common;
 
 struct Pool {
     accounts: Arc<AccountPool>,
+    resolved_accounts: Vec<AccountConfig>,
     addr: SocketAddr,
     gateway: tokio::task::JoinHandle<()>,
     dir: PathBuf,
@@ -62,12 +63,17 @@ impl Pool {
         )
         .unwrap();
         let config = Config::load(Some(&config_path)).unwrap();
+        let resolved_accounts = config.providers["antigravity"]
+            .resolve_pool_accounts()
+            .await
+            .unwrap();
         let (app, _, state) = server::build_router(config).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let gateway = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         Self {
             accounts: state.accounts,
+            resolved_accounts,
             addr,
             gateway,
             dir,
@@ -159,11 +165,10 @@ async fn family_quota_selects_the_highest_account_and_fails_over_to_lower() {
     for (name, gemini, other) in [("a", 0.1, 0.9), ("b", 0.9, 0.1), ("c", 0.5, 0.5)] {
         pool.accounts.note_antigravity_usage(
             "antigravity",
-            &AccountConfig {
-                name: name.into(),
-                store_family: Some(StoreFamily::Antigravity),
-                ..Default::default()
-            },
+            pool.resolved_accounts
+                .iter()
+                .find(|account| account.name == name)
+                .unwrap(),
             vec![
                 QuotaBucketSnapshot {
                     label: "Gemini Models · weekly".into(),
