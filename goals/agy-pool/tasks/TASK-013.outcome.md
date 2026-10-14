@@ -2,208 +2,71 @@
 
 ## Summary
 
-**Blocked:** required workspace checks need forbidden `tools/goal-tui` changes.
+**Blocked on one test.** After DEC-006 (option 2), fmt and clippy pass for `goal-rust` and `goal-tui`, and 495 of 496 tests pass. The last failing test needs a doc edit outside the allowed paths.
 
 Config PR: https://github.com/jesusvillota/config/pull/110 (open, draft, base `main`).
-Config worktree: `/Users/jesusvillotamiranda/orca/workspaces/config/goal-agy-pool-task-013-baseline`.
-Config branch: `jesusvillota/goal-agy-pool-task-013-baseline`.
-Verified config revision: `e46892c448e2dc45fc84bf8dd4589e9e8c105b17`.
-Base revision: `ce24d9e677e822fdddc13d0103dba5849a43e2cc` (`origin/main` when created).
+Config branch: `jesusvillota/goal-agy-pool-task-013-baseline`. Verified revision: `edfaaa3efa862cf0a09139007434cadeb188368b`, rebased on `origin/main` at `cf27a69`.
+Seven commits, one concern each: fmt `goal-rust`, fmt `goal-tui`, clippy `goal-tui`, clippy `goal-rust`, then three test-fixture commits.
+`src/pool.rs` has formatting changes only. The main config checkout was not touched.
+No README, docs, site or wiki update is needed: formatting, lint and test-fixture changes only.
 
-Only the formatting repair is committed. The strict clippy and test repairs remain incomplete.
-The formatting commit changes 78 files, all under `tools/goal-rust`.
-`src/pool.rs` has formatting changes only. The main config checkout was not changed or stashed.
-An exploratory `cargo clippy --fix` also changed three `goal-tui` files. All exploratory
-changes were reverted before the final verification. No lint fixes remain in the PR.
-No production behavior, config keys, or provider semantics changed. No README, docs,
-site, or generated wiki update is needed for formatting and this blocked outcome.
+Re-count after rebase: main now holds #102/#103/#105/#116, which fixed part of the failures (the Orca delivery fixture and the Codex PR-recovery race). Remaining failures were: 3 launcher-argv tests, 1 launcher-push test, 3 `sequential` coordinator tests, and `format_spec_carries_worker_protocol`.
 
 ## Decision request
 
-Should a separate task repair `tools/goal-tui` before TASK-013 resumes?
+Should TASK-013 touch `shared/skills/goal-setup/references/format.md` to sync it with the worker-protocol template?
 
-`tools/goal-rust/Cargo.toml` includes `../goal-tui` as a workspace member.
-Thus the exact required commands also check that crate. After all permitted formatting,
-`cargo fmt --check` still exits 1 for these six files:
-
-- `tools/goal-tui/src/app.rs`
-- `tools/goal-tui/src/keymap.rs`
-- `tools/goal-tui/src/main.rs`
-- `tools/goal-tui/src/ui.rs`
-- `tools/goal-tui/tests/support/actions.rs`
-- `tools/goal-tui/tests/support/layout.rs`
-
-The exploratory clippy run also reported `goal-tui` diagnostics, including `type_complexity`
-for `help_back` in `src/main.rs`, and proposed fixes in `main.rs`, `ui.rs`, and `layout.rs`.
-Repairing only goal-rust cannot make the workspace checks pass. Excluding goal-tui from
-checks would change the required validation and reduce test coverage.
+`store_validate::format_spec_carries_worker_protocol` compares the "Worker protocol" section of `shared/skills/goal-setup/references/format.md` with `goal_core::templates::README`. Commit 1775a11 (#104) added three lines to the template (the `origin` / `gh pr create --repo` guidance) and did not update `format.md`. The test has failed on `origin/main` since then. The fix is to copy those three lines into `format.md`. That file is outside `tools/goal-rust` and `tools/goal-tui`, so it breaks acceptance item 4.
 
 Options:
 
-1. Repair the goal-tui baseline in a separate prerequisite task. Keep this task's scope
-   and acceptance unchanged. TASK-013 resumes after that repair reaches `origin/main`.
-   This adds a task but keeps both PRs focused.
-2. Explicitly authorize goal-tui repairs in TASK-013 and revise its diff-scope acceptance.
-   This allows one baseline PR, but breaks the current requirement that its diff touch
-   only `tools/goal-rust`.
+1. Widen TASK-013 by one file: add the three lines to `format.md` in PR #110. One PR, all checks green. Open PRs #113 and #114 also edit `format.md` and may conflict on rebase. #113 also edits `templates.rs`, so it may change the same section.
+2. Wait for #113, which may re-sync `format.md` and the template, then rebase PR #110 and re-run. No scope change. Depends on another PR landing.
+3. Open a separate task for the doc sync. Adds a task and leaves the workspace red until it lands.
 
 ### Recommendation
 
-Choose option 1. Repair goal-tui separately, then resume TASK-013 with the original checks intact.
+Choose option 1. It is a three-line doc change that the test already requires. If #113 lands first, rebase and drop the edit.
 
 ## Acceptance
 
-- [ ] **1. Required checks exit 0 in clean and agent environments.** Not satisfied.
-  At the verified revision, `cargo fmt --check` exits 1 and strict clippy exits 101.
-  `env -u GOAL_AGENT -u GOAL_COPILOT -u CLAUDECODE cargo test` exits 101.
-  `GOAL_AGENT=1 GOAL_COPILOT=agy-pool CLAUDECODE=1 cargo test` also exits 101.
-  Both stop in `cli`: 11 passed, 1 failed, 0 ignored. The exact combined command
-  cannot pass because formatting fails first. Scoped formatting passes with
-  `cargo fmt --package goal --package goal-core --check`; this is diagnostic evidence,
-  not a substitute for the required workspace check.
-- [ ] **2. Root causes and added allows recorded.** The confirmed fixture faults are below.
-  The complete repair and diagnosis of the other execution failures remain pending.
-  No new `#[allow]` was added; there are no allowance reasons to list.
-- [x] **3. No test removed, ignored, or weakened.** `cargo test -- --list` records
-  **492 tests before and 492 after**. Comparing complete test-name multisets gives
-  equality. Only formatting is committed. The execution suite still runs all
-  **39 tests**: 17 passed, 22 failed, 0 ignored. No assertions were changed.
-- [x] **4. Config PR URL and scoped diff.** https://github.com/jesusvillota/config/pull/110.
-  `git diff origin/main HEAD --name-only` lists 78 files; all begin with
-  `tools/goal-rust/`. `git diff --check origin/main HEAD` passes. The config worktree is clean.
+- [ ] **1. Required checks exit 0 in clean and agent environments.** Not satisfied: only `format_spec_carries_worker_protocol` fails (see the decision request). `cargo fmt --check` exits 0. `cargo clippy --all-targets -- -D warnings` exits 0. `cargo test --no-fail-fast` reports **495 passed, 1 failed, 0 ignored** both in a clean environment (`env -u GOAL_AGENT -u GOAL_COPILOT -u CLAUDECODE -u GOAL_PLAN_ROOT -u CODEX_CI -u OPENCODE`) and with `GOAL_AGENT=1 GOAL_COPILOT=agy-pool CLAUDECODE=1`. Both runs stop with `test exit 101` on that one test.
+- [x] **2. Root causes and added allows recorded.** See below.
+- [x] **3. No test removed, ignored, or weakened.** `#[test]` count in `tools/goal-rust` and `tools/goal-tui` is **607 at `origin/main` and 607 at HEAD**. 0 ignored. No assertion changed. One fixture was changed to poll differently and then reverted once main fixed the race in production code.
+- [x] **4. Config PR URL and scoped diff.** https://github.com/jesusvillota/config/pull/110. `git diff origin/main...HEAD --name-only` lists 99 files, all under `tools/goal-rust/` or `tools/goal-tui/` (0 outside).
 
-## Confirmed test root causes
+## Root causes of the test failures
 
-1. `goal/tests/execution_differential.rs` defines a WORKER debug catalog that advertises
-   only `test-model/high`. Its default goal fixture supplies no `policy.default_route`.
-   `goal-core/src/routing.rs` selects `codex/gpt-6.1-sol/high`. Catalog validation then
-   rejects the route before launch: `unknown codex model 'gpt-6.1-sol'`.
-   The focused `all_process_launchers_match_argv_registry_ledger_and_history` test
-   reproduces this error with the three requested markers unset. Repair the fake worker
-   catalog to advertise the real default model while retaining `test-model` for route
-   tests. No production model-table change is needed.
-2. The CLI and route authority fixtures clear `GOAL_AGENT` and `CLAUDECODE`, but inherit
-   `CODEX_CI` and `OPENCODE`. `human::COPILOT_MARKERS` treats those as user-authorized
-   copilot markers. This shell has nonempty `CODEX_CI`, so clearing the three acceptance
-   variables alone still lets calls pass when these tests expect terminal refusal.
-   The observed CLI failure is `unwrap_err()` on `Ok(())`. Fix child-process isolation
-   to clear all authority markers before setting the exact markers each case tests.
-3. The full execution run has 22 failures. Most are consistent with the catalog fault.
-   One failure in `failed_child_and_missing_codex_stream_cannot_deliver_ready_pr`
-   compares a crash snapshot with a later delivered snapshot from fresh PR facts.
-   Its remaining cause has not been isolated. No assertion was weakened to hide it.
+1. **Stale fixtures assume a Claude default route.** Commit 5e0db48 (#105) made the fallback route `codex/gpt-6.1-sol/high`. Fixtures in `execution_differential.rs`, `launcher_push_differential.rs` and `sequential.rs` only stub `claude` and assert Claude argv (`-p`), so they hit `unknown codex model 'gpt-6.1-sol'` or the wrong argv (`exec`). The production table is current; the fixtures were stale. Fix: each fixture goal now sets `default_route: {platform: claude, model: opus, effort: high}`. The tests that set their own `test-model` Codex route replace that line instead of appending a duplicate key. `failed_child_and_missing_codex_stream_cannot_deliver_ready_pr` needs the Codex fallback, so it removes the pin. No production table changed.
+2. **Orca delivery fixture and PR-recovery race** were fixed on main by #116 (TASK-011). No change here.
+3. **Worker-protocol doc drift** (open): `format.md` is behind the template since #104.
+
+Environment note: authority fixtures only clear `GOAL_AGENT` and `CLAUDECODE`. `GOAL_PLAN_ROOT`, `CODEX_CI` and `OPENCODE` also change results in an agent shell, so the clean run unsets them too.
+
+## `#[allow]` added
+
+Three, all `#[allow(clippy::too_many_arguments)]` (8 of 7), narrow, on the function:
+`dispatch::launch_attempt`, `herdr::launch`, `mutate::add`. Reason: they mirror existing positional call sites; a parameter struct would be a refactor, which the task forbids.
+
+Other lint fixes were real: collapsed `if`s, `strip_prefix`, `let Self { .. }` initializer, `type` aliases for complex types (`Stamp`, `Mutation`, `HelpTarget`), removed an identical-branch `if`, `sort_by_key`, `find` instead of an index loop. One test helper (`suffixes`) is now `#[cfg(feature = "differential")]`, as are its only callers. One unused field was renamed `_dir` (it holds a `TempDir` for drop).
+
+## Overlap with other work
+
+Goal `goal-tui-improvements` TASK-010 (launcher fixtures that assume a Claude default) edits the same fixtures as commit `fix(goal): pin the claude default route in stale launcher fixtures`. Whichever PR lands second needs a rebase.
 
 ## Verification tails
 
-All commands below ran from the config worktree's `tools/goal-rust` directory.
-
-### cargo fmt --check
+From the config worktree's `tools/goal-rust`, at `edfaaa3`:
 
 ```text
-+            .style(Style::new().bg(pal().panel))
-+            .padding(Padding::horizontal(1))
-+    };
-+    f.render_widget(
-+        Paragraph::new(lines)
-+            .wrap(Wrap { trim: false })
-+            .scroll((app.pane_scroll, 0))
-+            .block(block),
-+        area,
-+    );
- }
- 
-Exit: 1
+$ cargo fmt --check
+fmt exit 0
+$ cargo clippy --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.55s
+clippy exit 0
+$ cargo test --no-fail-fast   (clean env and agent env)
+test format_spec_carries_worker_protocol ... FAILED
+test result: FAILED. 11 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+all other binaries ok; total 495 passed, 1 failed, 0 ignored
+test exit 101
 ```
-
-### cargo clippy --all-targets -- -D warnings
-
-```text
-
-error: could not compile `goal-core` (lib) due to 77 previous errors
-warning: build failed, waiting for other jobs to finish...
-error: very complex type used. Consider factoring parts into `type` definitions
-    --> goal-core/src/session.rs:1691:20
-     |
-1691 |         let cases: Vec<(&str, Box<dyn Fn(&mut Mem, &mut Cfg, &mut Obs)>)> = vec![
-     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-     |
-     = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#type_complexity
-
-error: could not compile `goal-core` (lib test) due to 80 previous errors
-Exit: 101
-```
-
-### clean cargo test (three markers unset)
-
-```text
-test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
-
- 
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-
-
-failures:
-    core_human_context_obeys_cockpit_and_agent_markers
-
-test result: FAILED. 11 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.24s
-
-error: test failed, to rerun pass `-p goal --test cli`
-Exit: 101
-```
-
-### agent cargo test (three markers set)
-
-```text
-test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
-
- 
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-
-
-failures:
-    core_human_context_obeys_cockpit_and_agent_markers
-
-test result: FAILED. 11 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.22s
-
-error: test failed, to rerun pass `-p goal --test cli`
-Exit: 101
-```
-
-### focused default-model fixture test
-
-```text
-{"error":"unknown codex model 'gpt-6.1-sol'"}
-
-
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-
-
-failures:
-    all_process_launchers_match_argv_registry_ledger_and_history
-
-test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 38 filtered out; finished in 2.32s
-
-error: test failed, to rerun pass `-p goal --test execution_differential`
-Exit: 101
-```
-
-### execution suite (three markers unset)
-
-```text
-    orca_and_herdr_require_ready_task_before_adapter_creation
-    orca_setup_failure_and_delivered_ending_match_shared_registry
-    print_launcher_condition_argv_ledger_history_and_resume
-    registration_and_gate_failure_never_execute_unregistered_worker
-    rename_failure_rolls_back_orca_metadata_without_touching_old_branch
-    startup_timeouts_close_adapter_and_remove_new_checkout
-    stopped_herdr_server_prevents_coordinator_claim
-    successful_setup_and_live_capacity_match_before_new_checkout
-
-test result: FAILED. 17 passed; 22 failed; 0 ignored; 0 measured; 0 filtered out; finished in 139.29s
-
-error: test failed, to rerun pass `-p goal --test execution_differential`
-Exit: 101
-```
-
-Local evidence logs: `/tmp/task013-evidence/`. GitHub Actions were not read or waited on.
-Both PRs remain drafts. The native goal is not complete. No PR was merged.
