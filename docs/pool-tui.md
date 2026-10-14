@@ -74,22 +74,32 @@ space, or press `Esc`, and nothing is selected again.
 States: `disabled` (config) · `paused` · `needs re-login` · `unseen` (no traffic yet) ·
 `cooling down` · `near quota` · `cooling (fable)` · `available`.
 
-Antigravity accounts show `Quota remaining ↓` in place of the two limit cells.
-Indented lines under each account show every reported family and window, the
-percentage **left**, and the time until reset. For example:
+Antigravity accounts in `shunt tui` use one row per account. The quota columns
+are `Gemini · weekly` and `Claude + GPT · weekly`. At full width, they start at
+the same positions as the other providers' 5h and 7d columns.
+Bars and percentages show **used** quota (`used = 1 - remaining`). Bars turn
+yellow at 70% used and red at 90%. An exhausted family shows a red full bar
+and `100%`. When every reported family window is exhausted, the State column
+shows red `exhausted`. Paused, disabled, and other blocking states keep their labels.
+
+The TUI reads `quota_buckets` from `GET /admin/api/pool`. Missing or unknown
+readings show a dim `—`, never `0%`. Missing or invalid reset times have no
+countdown. Weekly-only replies stay weekly-only. Any further reported window (a 5h
+window or a third family) appears as a labelled cell after Plan, aligned, only
+when the whole cell fits; otherwise it is omitted. Reset countdowns are never
+cut: they shrink to the largest unit (`2d`) or disappear. At narrower widths,
+titles shorten to `7d`, then the section shows one quota column and the State
+column reads `exhausted` if any reported family is exhausted. The heading line
+drops trailing column titles that do not fit. Very small
+terminals shorten account names too. Rows never wrap. Clicking the account row
+selects it; column headings do not select an account. Claude and Codex keep
+their existing usage bars and resets.
 
 ```text
-  1 weekly                Quota remaining ↓                             available
-                         Gemini Models · weekly: 0% left · resets in 6d
-                         Claude + GPT Models · weekly: 100% left · resets in 7d
+▾ antigravity             ON   ranking: balanced     · 1 account
+  # Account              Gemini · weekly          Claude + GPT · weekly    State
+  1 weekly               ████████ 100% · 1d       ░░░░░░░░   0% · 2d 2h    available
 ```
-
-These lines use `quota_buckets` from the pool API. Weekly-only replies stay
-weekly-only; a 5h window appears only when upstream reports it. Missing remaining
-values show `—`; missing or invalid reset times have no countdown. Remaining
-percentages turn yellow at 30% and red at 10%. Clicking a quota line selects its
-account. Claude and Codex keep their existing used-percentage bars and resets.
-The web dashboard already displays the same pool buckets.
 
 ## Keys
 

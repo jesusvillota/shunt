@@ -3,7 +3,7 @@ use ratatui::{backend::TestBackend, style::Modifier, Terminal};
 use super::*;
 use crate::tui::{
     add::Target,
-    model::{AccountDto, PoolResponse, ProviderDto, Snapshot},
+    model::{AccountDto, PoolResponse, ProviderDto, QuotaBucketDto, Snapshot},
 };
 
 const NOW: u64 = 1_000;
@@ -104,56 +104,255 @@ fn family_account() -> AccountDto {
     serde_json::from_str(r#"{"name":"weekly","account_ref":"ref-weekly","has_state":true,"quota_buckets":[{"label":"Gemini Models · weekly","remaining":0.0,"reset_time":"1970-01-02T00:16:40Z"},{"label":"Claude + GPT Models · weekly","remaining":1.0,"reset_time":"1970-01-03T02:16:40Z"}]}"#).unwrap()
 }
 
+fn print_frame(name: &str, screen: &str) {
+    println!(
+        "FRAME: {name}\n{}\nEND FRAME",
+        screen
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
 #[test]
-fn weekly_only_quota_shows_families_remaining_resets_and_account_hit_targets() {
-    let mut app = app(vec![provider(
-        "agy",
-        "antigravity_oauth",
-        vec![family_account()],
-    )]);
-    let (screen, terminal) = draw(&mut app, 120, 15);
-    assert!(
-        screen.contains("Gemini Models · weekly: 0% left · resets in 1d"),
-        "{screen}"
-    );
-    assert!(
-        screen.contains("Claude + GPT Models · weekly: 100% left · resets in 2d 2h"),
-        "{screen}"
-    );
-    assert!(!screen.contains("Models · 5h"), "{screen}");
-    assert!(!screen.contains('█'), "no invented usage bars: {screen}");
+fn family_quota_acceptance_frames_use_one_account_row() {
+    for (name, remaining, width) in [
+        ("all families with quota", [Some(0.5), Some(0.75)], 120),
+        ("one exhausted family", [Some(0.0), Some(1.0)], 120),
+        ("all exhausted", [Some(0.0), Some(0.0)], 120),
+        ("unknown quota", [None, None], 120),
+        ("narrow width", [Some(0.5), Some(0.75)], 68),
+    ] {
+        let mut account = family_account();
+        for (bucket, value) in account.quota_buckets.iter_mut().zip(remaining) {
+            bucket.remaining = value;
+        }
+        let mut app = app(vec![provider(
+            "antigravity",
+            "antigravity_oauth",
+            vec![account],
+        )]);
+        let (screen, terminal) = draw(&mut app, width, 10);
+        print_frame(name, &screen);
+        assert!(screen.contains("Gemini · weekly"), "{screen}");
+        assert_eq!(
+            screen
+                .lines()
+                .filter(|line| line.contains("weekly") && line.trim_start().starts_with('1'))
+                .count(),
+            1
+        );
+        assert_eq!(app.hits.len(), 3, "header, titles, account only");
+        assert!(app.hits[1].is_none(), "titles are not selectable");
+        assert_eq!(
+            app.hits[2].as_ref().unwrap().account.as_deref(),
+            Some("ref-weekly")
+        );
+        assert!(!screen.contains("left") && !screen.contains("Quota remaining"));
+        let y = app.list_area.y + 2;
+        let buffer = terminal.backend().buffer();
+        let first = (NAME_W + 5) as u16;
+        let second = first + WINDOW_W as u16 + 2;
+        if name == "unknown quota" {
+            for x in [first, second] {
+                assert_eq!(buffer[(x, y)].symbol(), "—");
+                assert_eq!(buffer[(x, y)].fg, Color::DarkGray);
+            }
+            assert!(!screen.contains('%'), "unknown is never zero");
+        } else {
+            assert!(
+                screen.contains(if remaining[0] == Some(0.0) {
+                    "100% · 1d"
+                } else {
+                    "50% · 1d"
+                }),
+                "{screen}"
+            );
+        }
+        if name == "one exhausted family" || name == "all exhausted" {
+            assert_eq!(buffer[(first, y)].fg, Color::Red);
+        }
+        if name == "all exhausted" {
+            assert_eq!(buffer[(second, y)].fg, Color::Red);
+            assert!(screen.contains("exhausted"));
+            assert_eq!(buffer[(second + WINDOW_W as u16 + 2, y)].fg, Color::Red);
+        } else {
+            assert!(screen.contains("available"));
+        }
+        if width < 80 {
+            assert!(!screen.contains("Claude + GPT"));
+        } else {
+            assert!(screen.contains("Claude + GPT · weekly"));
+            if name != "unknown quota" {
+                assert!(screen.contains("2d 2h"));
+            }
+        }
+    }
+}
+
+#[test]
+fn family_countdowns_are_never_cut_mid_token() {
+    let mut account = family_account();
+    account.quota_buckets[0].remaining = Some(0.5);
+    account.quota_buckets[1].remaining = Some(0.5);
+    for width in 80..=120 {
+        let mut app = app(vec![provider(
+            "antigravity",
+            "antigravity_oauth",
+            vec![account.clone()],
+        )]);
+        let (screen, _) = draw(&mut app, width, 10);
+        let row = screen.lines().find(|l| l.contains("50%")).unwrap();
+        let mut seen = 0;
+        for part in row.split("% · ").skip(1) {
+            seen += 1;
+            let countdown = part.split("  ").next().unwrap().trim_end();
+            let complete = ["1d", "2d 2h", "2d", "1d 0h"].contains(&countdown);
+            assert!(complete, "width {width}: {countdown:?}\n{screen}");
+        }
+        assert!(seen > 0 || width < 92, "width {width}\n{screen}");
+    }
+}
+
+#[test]
+fn hidden_second_family_still_surfaces_exhausted_state() {
+    let mut account = family_account();
+    account.quota_buckets[0].remaining = Some(0.5);
+    account.quota_buckets[1].remaining = Some(0.0);
+    for (width, expected) in [(68, true), (120, false)] {
+        let mut app = app_from_account(account.clone());
+        let (screen, _) = draw(&mut app, width, 10);
+        assert_eq!(screen.contains("exhausted"), expected, "{screen}");
+        let heading = screen.lines().find(|l| l.contains("Account")).unwrap();
+        assert!(!heading.trim_end().ends_with(" R"), "{screen}");
+    }
+}
+
+#[test]
+fn family_columns_align_with_other_providers_in_one_frame() {
+    let mut legacy = acct("legacy");
+    legacy.utilization_5h = Some(0.5);
+    legacy.utilization_7d = Some(0.5);
+    let mut app = app(vec![
+        provider("anthropic", "claude_oauth", vec![legacy.clone()]),
+        provider("antigravity", "antigravity_oauth", vec![family_account()]),
+        provider("codex", "chatgpt_oauth", vec![legacy]),
+    ]);
+    let (screen, terminal) = draw(&mut app, 140, 18);
+    print_frame("shared provider alignment", &screen);
+    let buffer = terminal.backend().buffer();
+    let x_positions = [25, 50];
+    let global = 2;
+    assert_eq!(buffer[(x_positions[0], global)].symbol(), "5");
+    assert_eq!(buffer[(x_positions[1], global)].symbol(), "7");
+    for (at, hit) in app.hits.iter().enumerate() {
+        if hit.as_ref().is_some_and(|sel| sel.account.is_some()) {
+            let y = app.list_area.y + at as u16;
+            for x in x_positions {
+                assert!(["█", "░"].contains(&buffer[(x, y)].symbol()), "{screen}");
+                assert_eq!(buffer[(x - 1, y)].symbol(), " ");
+            }
+        }
+    }
     let y = screen
         .lines()
-        .position(|line| line.contains("Gemini Models"))
+        .position(|l| l.contains("Gemini · weekly"))
         .unwrap() as u16;
-    for (offset, color) in [Color::Red, Color::Green].into_iter().enumerate() {
-        let label = &family_account().quota_buckets[offset].label;
-        let x = (NAME_W + 5 + label.chars().count() + 2) as u16;
-        assert_eq!(
-            terminal.backend().buffer()[(x, y + offset as u16)].fg,
-            color
-        );
-    }
-    for hit in &app.hits[1..4] {
-        assert_eq!(hit.as_ref().unwrap().account.as_deref(), Some("ref-weekly"));
-    }
+    assert_eq!(buffer[(25, y)].symbol(), "G");
+    assert_eq!(buffer[(50, y)].symbol(), "C");
 }
 
 #[test]
 fn family_quota_shows_only_reported_windows_and_tolerates_missing_values() {
     let mut account = family_account();
-    account.quota_buckets[0].label = "Gemini Models · 5h".into();
     account.quota_buckets[0].remaining = None;
     account.quota_buckets[0].reset_time = None;
     account.quota_buckets[1].reset_time = Some("invalid".into());
+    account.quota_buckets.push(QuotaBucketDto {
+        label: "Gemini Models · 5h".into(),
+        remaining: Some(0.25),
+        reset_time: Some("1970-01-01T01:16:40Z".into()),
+    });
     let mut app = app(vec![provider("agy", "antigravity_oauth", vec![account])]);
-    let screen = draw(&mut app, 120, 15).0;
-    assert!(screen.contains("Gemini Models · 5h: —"), "{screen}");
+    let (screen, _) = draw(&mut app, 210, 10);
     assert!(
-        screen.contains("Claude + GPT Models · weekly: 100% left"),
+        screen.contains("Gemini · 5h: ██████░░  75% · 1h"),
         "{screen}"
     );
-    assert!(!screen.contains("resets in"), "{screen}");
+    assert!(screen.contains("—") && screen.contains("  0%"), "{screen}");
+    assert!(
+        !screen.contains("Claude + GPT · 5h"),
+        "no fabricated window"
+    );
+    assert!(!screen.contains("2d 2h"), "invalid reset is omitted");
+    let (narrow, _) = draw(&mut app, 120, 10);
+    assert!(!narrow.contains(" · 5h"), "extra cell must fit completely");
+    let mut account = family_account();
+    account.quota_buckets[0].label = "Gemini Models · 5h".into();
+    account.quota_buckets.remove(1);
+    let mut short_only = app_from_account(account);
+    assert!(draw(&mut short_only, 120, 10).0.contains("Gemini · 5h"));
+}
+
+fn app_from_account(account: AccountDto) -> App {
+    app(vec![provider("agy", "antigravity_oauth", vec![account])])
+}
+
+#[test]
+fn family_rows_handle_compact_unknown_paused_and_scrolled_views() {
+    let mut unknown = acct("unknown");
+    // Legacy utilization is not an upstream family quota reading.
+    unknown.utilization_5h = Some(0.0);
+    let mut paused = family_account();
+    paused.name = "paused".into();
+    paused.account_ref = Some("ref-paused".into());
+    paused.paused = true;
+    paused.quota_buckets[1].remaining = Some(0.0);
+    let mut accounts = vec![unknown, paused];
+    accounts.extend((0..20).map(|i| AccountDto {
+        name: format!("acct-{i:02}"),
+        account_ref: Some(format!("ref-acct-{i:02}")),
+        ..family_account()
+    }));
+    let mut app = app(vec![provider("agy", "antigravity_oauth", accounts)]);
+    let (screen, _) = draw(&mut app, 84, 32);
+    assert!(screen.contains("Claude + GPT · 7d"), "{screen}");
+    let unknown = screen.lines().find(|l| l.contains("unknown")).unwrap();
+    assert_eq!(unknown.matches('—').count(), 2);
+    assert!(!unknown.contains('%'));
+    let paused = screen.lines().find(|l| l.contains("paused")).unwrap();
+    assert_eq!(
+        paused.matches("paused").count(),
+        2,
+        "account name and State label"
+    );
+    assert!(
+        !paused.contains("exhausted"),
+        "paused state takes precedence"
+    );
+    for width in [1, 20, 40, 68, 79, 80, 91, 92] {
+        draw(&mut app, width, 12);
+    }
+    app.selected = Some(Sel {
+        provider: "agy".into(),
+        account: Some("ref-acct-19".into()),
+    });
+    app.reveal = true;
+    let (screen, terminal) = draw(&mut app, 68, 12);
+    assert!(screen.contains("acct-19"));
+    assert!(app.scroll > 0);
+    assert!(has_reversed_cell(&terminal));
+    assert!(app
+        .hits
+        .iter()
+        .flatten()
+        .any(|hit| hit == app.selected.as_ref().unwrap()));
+    app.collapsed.insert("agy".into());
+    app.selected = None;
+    let (screen, _) = draw(&mut app, 120, 12);
+    assert!(!screen.contains("Gemini"));
+    assert_eq!(app.hits.len(), 1);
 }
 
 #[test]
@@ -230,9 +429,9 @@ async fn live_antigravity_quota_snapshot() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(screen.contains("Gemini Models"));
-    assert!(screen.contains("Claude + GPT Models"));
-    assert!(screen.contains("% left · resets in"));
+    assert!(screen.contains("Gemini · weekly"));
+    assert!(screen.contains("Claude + GPT · weekly"));
+    assert!(screen.contains("% · "));
     println!("LIVE_ANTIGRAVITY_ACCOUNTS={account_count}\n{screen}");
 }
 
