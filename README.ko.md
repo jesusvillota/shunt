@@ -136,6 +136,8 @@ codex-fallback = "gpt-5.6-sol"
 | `antigravity` | `antigravity` | Antigravity OAuth | `daily-cloudcode-pa.googleapis.com` — HTTP로 통신하는 Google Antigravity 백엔드, `~/.shunt/antigravity-auth.json`(`shunt login antigravity`)을 사용(또는 `shunt login antigravity --name`으로 `~/.shunt/accounts/antigravity` 아래 이름 지정 계정을 만들어 `accounts = [...]`로 선택) |
 | `antigravity-cli` | `antigravity_cli` | 없음(로컬 CLI) | **Deprecated.** 로컬 `agy` 바이너리 — 서브프로세스로 동일한 백엔드를 사용하며, 위의 `antigravity`로 대체되었습니다 |
 
+Antigravity 쿼터 폴링은 계정별 선택적 `profile_dir`로 agy `/usage`(1.1.11 이상)를 사용하고 기존 HTTP 경로로 대체합니다. `[server.pool] usage_refresh_seconds = 60`으로 켭니다. 실제 보고된 Gemini와 Claude + GPT 윈도우만 표시하며 모델 턴이 발생하면 재시작까지 CLI 탐침을 중지합니다. [설정 참조](https://shunt.sh/ko/reference/configuration/)를 확인하세요.
+
 순서가 있는 `[[upstreams]]` 항목은 여기에 더해 `kimi`, `kimi-code`, `zhipu`, `minimax-cn`, `opencode` 프리셋도 받으며, 각 백엔드의 `kind`, `base_url`, 기본 인증을 채워 넣습니다.
 
 프로바이더별 설정과 모델 id, 주의 사항은 [프로바이더](https://shunt.sh/ko/guides/providers/)에 정리되어 있습니다. xAI의 OAuth 등급 제한([xAI / Grok](https://shunt.sh/ko/guides/xai/)), Cursor의 에이전트 모드 프리픽스([Cursor](https://shunt.sh/ko/providers/cursor/)), Antigravity의 두 가지 전송 방식과 `kind = "antigravity"` 마이그레이션([Antigravity](https://shunt.sh/ko/providers/antigravity/))도 그곳에 있습니다.

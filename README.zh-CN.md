@@ -133,6 +133,8 @@ codex-fallback = "gpt-5.6-sol"
 | `antigravity` | `antigravity` | Antigravity OAuth | `daily-cloudcode-pa.googleapis.com` —— 通过 HTTP 访问的 Google Antigravity 后端,使用 `~/.shunt/antigravity-auth.json`(`shunt login antigravity`;或用 `shunt login antigravity --name` 在 `~/.shunt/accounts/antigravity` 下使用具名账号,通过 `accounts = [...]` 选择) |
 | `antigravity-cli` | `antigravity_cli` | 无(本地 CLI) | **已弃用。** 本地 `agy` 二进制 —— 通过子进程访问同一后端,已被上面的 `antigravity` 取代 |
 
+Antigravity 配额轮询支持可选的账户级 `profile_dir`，优先使用 agy `/usage`（1.1.11 以上），并保留现有 HTTP 回退。设置 `[server.pool] usage_refresh_seconds = 60` 启用。只显示上游报告的 Gemini 和 Claude + GPT 窗口；检测到模型轮次后，CLI 探测停止直到重启。参见[配置参考](https://shunt.sh/zh-cn/reference/configuration/)。
+
 有序的 `[[upstreams]]` 条目还接受 `kimi`、`kimi-code`、`zhipu`、`minimax-cn`、`opencode` 预设,它们会补齐对应后端的 `kind`、`base_url` 和默认认证。
 
 各提供方的设置、模型 id 和注意事项都在[提供方](https://shunt.sh/zh-cn/guides/providers/)下,包括 xAI 的 OAuth 层级限制（[xAI / Grok](https://shunt.sh/zh-cn/guides/xai/)）、Cursor 的 agent 模式前缀（[Cursor](https://shunt.sh/zh-cn/providers/cursor/)）以及 Antigravity 的两种传输方式和 `kind = "antigravity"` 迁移（[Antigravity](https://shunt.sh/zh-cn/providers/antigravity/)）。

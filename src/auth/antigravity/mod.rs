@@ -10,6 +10,7 @@ pub mod catalog;
 pub mod login;
 pub mod store;
 pub mod usage;
+pub(crate) mod usage_cli;
 pub mod version;
 
 /// shunt-owned Antigravity credential file: `$SHUNT_ANTIGRAVITY_AUTH_FILE`, else

@@ -244,11 +244,21 @@ error is relayed, so the cause stays visible.
 
 ## Usage reporting
 
-Setting [`usage_refresh_seconds`](/reference/configuration/#serverpool-optional) also polls every
-imported (refreshable) `antigravity_oauth` account against Code Assist's
-`retrieveUserQuotaSummary` RPC. Production `cloudcode-pa.googleapis.com` configurations are
-normalized to Antigravity's `daily-cloudcode-pa.googleapis.com` control plane, matching inference
-and model-catalog traffic.
+Antigravity quota polling uses `agy -p /usage --output-format json --print-timeout 20s` first when
+an account has `profile_dir` and agy is version 1.1.11 or newer. Set `[server.pool]
+usage_refresh_seconds = 60` to enable polling. An account profile is the existing HOME directory
+used for that account's agy sign-in; `~` expands and relative paths resolve from the gateway working
+directory.
+
+The probe sets child `HOME`/`USERPROFILE`, strips ambient Google/Gemini credentials, and never uses
+an ambient login for an account without a profile. It never passes `--disable-slash-commands`.
+Missing, unsupported, or failed CLI profiles use the same account's existing HTTP
+`retrieveUserQuotaSummary` path when its credentials are refreshable. A reply with `num_turns > 0`
+disables all CLI quota probes until gateway restart; HTTP fallback continues. The child has a
+25-second deadline and a 1 MiB output limit.
+
+Only reported Gemini and Claude + GPT 5h/weekly buckets appear in `GET /admin/api/pool`; missing
+windows stay absent. `token_env` accounts remain excluded. Account selection is unchanged.
 
 The response is grouped into two shared model-family quota pools: **Gemini Models** and
 **Claude + GPT Models**. Each group carries its provider-native 5-hour and weekly windows when the

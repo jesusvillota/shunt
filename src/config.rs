@@ -1983,6 +1983,14 @@ impl RetryConfig {
 #[serde(deny_unknown_fields)]
 pub struct AccountConfig {
     pub name: String,
+    /// Explicit agy HOME for this Antigravity account's read-only /usage probe.
+    /// Absent profiles use the existing HTTP quota source, never ambient login.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_credentials_path"
+    )]
+    pub profile_dir: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -2036,6 +2044,7 @@ impl Default for AccountConfig {
     fn default() -> Self {
         Self {
             name: String::new(),
+            profile_dir: None,
             credentials: None,
             token_env: None,
             uuid: None,
@@ -8449,6 +8458,23 @@ provider = "deepseek"
             account.credentials.as_deref(),
             Some(format!("{home}/.claude/.credentials.json").as_str())
         );
+    }
+
+    #[test]
+    fn account_usage_profile_is_optional_and_expands_tilde() {
+        let _guard = CONFIG_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::var("HOME").expect("HOME must be set");
+        let account: AccountConfig = serde_json::from_value(serde_json::json!({
+            "name": "personal", "profile_dir": "~/agy-personal",
+        }))
+        .unwrap();
+        assert_eq!(account.profile_dir, Some(format!("{home}/agy-personal")));
+        let old: AccountConfig = serde_json::from_str(r#"{"name":"old"}"#).unwrap();
+        assert!(old.profile_dir.is_none());
+        assert!(serde_json::to_value(old)
+            .unwrap()
+            .get("profile_dir")
+            .is_none());
     }
 
     #[test]

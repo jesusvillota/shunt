@@ -22,14 +22,14 @@ const OTHER_5H_LABEL: &str = "Claude + GPT Models · 5h";
 const OTHER_WEEKLY_LABEL: &str = "Claude + GPT Models · weekly";
 
 #[derive(Debug, Deserialize)]
-struct QuotaSummaryResponse {
+pub(crate) struct QuotaSummaryResponse {
     #[serde(default)]
     groups: Vec<QuotaSummaryGroup>,
 }
 
 #[derive(Debug, Deserialize)]
 struct QuotaSummaryGroup {
-    #[serde(rename = "displayName")]
+    #[serde(rename = "displayName", alias = "name")]
     display_name: Option<String>,
     #[serde(default)]
     buckets: Vec<QuotaSummaryBucket>,
@@ -37,12 +37,12 @@ struct QuotaSummaryGroup {
 
 #[derive(Debug, Deserialize)]
 struct QuotaSummaryBucket {
-    #[serde(rename = "bucketId")]
+    #[serde(rename = "bucketId", alias = "id")]
     bucket_id: Option<String>,
     window: Option<String>,
-    #[serde(rename = "remainingFraction")]
+    #[serde(rename = "remainingFraction", alias = "remaining_fraction")]
     remaining_fraction: Option<f64>,
-    #[serde(rename = "resetTime")]
+    #[serde(rename = "resetTime", alias = "reset_time")]
     reset_time: Option<String>,
 }
 
@@ -95,7 +95,9 @@ fn quota_summary_url(base_url: &str) -> String {
 /// windows. Unknown groups/windows are ignored rather than exposed as fake
 /// independent quotas. A response with no numeric recognized bucket is rejected
 /// so a malformed payload cannot replace the last good dashboard snapshot.
-fn parse_usage(summary: QuotaSummaryResponse) -> anyhow::Result<Vec<QuotaBucketSnapshot>> {
+pub(crate) fn parse_usage(
+    summary: QuotaSummaryResponse,
+) -> anyhow::Result<Vec<QuotaBucketSnapshot>> {
     let mut out = Vec::new();
 
     for group in summary.groups {

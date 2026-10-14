@@ -135,6 +135,8 @@ These providers are seeded by default, so `provider = "<name>"` routes to them w
 | `antigravity` | `antigravity` | Antigravity OAuth | `daily-cloudcode-pa.googleapis.com` — Google Antigravity backend over HTTP; uses `~/.shunt/antigravity-auth.json` (`shunt login antigravity`), or named accounts under `~/.shunt/accounts/antigravity` (`shunt login antigravity --name`, selected via `accounts = [...]`) |
 | `antigravity-cli` | `antigravity_cli` | None (local CLI) | **Deprecated.** Local `agy` binary — same backend via subprocess; superseded by `antigravity` above |
 
+Antigravity quota polling supports optional per-account `profile_dir` for agy `/usage` (version 1.1.11+), with existing HTTP fallback. Enable `[server.pool] usage_refresh_seconds = 60`. Only upstream-reported Gemini and Claude + GPT windows appear; a model turn disables CLI probes until restart. See the [configuration reference](https://shunt.sh/reference/configuration/).
+
 Ordered `[[upstreams]]` entries additionally accept the presets `kimi`, `kimi-code`, `zhipu`, `minimax-cn`, and `opencode`, which fill in `kind`, `base_url`, and the default auth for those backends.
 
 Per-provider setup, model ids, and caveats live under [Providers](https://shunt.sh/guides/providers/) — including xAI's OAuth tier gate ([xAI / Grok](https://shunt.sh/guides/xai/)), Cursor's agent-mode prefixes ([Cursor](https://shunt.sh/providers/cursor/)), and Antigravity's two transports and the `kind = "antigravity"` migration ([Antigravity](https://shunt.sh/providers/antigravity/)).
