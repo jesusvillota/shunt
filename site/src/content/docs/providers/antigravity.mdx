@@ -245,9 +245,13 @@ error is relayed, so the cause stays visible.
 Gemini models share one quota pool. Claude and GPT models share a separate pool. A 429 skips
 that account for all models in the exhausted family until reset. The other family remains usable,
 and its successful requests do not clear the exhausted family's cooldown. Healthy accounts with equal
-priority and equal family quota rotate in order. If every account in the requested family is cooling down, a new request
-returns 503 without contacting upstream. The request that exhausts the pool still relays its last
-upstream error.
+priority and equal family quota rotate in order. If no account can be tried because the requested
+family is cooling down, a new request returns `429 rate_limit_error` without contacting upstream.
+Its message states the reset delay. `Retry-After` gives the seconds until the earliest active reset,
+rounded up. Paused or disabled accounts do not count toward that reset. A mix of cooled and paused
+accounts still returns 429. If all accounts are paused or disabled, the gateway returns 503 with
+`all Antigravity accounts are paused or disabled`. The request that exhausts the pool still relays
+its last upstream error.
 
 Cooldowns use `Retry-After` when present, otherwise the upstream error's `Resets in …h…m…s.`
 message, otherwise 60 seconds. Reset delays are not capped at one hour; weekly exhaustion stays

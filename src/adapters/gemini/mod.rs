@@ -197,14 +197,13 @@ async fn forward(
         let credential = resolve_credential(&state.config, &route, &state.http_client).await?;
         return forward_single(&state, &route, body, credential, None, bounds).await;
     }
-    if accounts.iter().all(|account| account.disabled) {
+    if accounts
+        .iter()
+        .all(|account| account.disabled || state.accounts.is_paused(&route.provider, account))
+    {
         return Err(map_gemini_error(
             StatusCode::SERVICE_UNAVAILABLE,
-            &format!(
-                "provider '{}' has {} account(s) but all are `disabled = true`; none are selectable",
-                route.provider,
-                accounts.len()
-            ),
+            "all Antigravity accounts are paused or disabled",
         ));
     }
     let order = state.accounts.select_order(
@@ -462,6 +461,26 @@ async fn forward(
     }
     crate::metrics::record_pool_rotation(&route.provider, "exhausted");
     Err(last_error.unwrap_or_else(|| {
+        if let Some(delay) = state.accounts.antigravity_retry_after(
+            &route.provider,
+            &accounts,
+            &route.upstream_model,
+        ) {
+            // Round up so a client does not retry before the earliest reset.
+            let seconds = delay.as_secs() + u64::from(delay.subsec_nanos() > 0);
+            let mut error = map_gemini_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                &serde_json::json!({"error": {
+                    "message": format!("Antigravity quota exhausted. Resets in {seconds}s.")
+                }})
+                .to_string(),
+            );
+            error.response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                HeaderValue::from_str(&seconds.to_string()).expect("numeric Retry-After"),
+            );
+            return error;
+        }
         map_gemini_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "no Antigravity accounts are available",

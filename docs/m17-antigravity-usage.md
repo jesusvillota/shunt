@@ -96,8 +96,15 @@ best-effort metadata poll per eligible account on each interval.
 Healthy accounts with equal priority and equal family quota rotate across the configured pool. An inference
 429 now excludes only its model family: `gemini-*` shares one cooldown, while
 `claude-*` and `gpt-*` share the other. Selection skips that family until reset,
-even when every account is exhausted. A new request then receives 503; the
-request that exhausted the pool retains the last upstream error. Successful
+even when every account is exhausted. TASK-012 changes subsequent requests to
+`429 rate_limit_error`, in the Anthropic error shape, without any upstream call.
+The message states the reset delay. `Retry-After` reports seconds until the earliest
+active cooldown end for that family, rounded up. Paused or disabled accounts are
+excluded from this reset calculation. A mix of cooled and paused accounts still
+returns 429. If all accounts are paused or disabled, the response remains 503 with
+`all Antigravity accounts are paused or disabled`. Other unavailability, such as
+missing credentials, remains a non-429 error. The request that exhausted the pool
+retains the last upstream error. Successful
 traffic in the other family does not clear the refusal. Auth and transport
 failures retain their account-wide cooldowns.
 

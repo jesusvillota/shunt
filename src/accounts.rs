@@ -1675,6 +1675,27 @@ impl AccountPool {
         crate::metrics::record_pool_rotation(provider, "rate_limit");
     }
 
+    /// Earliest active refusal reset for the requested Antigravity family.
+    /// Operator-paused and disabled accounts cannot become usable at reset.
+    pub(crate) fn antigravity_retry_after(
+        &self,
+        provider: &str,
+        accounts: &[AccountConfig],
+        model: &str,
+    ) -> Option<Duration> {
+        let now = Instant::now();
+        let entries = self.entries.lock().expect("account health lock poisoned");
+        accounts
+            .iter()
+            .filter(|account| !account.disabled)
+            .filter_map(|account| entries.get(&account_key(provider, account)))
+            .filter(|health| !health.paused_providers.contains(provider))
+            .filter_map(|health| antigravity_cooldown(health, Some(model)))
+            .filter(|until| *until > now)
+            .min()
+            .map(|until| until.duration_since(now))
+    }
+
     pub fn cooldown(
         &self,
         provider: &str,
