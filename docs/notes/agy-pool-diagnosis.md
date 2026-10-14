@@ -183,7 +183,7 @@ with `command.data.groups[].buckets[]` carrying `id`, `window`,
 | Works today | Yes, 6/6 accounts, 200 | Yes, but only for the account `agy` is logged into (1 of 6) |
 | Credential | The account's own `antigravity_oauth` token, already refreshed by shunt | `agy`'s own login; one per `agy` home. Per-account needs a separate home/profile per account and a second login each |
 | Fix needed | Config only: set `usage_refresh_seconds`. Code: feed quota into selection | New subprocess runner, per-account profile setup, JSON parsing; same selection work |
-| Latency / cost | One HTTPS call, ~0.3 s, no process | Spawns a CLI process, ~seconds each; 6 accounts every poll |
+| Latency / cost | One HTTPS call, no process | Spawns a CLI process per account per poll (6 per tick) |
 | Stability risk | Private, undocumented endpoint; payload changed before (5h dropped) | Also reads the same backend; the CLI JSON is the stable-ish contract, but version-gated and CLI-dependent |
 | Operational deps | None beyond shunt | `agy` installed, version ≥ 1.1.11, writable per-account homes, no token writeback conflicts (`agy` refreshes in memory only) |
 | Failure mode | Visible HTTP status per account | Process exit and parse errors; hangs need timeouts |
