@@ -29,6 +29,7 @@ flowchart TD
     TASK_005["TASK-005 Fix macOS streaming test failures"]
     TASK_006["TASK-006 Show Antigravity quota buckets in shunt tui and goal pool"]
     TASK_007["TASK-007 Add shunt pool CLI command"]
+    TASK_008["TASK-008 Remove the shunt top alias; only shunt tui remains"]
   end
   TASK_001 --> DEC_001
   DEC_001 --> TASK_002
@@ -39,6 +40,7 @@ flowchart TD
   TASK_003 --> TASK_004
   TASK_005 --> TASK_004
   TASK_006 --> TASK_007
+  TASK_007 --> TASK_008
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
