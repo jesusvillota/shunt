@@ -166,7 +166,7 @@ The earliest eligible Gemini reset was tommyshelby's `2026-10-20T12:41:36Z`.
 At `2026-10-14T10:02:29Z`, it was 527947 seconds away. This is earlier than the other two resets.
 The `r*.before.pool.json` and `r*.after.pool.json` snapshots show zero changes to all attempt,
 success and failure counters on the second and third requests. The gateway returned both locally.
-`gateway.log` records three 429 responses, with the later requests at zero logged latency.
+`gateway.log` records three 429 responses, with the later requests at 0 ms and 1 ms logged latency.
 **PASS**: every request returned Anthropic `rate_limit_error`; later requests include the earliest reset and make no inference attempt.
 
 The scratch gateway was stopped by its own PID (94158). `production-before.json` and
