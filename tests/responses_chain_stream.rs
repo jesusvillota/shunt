@@ -136,35 +136,25 @@ async fn start_gateway(config: Config) -> TestGateway {
     }
 }
 
-/// A base URL whose connections are deterministically refused: a socket
-/// bound but never listening, held open for the test's lifetime. A dropped
-/// listener frees the port, and the OS can hand it to another ephemeral
-/// socket before the gateway connects — the race that made the old
-/// bind-then-drop helper flake.
+/// Reserve an established connection's local port without a listener.
+/// Keeping both ends open prevents port reuse, while new connections to the
+/// reserved port are refused. A merely bound socket drops SYNs on macOS and
+/// times out instead; dropping the reservation would reintroduce port races.
 struct RefusedPort {
     url: String,
-    _socket: socket2::Socket,
+    _connection: std::net::TcpStream,
+    _peer: std::net::TcpStream,
 }
 
 fn refused_base_url() -> RefusedPort {
-    let socket = socket2::Socket::new(
-        socket2::Domain::IPV4,
-        socket2::Type::STREAM,
-        Some(socket2::Protocol::TCP),
-    )
-    .unwrap();
-    socket
-        .bind(
-            &"127.0.0.1:0"
-                .parse::<std::net::SocketAddr>()
-                .unwrap()
-                .into(),
-        )
-        .unwrap();
-    let port = socket.local_addr().unwrap().as_socket().unwrap().port();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let connection = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (peer, _) = listener.accept().unwrap();
+    let addr = connection.local_addr().unwrap();
     RefusedPort {
-        url: format!("http://127.0.0.1:{port}"),
-        _socket: socket,
+        url: format!("http://{addr}"),
+        _connection: connection,
+        _peer: peer,
     }
 }
 
@@ -181,7 +171,17 @@ fn refused_port_is_deterministically_refused() {
     assert_eq!(
         error.kind(),
         ErrorKind::ConnectionRefused,
-        "a bound, non-listening socket must refuse deterministically"
+        "a reserved port without a listener must refuse deterministically"
+    );
+    let exclusive =
+        socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+    assert_eq!(
+        exclusive
+            .bind(&refused._connection.local_addr().unwrap().into())
+            .unwrap_err()
+            .kind(),
+        ErrorKind::AddrInUse,
+        "the refused port must remain reserved"
     );
 }
 
@@ -667,6 +667,7 @@ async fn a_body_error_after_message_stop_ends_the_relay_silently() {
     let responder = tokio::spawn(async move {
         use tokio::io::AsyncWriteExt;
         let (mut socket, _) = listener.accept().await.unwrap();
+        drain_request(&mut socket).await;
         socket
             .write_all(
                 b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: 4096\r\n\r\n",
@@ -709,6 +710,7 @@ async fn a_body_error_before_message_stop_still_emits_the_terminal_error_event()
     let responder = tokio::spawn(async move {
         use tokio::io::AsyncWriteExt;
         let (mut socket, _) = listener.accept().await.unwrap();
+        drain_request(&mut socket).await;
         socket
             .write_all(
                 b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: 4096\r\n\r\n",
@@ -744,6 +746,32 @@ async fn a_body_error_before_message_stop_still_emits_the_terminal_error_event()
     assert_eq!(count_event(&body, "error"), 1, "got:\n{body}");
     drop(gateway);
     responder.await.unwrap();
+}
+
+/// Consume the request before closing a truncated HTTP response. Closing with
+/// unread request bytes sends a TCP reset on macOS, which can discard the SSE
+/// frames before hyper exposes them. Reading the request preserves the intended
+/// fault: response bytes followed by EOF short of the declared content-length.
+async fn drain_request(socket: &mut tokio::net::TcpStream) {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+
+    let mut reader = BufReader::new(socket);
+    let mut line = String::new();
+    let mut content_length = None;
+    loop {
+        line.clear();
+        assert!(reader.read_line(&mut line).await.unwrap() > 0);
+        if line == "\r\n" {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            if name.eq_ignore_ascii_case("content-length") {
+                content_length = Some(value.trim().parse::<usize>().unwrap());
+            }
+        }
+    }
+    let mut body = vec![0; content_length.expect("the upstream request has a content-length")];
+    reader.read_exact(&mut body).await.unwrap();
 }
 
 /// One raw chunked SSE responder: serves the whole `turn` as a single chunk
