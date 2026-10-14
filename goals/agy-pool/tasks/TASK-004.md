@@ -3,7 +3,7 @@ id: TASK-004
 title: Quota-aware account selection and live end-to-end smoke
 milestone: M-1
 state: approved
-depends_on: [TASK-002, TASK-003]
+depends_on: [TASK-002, TASK-003, TASK-005]
 delivery: pr
 kind: gate
 ---
