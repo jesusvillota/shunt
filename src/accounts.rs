@@ -6701,6 +6701,44 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_retry_after_ignores_other_families_and_operator_exclusions() {
+        let pool = AccountPool::default();
+        let mut accounts = vec![account("a"), account("b"), account("c")];
+        let now = Instant::now();
+        {
+            let mut entries = pool.entries.lock().unwrap();
+            for (account, seconds) in accounts.iter().zip([10, 60, 120]) {
+                let health = pool.health_entry(&mut entries, account_key("antigravity", account));
+                health.antigravity_cooldowns[ModelFamily::Gemini as usize] =
+                    Some(now + Duration::from_secs(seconds));
+            }
+        }
+        pool.set_paused("antigravity", &accounts[0], true);
+        accounts[1].disabled = true;
+        let delay = pool
+            .antigravity_retry_after("antigravity", &accounts, "gemini-3.1-pro")
+            .unwrap();
+        assert!(delay > Duration::from_secs(119) && delay <= Duration::from_secs(120));
+        for model in ["claude-sonnet-4-6", "gpt-oss-120b-medium", "unknown"] {
+            assert_eq!(
+                pool.antigravity_retry_after("antigravity", &accounts, model),
+                None
+            );
+        }
+        pool.entries
+            .lock()
+            .unwrap()
+            .get_mut(&account_key("antigravity", &accounts[2]))
+            .unwrap()
+            .antigravity_cooldowns[ModelFamily::Gemini as usize] =
+            Some(now - Duration::from_secs(1));
+        assert_eq!(
+            pool.antigravity_retry_after("antigravity", &accounts, "gemini-3.1-pro"),
+            None
+        );
+    }
+
+    #[test]
     fn antigravity_weekly_cooldown_skips_family_until_reset() {
         let pool = AccountPool::default();
         let accounts = vec![account("a"), account("b")];
