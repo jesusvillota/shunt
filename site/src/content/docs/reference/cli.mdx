@@ -47,12 +47,12 @@ Config files may be TOML or YAML, chosen by extension (`.toml`, or `.yaml`/`.yml
 
 Installed via Homebrew, run it as a background service instead: `brew services start shunt`. See [Installation](/getting-started/installation/#run-as-a-background-service).
 
-## `shunt top`
+## `shunt tui`
 
 Open the live terminal monitor for the managed account pool. It polls the running gateway's admin API, so the rows and quota state match what the scheduler is using.
 
 ```bash
-shunt top --config /path/to/shunt.toml
+shunt tui --config /path/to/shunt.toml
 ```
 
 Select rows with the arrow keys or `j`/`k`. Press `a` to add an account. With an account selected, press `d` to delete it: Shunt opens a confirmation dialog and deletes only after `y`; `n` or `Esc` cancels, and unrelated keys do nothing while the confirmation is open.

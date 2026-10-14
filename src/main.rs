@@ -86,7 +86,7 @@ enum Command {
     /// (`~/.shunt/top.json`) with no routing effect.
     /// Talks to a running gateway's admin API and needs a write-tier admin
     /// token. Requires a build with `--features tui`.
-    #[command(name = "tui", visible_alias = "top")]
+    #[command(name = "tui")]
     Top {
         /// Gateway base URL. Default: derived from `[server].bind` in the config.
         #[arg(long)]
@@ -1068,6 +1068,24 @@ mod tests {
     use std::io;
 
     use super::*;
+
+    #[test]
+    fn tui_is_the_only_terminal_monitor_command() {
+        let cli = Cli::try_parse_from(["shunt", "tui"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Top { .. })));
+
+        let help = Cli::try_parse_from(["shunt", "tui", "--help"]).unwrap_err();
+        assert_eq!(help.kind(), clap::error::ErrorKind::DisplayHelp);
+        assert_eq!(help.exit_code(), 0);
+        assert!(help.to_string().contains("Usage: shunt tui"));
+
+        let removed = Cli::try_parse_from(["shunt", "top"]).unwrap_err();
+        assert_eq!(removed.kind(), clap::error::ErrorKind::InvalidSubcommand);
+        assert_ne!(removed.exit_code(), 0);
+        assert!(removed
+            .to_string()
+            .contains("unrecognized subcommand 'top'"));
+    }
 
     struct FailingWriter(ErrorKind);
 

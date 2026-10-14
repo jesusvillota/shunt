@@ -1,4 +1,4 @@
-//! The `shunt top` admin-API client against a real in-process gateway: poll,
+//! The `shunt tui` admin-API client against a real in-process gateway: poll,
 //! pause/resume by `account_ref`, account provisioning start/complete, managed
 //! account deletion, and the read-tier refusal the monitor surfaces to the operator.
 
