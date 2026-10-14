@@ -3,7 +3,7 @@ id: TASK-008
 title: Remove the shunt top alias; only shunt tui remains
 milestone: M-1
 state: approved
-depends_on: [TASK-007]
+depends_on: [TASK-007, DEC-004]
 delivery: pr
 ---
 
