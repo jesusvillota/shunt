@@ -25,3 +25,4 @@
 {"at":"2026-10-14T08:44:10.402620Z","node":"TASK-008","action":"approve","actor":"human:jesusvillota","summary":"Approved TASK-008","rationale":"","refs":{}}
 {"at":"2026-10-14T08:44:46.387106Z","node":"TASK-009","action":"approve","actor":"human:jesusvillota","summary":"Approved TASK-009","rationale":"","refs":{}}
 {"at":"2026-10-14T08:48:11.181350Z","node":"TASK-010","action":"approve","actor":"human:jesusvillota","summary":"Approved TASK-010","rationale":"","refs":{}}
+{"at":"2026-10-14T08:55:54.756218Z","node":"TASK-006","action":"merge","actor":"human:jesusvillota","summary":"PR #15 merged","rationale":"Reviewed: TUI shows per-family quota, only reported windows, no inversion, tests not weakened, docs in 4 locales.","refs":{"pr":15,"head_sha":"2d28204222f11b81be4553560d23e5f2b00d63e2","merge_commit":"32ed5633549c180a5d0b47090ea86d84f4d6b2d2","check_state":"none","reviewed":false}}
