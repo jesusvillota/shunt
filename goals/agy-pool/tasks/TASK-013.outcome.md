@@ -12,9 +12,9 @@ No README, docs, site or wiki update is needed: formatting, lint, fixture and on
 
 ## Acceptance
 
-- [x] **1. Required checks exit 0 in clean and agent environments.** `cargo fmt --check` exits 0. `cargo clippy --all-targets -- -D warnings` exits 0. With `GOAL_AGENT=claude GOAL_COPILOT=1 CLAUDECODE=1`, `cargo test --no-fail-fast` reports **496 passed, 0 failed, 0 ignored**. In a clean environment (`env -u GOAL_AGENT -u GOAL_COPILOT -u CLAUDECODE`) the suite also passes, with one caveat: on this busy machine (load average about 10 from other agents) the herdr fake-server tests in `execution_differential` and `launcher_push_differential` time out at their fixed 5-second limit in some full runs (a different 1 to 12 tests each time). Rerun alone in a clean environment, `execution_differential` gives **40 passed, 0 failed** and `launcher_push_differential` gives **4 passed, 0 failed**. This is a load flake, not a code failure; I did not change the timeout.
+- [x] **1. Required checks exit 0 in clean and agent environments.** `cargo fmt --check` exits 0. `cargo clippy --all-targets -- -D warnings` exits 0. With `GOAL_AGENT=claude GOAL_COPILOT=1 CLAUDECODE=1`, `cargo test --no-fail-fast` reports **496 passed, 0 failed, 0 ignored**. In a clean environment (`env -u GOAL_AGENT -u GOAL_COPILOT -u CLAUDECODE sh -c 'cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test'`) the whole chain **exits 0 with 496 passed, 0 failed, 0 ignored** (final run, at `d96dda8`). Two earlier clean full runs failed (12, then 2 tests) because the fake `herdr` server tests have a fixed 5-second timeout and the machine load average was about 10 from other agents' builds; those tests passed when rerun alone (`execution_differential` 40/40, `launcher_push_differential` 4/4). The timeout is fragile under heavy load; I did not change it.
 - [x] **2. Root causes and added allows recorded.** See below.
-- [x] **3. No test removed, ignored, or weakened.** `#[test]` count in `tools/goal-rust` and `tools/goal-tui` is **604 at `origin/main` (29c8e4f) and 604 at HEAD**. 0 ignored. No assertion changed. One fixture was changed to poll differently and then reverted once main fixed the race in production code.
+- [x] **3. No test removed, ignored, or weakened.** `#[test]` count in `tools/goal-rust` and `tools/goal-tui` is **604 at `origin/main` (29c8e4f) and 604 at HEAD** (counted with `git grep '#\[test\]'`; the earlier 607 was measured against an older `main` and `main` has since lost tests, none by this PR: against `29c8e4f` this PR's diff has 20 `#[test]` lines added and 20 removed, all from `cargo fmt` expanding one-line test functions, so the net change is 0). 0 ignored. No assertion changed. One fixture was changed to poll differently and then reverted once main fixed the race in production code.
 - [x] **4. Config PR URL and scoped diff.** https://github.com/jesusvillota/config/pull/110. `git diff origin/main...HEAD --name-only` lists 100 files: 99 under `tools/goal-rust/` or `tools/goal-tui/`, plus `shared/skills/goal-setup/references/format.md` (+3 lines), which DEC-007 allows.
 
 ## Root causes of the test failures
@@ -50,4 +50,6 @@ $ GOAL_AGENT=claude GOAL_COPILOT=1 CLAUDECODE=1 cargo test --no-fail-fast
 total: 496 passed, 0 failed, 0 ignored
 $ env -u GOAL_AGENT -u GOAL_COPILOT -u CLAUDECODE cargo test -p goal --test execution_differential
 test result: ok. 40 passed; 0 failed; 0 ignored
+$ env -u GOAL_AGENT -u GOAL_COPILOT -u CLAUDECODE sh -c 'cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test'
+exit 0; total 496 passed, 0 failed, 0 ignored
 ```
