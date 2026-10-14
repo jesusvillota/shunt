@@ -91,6 +91,14 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
 
 ## 端末でのランキング切り替え
 
+`shunt tui` の Antigravity アカウントには `Quota remaining ↓` と、モデル系統と
+報告された期間ごとの字下げした行が表示されます。各行は**残りの割合**と
+リセットまでの時間を示します。例: `Gemini Models · weekly: 0% left · resets in 6d`。
+TUI は Web ダッシュボードと同じく `GET /admin/api/pool` の `quota_buckets` を読みます。
+5h の期間は上流サービスが報告した場合だけ表示します。残りの値がなければ `—`、
+リセット時刻がないか無効なら残り時間を表示しません。クォータの行をクリックすると
+そのアカウントを選択できます。Claude と Codex の既存の使用量バーとリセット表示は変わりません。
+
 `shunt tui`(`--features tui` でビルド)でプロバイダーのヘッダーまたはアカウントを選び、`m` を押します。アカウントが 2 つ以上ある場合、**custom order → balanced → weekly reset → custom order** の順に切り替わります。
 
 - **Custom order → balanced** は、そのプロバイダーの優先順位を `shunt.toml` から削除し、プール API に `{"provider": "<name>", "sort_by_weekly_reset": false}` を送ります。

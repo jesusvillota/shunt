@@ -91,6 +91,15 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
 
 ## 터미널 순위 모드 전환
 
+`shunt tui`의 Antigravity 계정에는 `Quota remaining ↓`와 함께 모델 계열과
+보고된 기간별로 들여쓴 줄이 표시됩니다. 각 줄은 **남은 비율**과 초기화까지의
+시간을 보여 줍니다. 예: `Gemini Models · weekly: 0% left · resets in 6d`.
+TUI는 웹 대시보드처럼 `GET /admin/api/pool`의 `quota_buckets`를 읽습니다.
+상위 서비스가 보고한 경우에만 5h 기간을 표시합니다. 남은 값이 없으면 `—`를
+표시하고, 초기화 시간이 없거나 잘못되면 남은 시간을 표시하지 않습니다.
+할당량 줄을 클릭하면 해당 계정이 선택됩니다. Claude와 Codex의 기존 사용량
+막대와 초기화 시간은 그대로 표시됩니다.
+
 `shunt tui`(`--features tui`로 빌드)에서 공급자 헤더나 계정을 선택하고 `m`을 누릅니다. 계정이 두 개 이상이면 **custom order → balanced → weekly reset → custom order** 순서로 전환됩니다.
 
 - **Custom order → balanced**는 해당 공급자의 우선순위를 `shunt.toml`에서 제거하고 풀 API에 `{"provider": "<name>", "sort_by_weekly_reset": false}`를 보냅니다.

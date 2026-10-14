@@ -91,6 +91,14 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
 
 ## 终端排序模式切换
 
+`shunt tui` 中的 Antigravity 账户显示 `Quota remaining ↓`，并在缩进的行中
+显示每个模型系列和上游报告的时间窗口。每行显示**剩余百分比**和距离重置的时间，
+例如 `Gemini Models · weekly: 0% left · resets in 6d`。
+TUI 与网页控制台一样，读取 `GET /admin/api/pool` 的 `quota_buckets`。
+只有上游报告了 5h 窗口时才显示该窗口。没有剩余值时显示 `—`；
+重置时间缺失或无效时不显示倒计时。点击配额行会选中对应账户。
+Claude 和 Codex 的现有使用量条和重置时间显示保持不变。
+
 在 `shunt tui`（使用 `--features tui` 构建）中，选择提供商标题或账户，然后按 `m`。提供商至少有两个账户时，按 **custom order → balanced → weekly reset → custom order** 顺序切换。
 
 - **Custom order → balanced** 从 `shunt.toml` 删除该提供商的优先级，并向账户池 API 发送 `{"provider": "<name>", "sort_by_weekly_reset": false}`。
