@@ -277,8 +277,8 @@ The response is grouped into two shared model-family quota pools: **Gemini Model
 account tier exposes them, including each window's remaining fraction and reset time. The dashboard
 renders those grouped windows rather than one bar per catalog model. Within each configured priority,
 selection prefers the requested family’s highest remaining fraction, then its earliest reset.
-If both windows exist, the lowest fraction governs. Expired windows are ignored. Known readings
-precede unknown readings; accounts without readings remain eligible. Equal readings rotate.
+If both windows exist, the lowest fraction governs. Expired windows are ignored. Positive readings
+precede unknown readings, which precede known zero readings. Accounts without readings remain eligible. Equal readings rotate.
 Generic reset-sorting settings do not override this family ranking.
 
 To inspect every account’s grouped quota from the goal CLI, run `goal pool --json`.

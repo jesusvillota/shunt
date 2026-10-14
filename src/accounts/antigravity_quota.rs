@@ -58,8 +58,11 @@ pub(super) fn compare(left: Option<Rank>, right: Option<Rank>) -> Ordering {
                 }
             })
         }
-        (Some(_), None) => Ordering::Less,
-        (None, Some(_)) => Ordering::Greater,
+        // Unknown quota is neutral: try it before a known exhausted account.
+        (Some(left), None) if left.remaining > 0.0 => Ordering::Less,
+        (Some(_), None) => Ordering::Greater,
+        (None, Some(right)) if right.remaining > 0.0 => Ordering::Greater,
+        (None, Some(_)) => Ordering::Less,
         (None, None) => Ordering::Equal,
     }
 }
@@ -124,7 +127,7 @@ mod tests {
     }
 
     #[test]
-    fn equal_readings_rotate_and_known_readings_precede_unknown() {
+    fn equal_readings_rotate_and_positive_readings_precede_unknown() {
         let pool = AccountPool::new();
         let accounts = [account("a"), account("b"), account("unseen")];
         for account in &accounts[..2] {
@@ -155,6 +158,31 @@ mod tests {
             other_pool.select_order("claude", &other, None, Some("gemini-pro"), None),
             vec![0, 1, 2]
         );
+    }
+
+    #[test]
+    fn unknown_quota_follows_positive_and_precedes_exhausted_per_model_family() {
+        let pool = AccountPool::new();
+        let accounts = [account("exhausted"), account("unseen"), account("positive")];
+        for (account, remaining) in [(&accounts[0], 0.0), (&accounts[2], 0.7)] {
+            pool.note_antigravity_usage(
+                "google",
+                account,
+                vec![
+                    bucket("Gemini Models · weekly", remaining, None),
+                    bucket("Claude + GPT Models · weekly", remaining, None),
+                ],
+            );
+        }
+        for _ in 0..4 {
+            for model in ["gemini-3.1-pro", "claude-sonnet-4-6", "gpt-oss-120b"] {
+                assert_eq!(
+                    pool.select_order("google", &accounts, None, Some(model), None),
+                    vec![2, 1, 0],
+                    "{model}"
+                );
+            }
+        }
     }
 
     #[test]

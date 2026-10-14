@@ -66,8 +66,8 @@ The grouped windows are flattened into the existing dashboard
 uses the requested model family only. Within each configured priority tier, it
 prefers the highest remaining fraction, then the earliest reset. When both 5h
 and weekly windows exist, the lowest remaining fraction governs. Expired windows
-are ignored. Known readings precede unknown readings; accounts without readings
-remain eligible. Equal readings retain round-robin rotation. Generic
+are ignored. Positive readings precede unknown readings, which precede known
+zero readings. Accounts without readings remain eligible. Equal readings retain round-robin rotation. Generic
 `health.quota` stays separate, so Gemini usage cannot rank Claude/GPT traffic.
 The buckets are memory-only and are re-fetched by the poller; no
 `state_persist.rs` migration is required.
