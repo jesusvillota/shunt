@@ -9,16 +9,19 @@ delivery: pr
 
 ## Why
 
-<the success criterion or milestone this serves>
+The pool must actually work across all accounts (SC-2).
 
 ## Scope
 
-<included work, touched areas and interfaces, explicitly out of scope>
+Fix the defects TASK-001 found in antigravity account selection, rotation and failover so requests use the shared pool of all configured accounts, in `src/accounts.rs`, `src/proxy/failover.rs`, `src/auth/antigravity/`. Account for the two shared model-family pools (Gemini vs Claude+GPT): exhausting one pool must not mark the account dead for the other. Add integration tests with a mock upstream. Update affected docs and locale copies. Out of scope: reading quota (TASK-002) and quota-weighted ranking (TASK-004).
 
 ## Acceptance
 
-- <observable criterion, provable by command output>
+- An integration test sends N requests with 3 mock accounts and shows each account is used.
+- A test shows a 429 on one account fails over to the next and the exhausted account is skipped until reset.
+- A test shows exhausting the Gemini pool still allows Claude+GPT model requests on the same account.
+- fmt, clippy and full tests pass.
 
 ## Verify
 
-<commands that prove the acceptance criteria>
+`cargo fmt --all --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-features --workspace`
