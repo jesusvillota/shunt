@@ -1353,6 +1353,14 @@ async fn patch_pool_settings(
     if let Some(response) = check_csrf(&authok.kind, &headers) {
         return response;
     }
+    // Reject a typo'd provider up front, before any override is applied.
+    if body
+        .provider
+        .as_ref()
+        .is_some_and(|p| !state.config.providers.contains_key(p))
+    {
+        return not_found();
+    }
     if let Some(sort_by_reset) = body.sort_by_reset {
         state.accounts.set_sort_by_reset_override(sort_by_reset);
         tracing::info!(

@@ -5403,3 +5403,22 @@ async fn admin_pool_reports_request_counters_per_account() {
         ]
     );
 }
+
+#[tokio::test]
+async fn patch_pool_rejects_unknown_provider() {
+    if !can_bind_loopback() {
+        return;
+    }
+    let mut vars = common::env_lock().await;
+    vars.set("SHUNT_TEST_ADMIN_PATCH_UNKNOWN", "ops:patch-secret");
+    let config = admin_config("SHUNT_TEST_ADMIN_PATCH_UNKNOWN");
+    let gateway = start(config).await;
+    let response = reqwest::Client::new()
+        .patch(format!("{}/admin/api/pool", gateway.base_url))
+        .header("x-shunt-admin-token", "patch-secret")
+        .json(&serde_json::json!({"provider": "no-such-provider", "sort_by_weekly_reset": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}

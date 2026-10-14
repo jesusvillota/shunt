@@ -87,7 +87,7 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
   -d '{"sort_by_weekly_reset": true}'
 ```
 
-Like `sort_by_reset`, the runtime toggle overrides the config file's value until cleared or the process restarts; send `null` to clear it explicitly, and omitting the field is a no-op. Add `"provider": "<name>"` to the body to set the override for that provider only; it wins over the process-wide value. `GET /admin/api/pool` reports the effective value as a top-level `sort_by_weekly_reset` boolean (and per provider, on each provider object), and the setting is likewise inert while `[server.pool]` itself is absent.
+Like `sort_by_reset`, the runtime toggle overrides the config file's value until cleared or the process restarts; send `null` to clear it explicitly, and omitting the field is a no-op. Add `"provider": "<name>"` to the body to set the override for that provider only; it wins over the process-wide value. An unknown provider name returns `404` and changes nothing. `GET /admin/api/pool` reports the effective value as a top-level `sort_by_weekly_reset` boolean (and per provider, on each provider object), and the setting is likewise inert while `[server.pool]` itself is absent.
 
 ## Terminal ranking cycle
 

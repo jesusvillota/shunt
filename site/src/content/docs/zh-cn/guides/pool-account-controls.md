@@ -87,7 +87,7 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
   -d '{"sort_by_weekly_reset": true}'
 ```
 
-与 `sort_by_reset` 一样,运行时切换会覆盖配置文件的值,直到被清除或进程重启;显式清除请发送 `null`,省略该字段则为空操作。在请求体中加入 `"provider": "<name>"` 可让覆盖值只作用于该提供商,且优先于进程级的值。`GET /admin/api/pool` 会以顶层的 `sort_by_weekly_reset` 布尔值(以及每个提供商对象上的值)报告生效值;若 `[server.pool]` 本身不存在,该设置同样完全不起作用。
+与 `sort_by_reset` 一样,运行时切换会覆盖配置文件的值,直到被清除或进程重启;显式清除请发送 `null`,省略该字段则为空操作。在请求体中加入 `"provider": "<name>"` 可让覆盖值只作用于该提供商,且优先于进程级的值。未知的 provider 名称会返回 `404`,且不做任何更改。`GET /admin/api/pool` 会以顶层的 `sort_by_weekly_reset` 布尔值(以及每个提供商对象上的值)报告生效值;若 `[server.pool]` 本身不存在,该设置同样完全不起作用。
 
 ## 终端排序模式切换
 
