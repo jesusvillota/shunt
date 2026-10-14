@@ -1,0 +1,10 @@
+$ shasum ~/.config/shunt/shunt.toml
+84fb6c69f0c78614a7ca3211e66596d551b7a6ee  /Users/jesusvillotamiranda/.config/shunt/shunt.toml
+$ launchctl list | grep shunt
+57240	0	com.jesusvillotamiranda.shunt
+$ pgrep -fl "shunt run"
+57240 /Users/jesusvillotamiranda/GitHub/shunt/target/release/shunt run
+$ ps -o pid,lstart,command -p 57240
+  PID STARTED                      COMMAND
+57240 Wed Oct 14 10:57:13 2026     /Users/jesusvillotamiranda/GitHub/shunt/target/release/shunt run
+$ cp ~/.config/shunt/shunt.toml /tmp/t010/live-shunt.toml.before
