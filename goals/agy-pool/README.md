@@ -19,11 +19,14 @@ Make the shunt antigravity pool serve traffic across all configured accounts and
 ```mermaid
 flowchart TD
   subgraph M_1["M-1 · Working agy pool with quota"]
+    DEC_001{{"DEC-001 Choose the agy quota source"}}
     TASK_001["TASK-001 Diagnose why the agy pool fails and quota is missing"]
   end
+  TASK_001 --> DEC_001
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
+  class DEC_001 decision
 ```
 <!-- goal:graph:end -->
 
