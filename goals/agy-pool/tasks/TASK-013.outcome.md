@@ -53,3 +53,22 @@ test result: ok. 40 passed; 0 failed; 0 ignored
 $ env -u GOAL_AGENT -u GOAL_COPILOT -u CLAUDECODE sh -c 'cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test'
 exit 0; total 496 passed, 0 failed, 0 ignored
 ```
+
+## Rebase onto moved main (config PR #110)
+
+PR #110 went DIRTY after main moved (#111 and later). The branch now sits on current `origin/main`: it carries only the `cargo fmt` output for `tools/goal-rust` and `tools/goal-tui`, plus the clippy fixes. The `format.md` and sequential-fixture edits were dropped because main already has them. Formatting was regenerated with `cargo fmt`, not hand-merged.
+
+New head: `bd65853ca2ce1b6cb3da0e09be62460230ead395`. GitHub shows `mergeStateStatus` CLEAN. PR is open, not a draft, labelled `goal:agy-pool`, body has `Goal-Task: agy-pool/TASK-013`. Diff touches only `tools/goal-rust` and `tools/goal-tui`. `#[test]` count: 626 on main, 626 on the branch; no `#[ignore]`.
+
+Extra root cause found while rebasing: the old fix for `single_element_loop` was not needed on the final tree. Still three `#[allow(clippy::too_many_arguments)]`, same reason as above.
+
+```text
+$ cargo fmt --check                                   -> exit 0
+$ cargo clippy --all-targets -- -D warnings           -> exit 0 (goal-tui also clean)
+$ env -u GOAL_AGENT -u GOAL_COPILOT -u CLAUDECODE cargo test --no-fail-fast
+total: 518 passed, 0 failed, 0 ignored
+$ GOAL_AGENT=claude GOAL_COPILOT=1 CLAUDECODE=1 sh -c 'cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --no-fail-fast'
+exit 0; total: 518 passed, 0 failed, 0 ignored
+```
+
+One earlier agent-env run had `execution_differential::all_process_launchers_match_argv_registry_ledger_and_history` fail under heavy machine load; it passed alone (twice) and in the next full run.
