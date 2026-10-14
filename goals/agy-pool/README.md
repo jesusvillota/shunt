@@ -25,6 +25,7 @@ flowchart TD
     DEC_004{{"DEC-004 May TASK-008 exclude protected goals/ records from its grep and limit link acceptance to links affected by this task?"}}
     DEC_005{{"DEC-005 Should a separate task repair the goal-rust baseline checks before TASK-009 delivery?"}}
     DEC_006{{"DEC-006 Should a separate task repair tools/goal-tui before TASK-013 resumes?"}}
+    DEC_007{{"DEC-007 Should TASK-013 touch shared/skills/goal-setup/references/format.md to sync it with the worker-protocol template?"}}
     TASK_001["TASK-001 Diagnose why the agy pool fails and quota is missing"]
     TASK_002["TASK-002 Read agy quota via the agy /usage command per account"]
     TASK_003["TASK-003 Make the agy pool rotate and fail over across all accounts"]
@@ -57,6 +58,7 @@ flowchart TD
   TASK_008 --> TASK_011
   TASK_010 --> TASK_012
   DEC_006 --> TASK_013
+  DEC_007 --> TASK_013
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
@@ -67,6 +69,7 @@ flowchart TD
   class DEC_004 decision
   class DEC_005 decision
   class DEC_006 decision
+  class DEC_007 decision
 ```
 <!-- goal:graph:end -->
 

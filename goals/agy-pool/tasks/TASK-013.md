@@ -3,7 +3,7 @@ id: TASK-013
 title: Repair the goal-rust baseline checks in the config repo
 milestone: M-1
 state: approved
-depends_on: [DEC-006]
+depends_on: [DEC-006, DEC-007]
 delivery: pr
 ---
 
