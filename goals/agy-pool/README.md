@@ -26,6 +26,7 @@ flowchart TD
     TASK_002["TASK-002 Read agy quota via the agy /usage command per account"]
     TASK_003["TASK-003 Make the agy pool rotate and fail over across all accounts"]
     TASK_004["TASK-004 Quota-aware account selection and live end-to-end smoke"]
+    TASK_005["TASK-005 Fix macOS streaming test failures"]
   end
   TASK_001 --> DEC_001
   DEC_001 --> TASK_002
