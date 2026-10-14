@@ -26,6 +26,10 @@ struct Pool {
 
 impl Pool {
     async fn start(backend: &MockServer, names: &[&str]) -> Self {
+        Self::start_with(backend, names, "").await
+    }
+
+    async fn start_with(backend: &MockServer, names: &[&str], extra_config: &str) -> Self {
         let mut vars = common::env_lock().await;
         let dir = std::env::temp_dir().join(format!(
             "shunt-agy-rotation-{}-{}",
@@ -57,8 +61,9 @@ impl Pool {
             &config_path,
             format!(
                 "[server]\nbind = \"127.0.0.1:0\"\ndefault_provider = \"antigravity\"\n\
-                 [providers.antigravity]\nauth = \"antigravity_oauth\"\nbase_url = \"{}\"\n",
-                backend.uri()
+                 [providers.antigravity]\nauth = \"antigravity_oauth\"\nbase_url = \"{}\"\n{}",
+                backend.uri(),
+                extra_config
             ),
         )
         .unwrap();
@@ -464,6 +469,40 @@ async fn cooled_account_with_a_token_failure_on_another_is_not_a_429() {
         json!({"access_token": "token-b", "expiry_date": 1, "project_id": "project-b"}).to_string(),
     )
     .unwrap();
+    let calls = backend.received_requests().await.unwrap().len();
+    assert_no_account_available(pool.response("gemini-3.8-flash").await).await;
+    assert_eq!(backend.received_requests().await.unwrap().len(), calls);
+}
+
+#[tokio::test]
+async fn cooled_account_with_a_deferred_uncooled_account_is_not_a_429() {
+    let backend = healthy_backend().await;
+    exhaust_account(&backend, "a", 60).await;
+    let pool = Pool::start_with(
+        &backend,
+        &["a", "b", "c"],
+        "[server.pool]\nramp_initial_concurrency = 1\n",
+    )
+    .await;
+    // The first request tries a (429 -> family cooldown), then b serves it.
+    assert_eq!(pool.request("gemini-3.8-flash").await.0, 200);
+    // Next order is [b, c]: b is skipped by storm admission (one request in
+    // flight) without a cooldown, and the last candidate c fails token resolution.
+    std::fs::write(
+        pool.dir.join("accounts/c.json"),
+        json!({"access_token": "token-c", "expiry_date": 1, "project_id": "project-c"}).to_string(),
+    )
+    .unwrap();
+    // Saturate b's admission allowance (it grows after a success) with held guards.
+    let b = pool
+        .resolved_accounts
+        .iter()
+        .find(|account| account.name == "b")
+        .unwrap();
+    let mut _in_flight = Vec::new();
+    while let Some(guard) = pool.accounts.clone().try_admit("antigravity", b, 1, false) {
+        _in_flight.push(guard);
+    }
     let calls = backend.received_requests().await.unwrap().len();
     assert_no_account_available(pool.response("gemini-3.8-flash").await).await;
     assert_eq!(backend.received_requests().await.unwrap().len(), calls);

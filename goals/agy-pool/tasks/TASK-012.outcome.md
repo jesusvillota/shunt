@@ -41,3 +41,9 @@ An initial earlier full run failed the unrelated Codex test `pool_http_dispatch_
 ## Review follow-up (PR #20 blocking bug)
 
 The 429 helper `antigravity_retry_after` (src/accounts.rs) now returns a reset only when EVERY enabled, unpaused account has an active family cooldown. Otherwise the gateway returns 503 `no Antigravity accounts are available` without `Retry-After`. Added: gateway test `cooled_account_with_a_token_failure_on_another_is_not_a_429` (A cooled, B fails token resolution, no upstream call, 503) and unit test `antigravity_retry_after_requires_every_unpaused_account_cooled` (A cooled, B uncooled and not tried: None; pausing B: Some). A gateway-level test for a B skipped by `select_order` was not feasible: select_order does not drop relogin or token_env accounts, and quota skipping cannot be mocked simply, so the unit test covers that case. Docs updated (m17, en/ko/ja/zh-cn provider pages). `src/adapters/gemini/mod.rs` ~201-207 is reached only for `AntigravityOauth` providers (other auth modes return earlier at ~189), so the Antigravity name in that message is correct. Verify rerun: fmt, clippy `-D warnings` and `cargo test --all-features --workspace` exit 0.
+
+### Follow-up evidence (head after this commit)
+
+- Gateway test for review case 1: `cooled_account_with_a_deferred_uncooled_account_is_not_a_429` (A cooled; B uncooled but skipped by storm admission; last candidate C fails token resolution; 503, no upstream call).
+- Live recheck with the fixed helper: see "Case 5 addendum" in `docs/notes/agy-pool-live-test.md` (first 429 no `Retry-After`; second and third 429 `Retry-After: 526578`, no upstream call).
+- Verify rerun after these changes: fmt, clippy `-D warnings`, `cargo test --all-features --workspace` all exit 0 (48 test binaries ok).

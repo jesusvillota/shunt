@@ -193,3 +193,20 @@ $ ps -o pid,lstart,command -p 57240
 The launchd gateway (pid 57240, started 10:57:13) kept the same pid and start time, so it was not restarted. The
 scratch gateways ran on ports 39010/39012 with `HOME=/tmp/t010/home` and were killed with
 `pkill -f 'shunt run --config /tmp/t010'`, which cannot match the live process. No live account file was written.
+
+### Case 5 addendum — recheck after the "every account" fix (2026-10-14)
+
+Re-run with the fixed helper (`antigravity_retry_after` now needs every enabled, unpaused account
+cooled). Scratch gateway only: port 39020, the same scratch HOME, `./target/debug/shunt run` at
+the fix commit. The admin pause call returned 401 with the copied token, so instead of pausing, the
+scratch config omits `keepuntouser` and `cemfi` (the two accounts that still have Gemini quota); the
+three exhausted accounts remain. Evidence is in [`task012-case5-recheck2/`](agy-pool-live-test/task012-case5-recheck2/).
+
+| Request | HTTP | Time | `Retry-After` | Body message |
+| --- | --- | --- | --- | --- |
+| First | **429** | 1.83 s | absent | `Individual quota reached. … Resets in 150h44m15s.` (last upstream error) |
+| Second | **429** | 0.0011 s | **526578** | `Antigravity quota exhausted. Resets in 526578s.` |
+| Third | **429** | 0.0009 s | **526578** | `Antigravity quota exhausted. Resets in 526578s.` |
+
+All bodies are `{"type":"error","error":{"type":"rate_limit_error",…}}`. **PASS.** The live config SHA-256
+stayed `41c267ae…438b0` and the launchd gateway stayed PID 57240.
