@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex as AsyncMutex;
 
+use crate::auth::antigravity::pool::ModelFamily;
 use crate::config::{AccountConfig, PoolConfig};
 
 mod request_stats;
@@ -436,6 +437,9 @@ struct AccountHealth {
     /// Memory-only, like
     /// `cooldown_until`.
     model_cooldowns: HashMap<String, Instant>,
+    /// Gemini and Claude+GPT refusals expire independently. A success in one
+    /// family must never clear the other family's exhaustion.
+    antigravity_cooldowns: [Option<Instant>; 2],
     /// Upstream attempts against this identity, recorded by
     /// [`AccountPool::note_attempt`]. Memory-only, like `cooldown_until`.
     requests: RequestStats,
@@ -982,11 +986,14 @@ impl AccountPool {
             let mut entries = self.entries.lock().expect("account health lock poisoned");
             let mut snapshots = Vec::with_capacity(accounts.len());
             let mut paused = vec![false; accounts.len()];
+            let mut family_cooled = vec![false; accounts.len()];
             let mut quota_expired = false;
             for (index, account) in accounts.iter().enumerate() {
                 let health = self.health_entry(&mut entries, account_key(&provider, account));
                 health.enabled |= !account.disabled;
                 paused[index] = health.paused_providers.contains(&provider);
+                family_cooled[index] =
+                    antigravity_cooldown(health, model).is_some_and(|until| until > now);
                 quota_expired |= expire_stale_quota(&mut health.quota, unix_now);
                 // Assessing under the lock is pure CPU work and avoids cloning
                 // each account's QuotaState just to assess it after release.
@@ -1007,7 +1014,9 @@ impl AccountPool {
             }
             let rotation = (0..distinct)
                 .map(|offset| ident_reps[(start_slot + offset) % distinct])
-                .filter(|&index| !accounts[index].disabled && !paused[index])
+                .filter(|&index| {
+                    !accounts[index].disabled && !paused[index] && !family_cooled[index]
+                })
                 .collect::<Vec<_>>();
             // Opportunistic re-probe (Change B): among the final rotation
             // representatives, find the single stale near-quota ChatGPT-family
@@ -1636,6 +1645,26 @@ impl AccountPool {
             record_pool_utilization(provider, utilization);
         }
         self.mark_dirty();
+    }
+
+    pub(crate) fn cooldown_antigravity_family(
+        &self,
+        provider: &str,
+        account: &AccountConfig,
+        family: ModelFamily,
+        duration: Duration,
+    ) {
+        let now = Instant::now();
+        let until = now
+            .checked_add(duration)
+            .unwrap_or(now + Duration::from_secs(60));
+        let mut entries = self.entries.lock().expect("account health lock poisoned");
+        let health = self.health_entry(&mut entries, account_key(provider, account));
+        health.observed = true;
+        health.enabled = !account.disabled;
+        health.antigravity_cooldowns[family as usize] = Some(until);
+        drop(entries);
+        crate::metrics::record_pool_rotation(provider, "rate_limit");
     }
 
     pub fn cooldown(
@@ -2476,7 +2505,8 @@ impl AccountPool {
                         .and_then(|until| until.checked_duration_since(now))
                         .map(|remaining| remaining.as_secs());
                     let cooling = cooldown_secs_remaining.is_some()
-                        || (is_fable && cooldown_fable_secs_remaining.is_some());
+                        || (is_fable && cooldown_fable_secs_remaining.is_some())
+                        || antigravity_cooldown(health, model).is_some_and(|until| until > now);
                     AccountSnapshot {
                         name: account.name.clone(),
                         has_state: true,
@@ -3157,10 +3187,23 @@ fn governing_cooldown(
 ) -> Option<Instant> {
     let fable = is_fable.then_some(health.cooldown_until_fable).flatten();
     let model = model_key.and_then(|model| health.model_cooldowns.get(model).copied());
-    [health.cooldown_until, fable, model]
-        .into_iter()
-        .flatten()
-        .max()
+    [
+        health.cooldown_until,
+        fable,
+        model,
+        antigravity_cooldown(health, model_key),
+    ]
+    .into_iter()
+    .flatten()
+    .max()
+}
+
+fn antigravity_cooldown(health: &AccountHealth, model: Option<&str>) -> Option<Instant> {
+    if health.antigravity_cooldowns.iter().all(Option::is_none) {
+        return None;
+    }
+    let family = ModelFamily::for_model(model?)?;
+    health.antigravity_cooldowns[family as usize]
 }
 
 fn governing_weekly_reset(quota: &QuotaState, is_fable: bool) -> Option<u64> {
@@ -6625,6 +6668,59 @@ mod tests {
             .last(),
             Some(&sticky),
             "the Fable request must put the cooled account in the tail"
+        );
+    }
+
+    #[test]
+    fn antigravity_weekly_cooldown_skips_family_until_reset() {
+        let pool = AccountPool::default();
+        let accounts = vec![account("a"), account("b")];
+        pool.cooldown_antigravity_family(
+            "antigravity",
+            &accounts[0],
+            ModelFamily::Gemini,
+            Duration::from_secs(581512),
+        );
+        // A success in the independent family cannot clear a weekly refusal.
+        pool.mark_healthy("antigravity", &accounts[0], true);
+        for model in ["gemini-3.8-flash-medium", "gemini-3.1-pro-high"] {
+            assert_eq!(
+                pool.select_order("antigravity", &accounts, None, Some(model), None),
+                vec![1]
+            );
+            assert!(!pool.snapshot("antigravity", &accounts, Some(model), None)[0].available);
+        }
+        for model in ["claude-sonnet-4-6", "gpt-oss-120b-medium"] {
+            assert_eq!(
+                pool.select_order("antigravity", &accounts, None, Some(model), None)
+                    .len(),
+                2
+            );
+            assert!(pool.snapshot("antigravity", &accounts, Some(model), None)[0].available);
+        }
+        let mut entries = pool.entries.lock().unwrap();
+        let health = entries
+            .get_mut(&account_key("antigravity", &accounts[0]))
+            .unwrap();
+        assert!(
+            health.antigravity_cooldowns[0]
+                .unwrap()
+                .duration_since(Instant::now())
+                .as_secs()
+                > 581500
+        );
+        health.antigravity_cooldowns[0] = Some(Instant::now() - Duration::from_secs(1));
+        drop(entries);
+        assert_eq!(
+            pool.select_order(
+                "antigravity",
+                &accounts,
+                None,
+                Some("gemini-3.8-flash"),
+                None
+            )
+            .len(),
+            2
         );
     }
 

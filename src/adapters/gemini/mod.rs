@@ -482,26 +482,46 @@ fn cooldown_for_antigravity_error(
     account: &crate::config::AccountConfig,
     status: StatusCode,
     headers: &HeaderMap,
+    body: &str,
 ) {
     match crate::accounts::classify_antigravity(status, headers) {
         crate::accounts::FailoverAction::Relay | crate::accounts::FailoverAction::RefreshRetry => {}
         crate::accounts::FailoverAction::Rotate | crate::accounts::FailoverAction::PauseSame => {
             let cooldown = if status == StatusCode::TOO_MANY_REQUESTS {
                 crate::accounts::retry_after(headers)
+                    .or_else(|| crate::auth::antigravity::pool::reset_delay(body))
                     .unwrap_or(std::time::Duration::from_secs(60))
-                    .clamp(
-                        std::time::Duration::from_secs(1),
-                        std::time::Duration::from_secs(3600),
-                    )
+                    .max(std::time::Duration::from_secs(1))
             } else {
                 std::time::Duration::from_secs(30)
             };
-            state.accounts.cooldown(
-                &route.provider,
-                account,
-                cooldown,
-                crate::accounts::rotation_reason(status, headers),
-            );
+            if status == StatusCode::TOO_MANY_REQUESTS {
+                if let Some(family) =
+                    crate::auth::antigravity::pool::ModelFamily::for_model(&route.upstream_model)
+                {
+                    state.accounts.cooldown_antigravity_family(
+                        &route.provider,
+                        account,
+                        family,
+                        cooldown,
+                    );
+                } else {
+                    state.accounts.cooldown_model(
+                        &route.provider,
+                        account,
+                        &route.upstream_model,
+                        cooldown.min(std::time::Duration::from_secs(3600)),
+                        "rate_limit",
+                    );
+                }
+            } else {
+                state.accounts.cooldown(
+                    &route.provider,
+                    account,
+                    cooldown,
+                    crate::accounts::rotation_reason(status, headers),
+                );
+            }
         }
     }
 }
@@ -734,7 +754,14 @@ async fn forward_single(
                 }
             };
         if let Some(account) = account {
-            cooldown_for_antigravity_error(state, route, account, status, &response_headers);
+            cooldown_for_antigravity_error(
+                state,
+                route,
+                account,
+                status,
+                &response_headers,
+                &body_text,
+            );
         }
         return Err(map_gemini_error(status, &body_text));
     }

@@ -62,7 +62,7 @@ The grouped windows are flattened into the existing dashboard
 
 They are **display-only**. `AccountPool::note_antigravity_usage` updates
 `health.quota_buckets` but leaves the generic `health.quota` selection state
-untouched, so Antigravity account selection/rotation behavior does not change.
+untouched, so polling alone does not change Antigravity account selection/rotation behavior.
 The buckets are memory-only and are re-fetched by the poller; no
 `state_persist.rs` migration is required.
 
@@ -83,3 +83,27 @@ only that field rather than building a generic JSON value.
 The quota-summary endpoint and response shape are private implementation details
 and may change upstream. Enabling `[server.pool] usage_refresh_seconds` adds one
 best-effort metadata poll per eligible account on each interval.
+
+## Account rotation and refusal cooldowns (agy-pool TASK-003)
+
+Healthy accounts of equal priority rotate across the configured pool. An inference
+429 now excludes only its model family: `gemini-*` shares one cooldown, while
+`claude-*` and `gpt-*` share the other. Selection skips that family until reset,
+even when every account is exhausted. A new request then receives 503; the
+request that exhausted the pool retains the last upstream error. Successful
+traffic in the other family does not clear the refusal. Auth and transport
+failures retain their account-wide cooldowns.
+
+The delay comes from `Retry-After`, then the observed JSON error message
+`Resets in 161h31m52s.`, then a 60-second fallback. The minimum is one second.
+The old one-hour cap is removed so weekly exhaustion lasts until the reported
+reset. Cooldowns are memory-only and clear on restart. Unknown model families
+use the existing per-model cooldown rather than blocking known families.
+
+The grouped usage snapshot remains display-only here. TASK-004 owns quota-based
+ranking. Account names and identity rules remain unchanged: optional userinfo
+email is not a verified upstream identity. Remove duplicate logins from the
+configured pool rather than treating their matching email as proof of identity.
+
+Verification: `tests/antigravity_pool_rotation.rs` covers nine requests across
+three accounts, failover and reset recovery, and independence in both directions.
