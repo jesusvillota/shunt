@@ -3,6 +3,19 @@ title: CLI
 description: shunt 命令行 —— run、check、init、add、import、token、gateway login 和 provider login。
 ---
 
+## `shunt pool`
+
+输出一次 `GET /admin/api/pool` 快照。此只读命令包含在默认构建中，无需 `tui` 功能。read 级管理员令牌即可使用。
+
+```bash
+shunt pool --config /path/to/shunt.toml
+shunt pool --url http://127.0.0.1:3001 --json
+```
+
+文本按提供商分组，每个账户占一行，显示名称、可用状态、5h/7d 使用率和重置倒计时，以及当前冷却时间。Antigravity 显示每个已报告 `quota_buckets` 的标签、剩余百分比和重置倒计时。仅有每周配额时不会增加其他窗口。缺失值显示为破折号。
+
+`--json` 原样输出网关快照，包括未知字段。`--url` 覆盖从配置 bind 推导的 URL。令牌依次取自 `--token`、`SHUNT_ADMIN_TOKEN`、`SHUNT_ADMIN_TOKENS` 的首项和 `~/.shunt/admin-token`。`--header` 默认为 `x-shunt-admin-token`。令牌缺失、被拒绝或网关无法连接时，在 stderr 输出单行错误并以非零状态退出。
+
 ## `shunt import opencodex`
 
 离线读取兼容凭据并保存为新的私有快照，不覆盖现有设置、凭据文件或 OpenCodex 状态。请先预览；非交互式导出需要 `--yes`。

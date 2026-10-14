@@ -65,48 +65,7 @@ enum Msg {
     Tick,
 }
 
-/// The first usable credential in `name:token` pair text (one per line or
-/// comma-separated, `#` comments allowed) — the format `shunt dashboard setup`
-/// writes to `~/.shunt/admin-token`.
-fn first_token(text: &str) -> Option<String> {
-    text.lines()
-        .filter(|line| !line.trim_start().starts_with('#'))
-        .flat_map(|line| line.split(','))
-        .map(str::trim)
-        .filter(|entry| !entry.is_empty())
-        .map(|entry| {
-            entry
-                .split_once(':')
-                .map_or(entry, |(_, token)| token)
-                .trim()
-        })
-        .find(|token| !token.is_empty())
-        .map(str::to_string)
-}
-
-fn resolve_token(explicit: Option<String>) -> anyhow::Result<String> {
-    let env = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
-    if let Some(token) = explicit.filter(|t| !t.trim().is_empty()) {
-        return Ok(token);
-    }
-    if let Some(token) = env("SHUNT_ADMIN_TOKEN") {
-        return Ok(token.trim().to_string());
-    }
-    if let Some(token) = env("SHUNT_ADMIN_TOKENS").as_deref().and_then(first_token) {
-        return Ok(token);
-    }
-    if let Some(path) = crate::config::default_admin_token_file() {
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            if let Some(token) = first_token(&text) {
-                return Ok(token);
-            }
-        }
-    }
-    bail!(
-        "no admin token found. Pass --token, set SHUNT_ADMIN_TOKEN, or run \
-         `shunt dashboard setup` (writes ~/.shunt/admin-token)"
-    )
-}
+use crate::pool::resolve_token;
 
 pub fn run(options: Options) -> anyhow::Result<()> {
     let token = resolve_token(options.token)?;
@@ -580,20 +539,3 @@ async fn event_loop(
 
 #[cfg(test)]
 mod runtime_tests;
-
-#[cfg(test)]
-mod tests {
-    use super::first_token;
-
-    #[test]
-    fn first_token_reads_the_setup_file_format() {
-        assert_eq!(first_token("ops:abc123\n").as_deref(), Some("abc123"));
-        assert_eq!(
-            first_token("# generated\n\nops:abc, other:def\n").as_deref(),
-            Some("abc")
-        );
-        assert_eq!(first_token("baretoken").as_deref(), Some("baretoken"));
-        assert_eq!(first_token("  \n# only a comment\n"), None);
-        assert_eq!(first_token("ops:\n"), None);
-    }
-}

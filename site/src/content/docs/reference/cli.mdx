@@ -3,6 +3,19 @@ title: CLI
 description: The shunt command line — run, check, init, add, import, token, gateway login, and provider login.
 ---
 
+## `shunt pool`
+
+Print one snapshot from `GET /admin/api/pool`. This read-only command is included in the default build; it needs no `tui` feature. A read-tier admin token is enough.
+
+```bash
+shunt pool --config /path/to/shunt.toml
+shunt pool --url http://127.0.0.1:3001 --json
+```
+
+Text output has one section per provider and one line per account: name, availability, 5h/7d utilization and reset countdowns, and active cooldowns. Antigravity shows each reported `quota_buckets` label, remaining percentage, and reset countdown. Weekly-only quota stays weekly-only. Missing readings show a dash.
+
+`--json` prints the gateway snapshot unchanged, including unknown fields. `--url` overrides the URL derived from the configured bind. Token lookup uses `--token`, then `SHUNT_ADMIN_TOKEN`, the first entry of `SHUNT_ADMIN_TOKENS`, and `~/.shunt/admin-token`. `--header` defaults to `x-shunt-admin-token`. Missing or refused tokens and unreachable gateways print a one-line error to stderr and exit non-zero.
+
 ## `shunt import opencodex`
 
 Read compatible credentials offline into a new private snapshot. Existing settings, credential files and OpenCodex state are never overwritten. Preview first; a non-interactive export requires `--yes`.

@@ -3,6 +3,19 @@ title: CLI
 description: shunt コマンドライン — run、check、init、add、import、token、gateway login、provider login。
 ---
 
+## `shunt pool`
+
+`GET /admin/api/pool` のスナップショットを一度表示します。この読み取り専用コマンドは既定のビルドに含まれ、`tui` 機能は不要です。read 権限の管理トークンで利用できます。
+
+```bash
+shunt pool --config /path/to/shunt.toml
+shunt pool --url http://127.0.0.1:3001 --json
+```
+
+テキストはプロバイダー別のセクションとアカウントごとの一行で構成されます。名前、利用可能状態、5h/7d の使用率とリセットまでの時間、有効なクールダウンを表示します。Antigravity は報告された各 `quota_buckets` のラベル、残りの割合、リセットまでの時間を表示します。週次クォータだけの応答に別の期間は追加しません。未取得の値はダッシュで表示します。
+
+`--json` は未知のフィールドも含めてスナップショットをそのまま出力します。`--url` は設定の bind から得た URL を上書きします。トークンは `--token`、`SHUNT_ADMIN_TOKEN`、`SHUNT_ADMIN_TOKENS` の最初の項目、`~/.shunt/admin-token` の順で探します。`--header` の既定値は `x-shunt-admin-token` です。トークンの欠落・拒否や接続失敗では stderr に一行のエラーを表示し、非ゼロで終了します。
+
 ## `shunt import opencodex`
 
 互換性のある認証情報をオフラインで読み、新しい非公開スナップショットに保存します。既存の設定、認証情報ファイル、OpenCodex の状態は上書きしません。まずプレビューしてください。非対話型のエクスポートには `--yes` が必要です。

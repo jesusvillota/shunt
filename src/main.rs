@@ -64,6 +64,21 @@ enum Command {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// Print the managed account pool from a running gateway (read-tier admin token is enough).
+    Pool {
+        /// Gateway URL. Default: configured `[server].bind`.
+        #[arg(long)]
+        url: Option<String>,
+        /// Admin token: SHUNT_ADMIN_TOKEN, SHUNT_ADMIN_TOKENS, or ~/.shunt/admin-token.
+        #[arg(long)]
+        token: Option<String>,
+        /// Header carrying the admin token.
+        #[arg(long, default_value = "x-shunt-admin-token")]
+        header: String,
+        /// Print the gateway JSON unchanged.
+        #[arg(long)]
+        json: bool,
+    },
     /// Live terminal view of the managed account pool, one section per
     /// provider: usage and reset times, pause/resume, a provider on/off switch,
     /// an explicit account ranking, and adding accounts (saved to shunt.toml).
@@ -219,6 +234,32 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Command::Run { config }) => run(config.or(cli.config)),
         Some(Command::Check { config }) => check(config.or(cli.config)),
+        Some(Command::Pool {
+            url,
+            token,
+            header,
+            json,
+        }) => {
+            let result = runtime()?.block_on(shunt::pool::run(shunt::pool::Options {
+                url,
+                token,
+                header,
+                json,
+                config: cli.config,
+            }));
+            match result {
+                Ok(body) => {
+                    std::io::stdout()
+                        .write_all(body.as_bytes())
+                        .context("writing pool output")?;
+                    Ok(())
+                }
+                Err(error) => {
+                    eprintln!("Error: {}", error.to_string().replace(['\n', '\r'], " "));
+                    std::process::exit(1);
+                }
+            }
+        }
         Some(Command::Top {
             url,
             token,
