@@ -58,7 +58,7 @@ exit 0; total 496 passed, 0 failed, 0 ignored
 
 PR #110 went DIRTY after main moved (#111 and later). The branch now sits on current `origin/main`: it carries only the `cargo fmt` output for `tools/goal-rust` and `tools/goal-tui`, plus the clippy fixes. The `format.md` and sequential-fixture edits were dropped because main already has them. Formatting was regenerated with `cargo fmt`, not hand-merged.
 
-New head: `bd65853ca2ce1b6cb3da0e09be62460230ead395`. GitHub shows `mergeStateStatus` CLEAN. PR is open, not a draft, labelled `goal:agy-pool`, body has `Goal-Task: agy-pool/TASK-013`. Diff touches only `tools/goal-rust` and `tools/goal-tui`. `#[test]` count: 626 on main, 626 on the branch; no `#[ignore]`.
+New head: `e88f682f31a49356b1424c17d5876d35c7dafc93`. GitHub shows `mergeStateStatus` CLEAN. PR is open, not a draft, labelled `goal:agy-pool`, body has `Goal-Task: agy-pool/TASK-013`. Diff touches only `tools/goal-rust` and `tools/goal-tui`. `#[test]` count: 629 on main, 629 on the branch; no `#[ignore]`.
 
 Extra root cause found while rebasing: the old fix for `single_element_loop` was not needed on the final tree. Still three `#[allow(clippy::too_many_arguments)]`, same reason as above.
 
@@ -66,9 +66,13 @@ Extra root cause found while rebasing: the old fix for `single_element_loop` was
 $ cargo fmt --check                                   -> exit 0
 $ cargo clippy --all-targets -- -D warnings           -> exit 0 (goal-tui also clean)
 $ env -u GOAL_AGENT -u GOAL_COPILOT -u CLAUDECODE cargo test --no-fail-fast
-total: 518 passed, 0 failed, 0 ignored
+total: 521 passed, 0 failed, 0 ignored
 $ GOAL_AGENT=claude GOAL_COPILOT=1 CLAUDECODE=1 sh -c 'cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --no-fail-fast'
-exit 0; total: 518 passed, 0 failed, 0 ignored
+exit 0; total: 521 passed, 0 failed, 0 ignored
 ```
 
 One earlier agent-env run had `execution_differential::all_process_launchers_match_argv_registry_ledger_and_history` fail under heavy machine load; it passed alone (twice) and in the next full run.
+
+## Final state (head e88f682)
+
+Main moved twice more during the work (#120 added a complex `limit_catalog` type, now aliased as `LimitCatalog`). Rebuilt on `origin/main`; `gh pr view 110`: CLEAN, open, not a draft, label `goal:agy-pool`, 0 reviews, 0 comments, 0 inline comments, 0 checks configured. Shunt PR #22: open, not a draft, 0 reviews/comments. Item 4 correction: the earlier line listing `format.md` is obsolete; `git diff origin/main --name-only` now lists only `tools/goal-rust` and `tools/goal-tui`.
