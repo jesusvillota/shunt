@@ -21,6 +21,7 @@ flowchart TD
   subgraph M_1["M-1 · Working agy pool with quota"]
     DEC_001{{"DEC-001 Choose the agy quota source"}}
     DEC_002{{"DEC-002 Approve optional per-account profile_dir and upstream-reported-window acceptance with separate captured-weekly and four-window schema tests?"}}
+    DEC_003{{"DEC-003 Should TASK-003 include fixes for the known macOS streaming-test failures, or wait for a separate fix?"}}
     TASK_001["TASK-001 Diagnose why the agy pool fails and quota is missing"]
     TASK_002["TASK-002 Read agy quota via the agy /usage command per account"]
     TASK_003["TASK-003 Make the agy pool rotate and fail over across all accounts"]
@@ -30,6 +31,7 @@ flowchart TD
   DEC_001 --> TASK_002
   DEC_002 --> TASK_002
   TASK_001 --> TASK_003
+  DEC_003 --> TASK_003
   TASK_002 --> TASK_004
   TASK_003 --> TASK_004
   classDef draft stroke-dasharray: 4 3
@@ -37,6 +39,7 @@ flowchart TD
   classDef decision fill:#f3e8ff,stroke:#7c3aed
   class DEC_001 decision
   class DEC_002 decision
+  class DEC_003 decision
 ```
 <!-- goal:graph:end -->
 

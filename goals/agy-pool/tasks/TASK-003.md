@@ -3,7 +3,7 @@ id: TASK-003
 title: Make the agy pool rotate and fail over across all accounts
 milestone: M-1
 state: approved
-depends_on: [TASK-001]
+depends_on: [TASK-001, DEC-003]
 delivery: pr
 ---
 
