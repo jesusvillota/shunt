@@ -47,12 +47,12 @@ shunt run --config /path/to/shunt.toml
 
 Homebrew でインストールした場合は、バックグラウンドサービスとして実行することもできます: `brew services start shunt`。詳細は [Installation](/ja/getting-started/installation/#バックグラウンドサービスとして実行する) を参照してください。
 
-## `shunt top`
+## `shunt tui`
 
 管理対象アカウントプールをライブ表示するターミナルモニターを開きます。実行中のゲートウェイの Admin API をポーリングするため、表示される行とクォータ状態はスケジューラーが実際に使用している状態と一致します。
 
 ```bash
-shunt top --config /path/to/shunt.toml
+shunt tui --config /path/to/shunt.toml
 ```
 
 矢印キーまたは `j`/`k` で行を選択します。`a` でアカウントを追加できます。アカウントを選択した状態で `d` を押すと削除確認ダイアログが開き、`y` を押した場合だけ削除されます。`n` または `Esc` でキャンセルし、確認中のその他のキーは何もしません。

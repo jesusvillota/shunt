@@ -47,12 +47,12 @@ shunt run --config /path/to/shunt.toml
 
 Homebrew로 설치했다면 백그라운드 서비스로 실행할 수도 있습니다: `brew services start shunt`. 자세한 내용은 [설치](/ko/getting-started/installation/#백그라운드-서비스로-실행하기)를 참고하세요.
 
-## `shunt top`
+## `shunt tui`
 
 관리되는 계정 풀을 실시간으로 보여 주는 터미널 모니터를 엽니다. 실행 중인 게이트웨이의 Admin API를 폴링하므로 표시되는 행과 할당량 상태는 스케줄러가 실제로 사용하는 상태와 같습니다.
 
 ```bash
-shunt top --config /path/to/shunt.toml
+shunt tui --config /path/to/shunt.toml
 ```
 
 화살표 키 또는 `j`/`k`로 행을 선택합니다. `a`를 누르면 계정을 추가할 수 있습니다. 계정이 선택된 상태에서 `d`를 누르면 삭제 확인 대화상자가 열리며, `y`를 눌러야만 삭제됩니다. `n` 또는 `Esc`는 취소하고, 확인 창이 열린 동안 다른 키는 아무 동작도 하지 않습니다.

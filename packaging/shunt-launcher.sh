@@ -1,6 +1,6 @@
 #!/bin/sh
 # `shunt` launcher: runs target/release/shunt of the checkout this script lives in.
-# `shunt tui` (alias `top`) first rebuilds the binary (with the `tui` feature) when
+# `shunt tui` first rebuilds the binary (with the `tui` feature) when
 # a source file is newer than it, so you never rebuild by hand. Every other
 # command, including `shunt run` under launchd, starts the binary as it is and
 # never waits for a build. A failed build warns and runs the old binary.
@@ -21,7 +21,7 @@ stale() {
 }
 
 case ${1-} in
-  tui | top)
+  tui)
     if stale; then
       echo "shunt: building the TUI (sources changed)…" >&2
       PATH="$HOME/.cargo/bin:$PATH" cargo build --locked --release --features tui --quiet \
