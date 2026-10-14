@@ -510,7 +510,7 @@ fn cooldown_for_antigravity_error(
                         &route.provider,
                         account,
                         &route.upstream_model,
-                        cooldown,
+                        cooldown.min(std::time::Duration::from_secs(3600)),
                         "rate_limit",
                     );
                 }
