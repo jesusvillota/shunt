@@ -23,6 +23,7 @@ flowchart TD
     DEC_002{{"DEC-002 Approve optional per-account profile_dir and upstream-reported-window acceptance with separate captured-weekly and four-window schema tests?"}}
     DEC_003{{"DEC-003 Should TASK-003 include fixes for the known macOS streaming-test failures, or wait for a separate fix?"}}
     DEC_004{{"DEC-004 May TASK-008 exclude protected goals/ records from its grep and limit link acceptance to links affected by this task?"}}
+    DEC_005{{"DEC-005 Should a separate task repair the goal-rust baseline checks before TASK-009 delivery?"}}
     TASK_001["TASK-001 Diagnose why the agy pool fails and quota is missing"]
     TASK_002["TASK-002 Read agy quota via the agy /usage command per account"]
     TASK_003["TASK-003 Make the agy pool rotate and fail over across all accounts"]
@@ -47,6 +48,7 @@ flowchart TD
   TASK_007 --> TASK_008
   DEC_004 --> TASK_008
   TASK_007 --> TASK_009
+  DEC_005 --> TASK_009
   TASK_007 --> TASK_010
   TASK_008 --> TASK_011
   classDef draft stroke-dasharray: 4 3
@@ -56,6 +58,7 @@ flowchart TD
   class DEC_002 decision
   class DEC_003 decision
   class DEC_004 decision
+  class DEC_005 decision
 ```
 <!-- goal:graph:end -->
 

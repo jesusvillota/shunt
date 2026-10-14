@@ -3,7 +3,7 @@ id: TASK-009
 title: Switch goal pool to call shunt pool --json
 milestone: M-1
 state: approved
-depends_on: [TASK-007]
+depends_on: [TASK-007, DEC-005]
 delivery: pr
 ---
 
