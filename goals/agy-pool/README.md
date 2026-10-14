@@ -27,6 +27,7 @@ flowchart TD
     TASK_003["TASK-003 Make the agy pool rotate and fail over across all accounts"]
     TASK_004["TASK-004 Quota-aware account selection and live end-to-end smoke"]
     TASK_005["TASK-005 Fix macOS streaming test failures"]
+    TASK_006["TASK-006 Show Antigravity quota buckets in shunt tui and goal pool"]
   end
   TASK_001 --> DEC_001
   DEC_001 --> TASK_002
