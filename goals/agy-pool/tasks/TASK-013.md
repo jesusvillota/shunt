@@ -13,24 +13,24 @@ TASK-009 (PR #19 on `jesusvillota/config`) is done but cannot pass its required 
 
 ## Scope
 
-All work is in the **config repo** (`~/GitHub/config`, remote `jesusvillota/config`), crate workspace `tools/goal-rust`. The shunt repo gets only this task's outcome file.
+All work is in the **config repo** (`~/GitHub/config`, remote `jesusvillota/config`), crate workspace `tools/goal-rust`, which includes the member crate `tools/goal-tui` (DEC-006: both are repaired here, because the checks always run on both). The shunt repo gets only this task's outcome file.
 
 - Work in a NEW git worktree of the config repo, branched from its `origin/main`. The main checkout has other people's uncommitted changes (`claude/settings.json`, `codex/config.toml`, `shared/instructions.md`): never touch or stash them.
 - Three repairs, as three separate commits so they review easily:
-  1. Formatting: `cargo fmt` over `tools/goal-rust` (about 2,100 diff blocks). Pure formatting, no logic change; check with a whitespace-insensitive diff or by confirming the compiled behaviour and tests are unchanged.
-  2. Strict clippy: fix the about 77 goal-core lib and 80 lib-test diagnostics (`cargo clippy --all-targets -- -D warnings`). Prefer real fixes; an `#[allow]` needs a one-line reason and must be narrow. No behaviour change.
+  1. Formatting: `cargo fmt` over the whole workspace, `tools/goal-rust` and `tools/goal-tui` (about 2,100 diff blocks plus six goal-tui files). Pure formatting, no logic change; check with a whitespace-insensitive diff or by confirming the compiled behaviour and tests are unchanged.
+  2. Strict clippy: fix the about 77 goal-core lib and 80 lib-test diagnostics, plus the goal-tui diagnostics (for example `type_complexity` for `help_back` in `src/main.rs`, and findings in `ui.rs` and the layout test support) (`cargo clippy --all-targets -- -D warnings`). Prefer real fixes; an `#[allow]` needs a one-line reason and must be narrow. No behaviour change.
   3. Failing tests: about 22 of 39 in `execution_differential` fail, most with `unknown codex model 'gpt-6.1-sol'` (and an authority fixture that inherits `GOAL_AGENT`). Find the root cause (fixtures reference a model not in the current model table, or test isolation does not clear session environment variables) and fix the fixtures or isolation. Never weaken, delete or skip a test; never add a fake model entry to production tables just to satisfy a fixture unless the fixture is correct and the table is genuinely stale (state which).
 - Do not touch `src/pool.rs` beyond formatting; TASK-009's PR #19 owns it, and it will be rebased onto this.
 - Open the PR on `jesusvillota/config` with `gh pr create -R jesusvillota/config`; put its URL in the outcome. The shunt PR carries `Goal-Task: agy-pool/TASK-013` and the outcome only.
 
-Out of scope: new features, other crates or directories in the config repo, shunt code.
+Out of scope: new features, other crates or directories in the config repo, shunt code. Keep the commits separate per crate (goal-rust, goal-tui) so each reviews easily. First rebase on the current `origin/main` of the config repo and re-count the failures: recent fixes there (for example #102) may already have repaired part of the test failures.
 
 ## Acceptance
 
 - In the config worktree, `cd tools/goal-rust && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test` exits 0 (paste the tail of each; run the tests in a clean environment, with `GOAL_AGENT`, `GOAL_COPILOT` and `CLAUDECODE` unset, and also confirm they pass from an agent shell where those are set).
 - The outcome lists the root cause of the test failures and any `#[allow]` added, each with its reason.
 - No test removed, ignored or weakened (show the test count before and after).
-- The config PR URL is in the outcome and its diff touches only `tools/goal-rust`.
+- The config PR URL is in the outcome and its diff touches only `tools/goal-rust` and `tools/goal-tui`.
 
 ## Verify
 
