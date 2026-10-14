@@ -21,8 +21,11 @@ flowchart TD
   subgraph M_1["M-1 · Working agy pool with quota"]
     DEC_001{{"DEC-001 Choose the agy quota source"}}
     TASK_001["TASK-001 Diagnose why the agy pool fails and quota is missing"]
+    TASK_002["TASK-002 Read agy quota via the agy /usage command per account"]
   end
   TASK_001 --> DEC_001
+  TASK_001 --> TASK_002
+  DEC_001 --> TASK_002
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
