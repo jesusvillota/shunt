@@ -11,6 +11,21 @@ so what it shows is what the web dashboard shows and what the scheduler acts on.
 Pool membership and custom priorities are saved to the **config file** the
 gateway runs, which the gateway hot-reloads. The weekly-reset switch is runtime-only.
 
+## Non-interactive snapshot: `shunt pool`
+
+Print one snapshot from `GET /admin/api/pool`. This read-only command is included in the default build; it needs no `tui` feature. A read-tier admin token is enough.
+
+```bash
+shunt pool --config /path/to/shunt.toml
+shunt pool --url http://127.0.0.1:3001 --json
+```
+
+Text output has one section per provider and one line per account: name, availability, 5h/7d utilization and reset countdowns, and active cooldowns. Antigravity shows each reported `quota_buckets` label, remaining percentage, and reset countdown. Weekly-only quota stays weekly-only. Missing readings show a dash.
+
+`--json` prints the gateway snapshot unchanged, including unknown fields. `--url` overrides the URL derived from the configured bind. Token lookup uses `--token`, then `SHUNT_ADMIN_TOKEN`, the first entry of `SHUNT_ADMIN_TOKENS`, and `~/.shunt/admin-token`. `--header` defaults to `x-shunt-admin-token`. Missing or refused tokens and unreachable gateways print a one-line error to stderr and exit non-zero.
+
+The CLI and TUI share token resolution, wire types, and quota formatting. The CLI performs one GET and exits; it does not change accounts or config.
+
 ## Build and run
 
 Off by default, so the gateway binary carries no terminal-UI dependencies:

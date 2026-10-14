@@ -4,6 +4,8 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::pool::{quota_parts, until};
+
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
@@ -28,22 +30,6 @@ pub fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
-}
-
-/// "2h 14m" / "3d 4h" / "now" until an epoch-seconds instant.
-pub fn until(reset: u64, now: u64) -> String {
-    let mins = reset.saturating_sub(now).div_ceil(60);
-    if reset <= now || mins == 0 {
-        return "now".into();
-    }
-    let (days, hours, rest) = (mins / 1440, (mins % 1440) / 60, mins % 60);
-    match (days, hours, rest) {
-        (0, 0, m) => format!("{m}m"),
-        (0, h, 0) => format!("{h}h"),
-        (0, h, m) => format!("{h}h {m}m"),
-        (d, 0, _) => format!("{d}d"),
-        (d, h, _) => format!("{d}d {h}h"),
-    }
 }
 
 fn level_color(fraction: f64) -> Color {
@@ -207,10 +193,7 @@ fn has_family_quota(entry: &Entry<'_>) -> bool {
 /// Keep upstream family/window labels intact, including weekly-only replies.
 fn quota_line(bucket: &QuotaBucketDto, now: u64) -> Line<'static> {
     let remaining = bucket.remaining.filter(|value| value.is_finite());
-    let value = remaining.map_or_else(|| "—".into(), |r| format!("{:.0}% left", r * 100.0));
-    let reset = bucket
-        .reset_secs()
-        .map_or_else(String::new, |r| format!(" · resets in {}", until(r, now)));
+    let (value, reset) = quota_parts(bucket, now);
     Line::from(vec![
         Span::raw(" ".repeat(NAME_W + 5)),
         Span::raw(format!("{}: ", bucket.label)),
