@@ -15,6 +15,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::auth::antigravity::pool::ModelFamily;
 use crate::config::{AccountConfig, PoolConfig};
 
+mod antigravity_quota;
 mod request_stats;
 
 pub use request_stats::AttemptOutcome;
@@ -372,7 +373,7 @@ struct AccountHealth {
     quota: QuotaState,
     /// Latest grouped model-family quota windows from the Antigravity `retrieveUserQuotaSummary`
     /// poll. Memory-only, like `cooldown_until`: re-fetched every poll tick
-    /// with no rotation logic depending on it, so it never enters `QuotaState`
+    /// used for model-family ranking, so it never enters `QuotaState`
     /// (which `state_persist.rs` round-trips through the on-disk format).
     quota_buckets: Vec<QuotaBucketSnapshot>,
     /// Latest configured selection state. Quota gauges exclude disabled accounts.
@@ -1010,7 +1011,16 @@ impl AccountPool {
                 // an expired entry would otherwise outlive its cooldown.
                 health.model_cooldowns.retain(|_, until| *until > now);
                 let cooldown_until = governing_cooldown(health, is_fable, model_key.as_deref());
-                snapshots.push((cooldown_until, assessment, weekly_reset, min_reset));
+                let family_quota = (account.store_family == Some(StoreFamily::Antigravity))
+                    .then(|| antigravity_quota::rank(&health.quota_buckets, model, unix_now))
+                    .flatten();
+                snapshots.push((
+                    cooldown_until,
+                    assessment,
+                    weekly_reset,
+                    min_reset,
+                    family_quota,
+                ));
             }
             let rotation = (0..distinct)
                 .map(|offset| ident_reps[(start_slot + offset) % distinct])
@@ -1038,7 +1048,7 @@ impl AccountPool {
                     if account.store_family != Some(StoreFamily::Chatgpt) {
                         continue;
                     }
-                    let (cooldown_until, ref assessment, _, _) = snapshots[index];
+                    let (cooldown_until, ref assessment, _, _, _) = snapshots[index];
                     if cooldown_until.is_some_and(|until| until > now) || !assessment.near {
                         continue;
                     }
@@ -1169,6 +1179,7 @@ impl AccountPool {
             accounts[left]
                 .priority
                 .cmp(&accounts[right].priority)
+                .then_with(|| antigravity_quota::compare(snapshots[left].4, snapshots[right].4))
                 .then_with(|| {
                     if sort_by_weekly_reset {
                         // Soonest weekly reset first; None (unknown) sorts last.
@@ -1579,11 +1590,8 @@ impl AccountPool {
     /// partial-window reconciliation like Claude's per-window
     /// overwrite-if-present or Codex's clear-flags dance.
     ///
-    /// Display-only on purpose: this leaves `health.quota` (5h/7d/aggregate
-    /// status) untouched and records no utilization metric, so Antigravity
-    /// pool selection/rotation behavior is unchanged (it already ignores quota
-    /// for this family) — matching the `/admin/observed` display-only
-    /// precedent.
+    /// Leaves generic account-wide quota untouched. Antigravity selection
+    /// reads these buckets for the requested model family only.
     pub fn note_antigravity_usage(
         &self,
         provider: &str,
@@ -8827,8 +8835,7 @@ mod tests {
         assert_eq!(target_snap.quota_buckets.len(), 2);
         assert_eq!(target_snap.quota_buckets[0].label, "Gemini Models · 5h");
         assert_eq!(target_snap.quota_buckets[0].remaining, Some(0.7));
-        // Display-only: the aggregate quota state is untouched, so selection
-        // behavior is unchanged.
+        // Family readings leave the generic account-wide quota state untouched.
         assert_eq!(target_snap.utilization_5h, None);
         assert_eq!(target_snap.utilization_7d, None);
         assert!(!target_snap.near_quota);

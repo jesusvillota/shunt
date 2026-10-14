@@ -1,9 +1,13 @@
 //! End-to-end account rotation and independent Antigravity quota families.
 
-use std::{net::SocketAddr, path::PathBuf, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use serde_json::{json, Value};
-use shunt::{config::Config, server};
+use shunt::{
+    accounts::{AccountPool, QuotaBucketSnapshot, StoreFamily},
+    config::{AccountConfig, Config},
+    server,
+};
 use wiremock::{
     matchers::{body_partial_json, header, method, path},
     Mock, MockServer, ResponseTemplate,
@@ -12,6 +16,7 @@ use wiremock::{
 mod common;
 
 struct Pool {
+    accounts: Arc<AccountPool>,
     addr: SocketAddr,
     gateway: tokio::task::JoinHandle<()>,
     dir: PathBuf,
@@ -57,11 +62,12 @@ impl Pool {
         )
         .unwrap();
         let config = Config::load(Some(&config_path)).unwrap();
-        let (app, _, _) = server::build_router(config).unwrap();
+        let (app, _, state) = server::build_router(config).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let gateway = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         Self {
+            accounts: state.accounts,
             addr,
             gateway,
             dir,
@@ -128,6 +134,76 @@ async fn inference(backend: &MockServer) -> Vec<wiremock::Request> {
         .into_iter()
         .filter(|request| request.url.path() == "/v1internal:generateContent")
         .collect()
+}
+
+#[tokio::test]
+async fn family_quota_selects_the_highest_account_and_fails_over_to_lower() {
+    let backend = healthy_backend().await;
+    // The highest Gemini account refuses once. The next account must have
+    // the next highest Gemini fraction, rather than the best Claude fraction.
+    Mock::given(method("POST"))
+        .and(path("/v1internal:generateContent"))
+        .and(header("authorization", "Bearer token-b"))
+        .and(body_partial_json(
+            json!({"model": "gemini-3.8-flash-medium"}),
+        ))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("Retry-After", "60")
+                .set_body_json(json!({"error": {"message": "Quota exhausted."}})),
+        )
+        .expect(1)
+        .mount(&backend)
+        .await;
+    let pool = Pool::start(&backend, &["a", "b", "c"]).await;
+    for (name, gemini, other) in [("a", 0.1, 0.9), ("b", 0.9, 0.1), ("c", 0.5, 0.5)] {
+        pool.accounts.note_antigravity_usage(
+            "antigravity",
+            &AccountConfig {
+                name: name.into(),
+                store_family: Some(StoreFamily::Antigravity),
+                ..Default::default()
+            },
+            vec![
+                QuotaBucketSnapshot {
+                    label: "Gemini Models · weekly".into(),
+                    remaining: Some(gemini),
+                    reset_time: None,
+                },
+                QuotaBucketSnapshot {
+                    label: "Claude + GPT Models · weekly".into(),
+                    remaining: Some(other),
+                    reset_time: None,
+                },
+            ],
+        );
+    }
+    assert_eq!(
+        pool.request("gemini-3.8-flash").await,
+        (200, Some("c".into()))
+    );
+    assert_eq!(
+        pool.request("claude-sonnet-4-6").await,
+        (200, Some("a".into()))
+    );
+    assert_eq!(
+        pool.request("gpt-oss-120b-medium").await,
+        (200, Some("a".into()))
+    );
+    assert_eq!(
+        pool.request("gemini-3.1-pro").await,
+        (200, Some("c".into()))
+    );
+    let requests = inference(&backend).await;
+    assert_eq!(requests.len(), 5);
+    for (request, expected) in requests.iter().zip(["b", "c", "a", "a", "c"]) {
+        assert_eq!(
+            request.headers["authorization"],
+            format!("Bearer token-{expected}")
+        );
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        assert_eq!(body["project"], format!("project-{expected}"));
+    }
 }
 
 #[tokio::test]

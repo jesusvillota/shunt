@@ -62,9 +62,13 @@ The grouped windows are flattened into the existing dashboard
 - `Claude + GPT Models · 5h`
 - `Claude + GPT Models · weekly`
 
-They are **display-only**. `AccountPool::note_antigravity_usage` updates
-`health.quota_buckets` but leaves the generic `health.quota` selection state
-untouched, so polling alone does not change Antigravity account selection/rotation behavior.
+`AccountPool::note_antigravity_usage` updates `health.quota_buckets`. Selection
+uses the requested model family only. Within each configured priority tier, it
+prefers the highest remaining fraction, then the earliest reset. When both 5h
+and weekly windows exist, the lowest remaining fraction governs. Expired windows
+are ignored. Known readings precede unknown readings; accounts without readings
+remain eligible. Equal readings retain round-robin rotation. Generic
+`health.quota` stays separate, so Gemini usage cannot rank Claude/GPT traffic.
 The buckets are memory-only and are re-fetched by the poller; no
 `state_persist.rs` migration is required.
 
@@ -89,7 +93,7 @@ best-effort metadata poll per eligible account on each interval.
 
 ## Account rotation and refusal cooldowns (agy-pool TASK-003)
 
-Healthy accounts of equal priority rotate across the configured pool. An inference
+Healthy accounts with equal priority and equal family quota rotate across the configured pool. An inference
 429 now excludes only its model family: `gemini-*` shares one cooldown, while
 `claude-*` and `gpt-*` share the other. Selection skips that family until reset,
 even when every account is exhausted. A new request then receives 503; the
@@ -103,8 +107,8 @@ The old one-hour cap is removed so weekly exhaustion lasts until the reported
 reset. Cooldowns are memory-only and clear on restart. Unknown model families
 use the existing per-model cooldown rather than blocking known families.
 
-The grouped usage snapshot remains display-only here. TASK-004 owns quota-based
-ranking. Account names and identity rules remain unchanged: optional userinfo
+TASK-004 adds model-family quota ranking behind the existing priority and cooldown
+rules. The generic reset-sorting settings do not override family ranking. Account names and identity rules remain unchanged: optional userinfo
 email is not a verified upstream identity. Remove duplicate logins from the
 configured pool rather than treating their matching email as proof of identity.
 
