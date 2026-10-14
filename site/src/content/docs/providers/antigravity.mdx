@@ -237,10 +237,22 @@ Two limits are worth knowing before you route production traffic:
 
 Each pool attempt resolves its own credential — access token plus cached project id — and rebuilds
 the request (catalog lookup included) for that account, so a rotation never leaks one account's
-project into another's turn. A `429 RESOURCE_EXHAUSTED` cools that account down and tries the next
+project into another's turn. A `429 RESOURCE_EXHAUSTED` cools only the requested quota family on that account and tries the next
 one; a client error (4xx other than 401/429) is relayed without rotating. The response carries
 `x-shunt-account` naming the account that served it. If every account fails, the last upstream
 error is relayed, so the cause stays visible.
+
+Gemini models share one quota pool. Claude and GPT models share a separate pool. A 429 skips
+that account for all models in the exhausted family until reset. The other family remains usable,
+and its successful requests do not clear the exhausted family's cooldown. Healthy accounts of equal
+priority rotate in order. If every account in the requested family is cooling down, a new request
+returns 503 without contacting upstream. The request that exhausts the pool still relays its last
+upstream error.
+
+Cooldowns use `Retry-After` when present, otherwise the upstream error's `Resets in …h…m…s.`
+message, otherwise 60 seconds. Reset delays are not capped at one hour; weekly exhaustion stays
+excluded until its reported reset. These cooldowns are held in memory and clear on gateway restart.
+Authentication and transport failures still affect the whole account.
 
 ## Usage reporting
 

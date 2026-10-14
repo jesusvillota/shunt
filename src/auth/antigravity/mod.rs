@@ -8,6 +8,7 @@ use crate::config::{AuthMode, Config, ProviderConfig, ProviderKind};
 pub mod auth;
 pub mod catalog;
 pub mod login;
+pub(crate) mod pool;
 pub mod store;
 pub mod usage;
 pub mod version;
