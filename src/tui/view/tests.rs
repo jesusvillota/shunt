@@ -192,6 +192,44 @@ fn family_quota_acceptance_frames_use_one_account_row() {
 }
 
 #[test]
+fn family_countdowns_are_never_cut_mid_token() {
+    let mut account = family_account();
+    account.quota_buckets[0].remaining = Some(0.5);
+    account.quota_buckets[1].remaining = Some(0.5);
+    for width in 80..=120 {
+        let mut app = app(vec![provider(
+            "antigravity",
+            "antigravity_oauth",
+            vec![account.clone()],
+        )]);
+        let (screen, _) = draw(&mut app, width, 10);
+        let row = screen.lines().find(|l| l.contains("50%")).unwrap();
+        let mut seen = 0;
+        for part in row.split("% · ").skip(1) {
+            seen += 1;
+            let countdown = part.split("  ").next().unwrap().trim_end();
+            let complete = ["1d", "2d 2h", "2d", "1d 0h"].contains(&countdown);
+            assert!(complete, "width {width}: {countdown:?}\n{screen}");
+        }
+        assert!(seen > 0 || width < 92, "width {width}\n{screen}");
+    }
+}
+
+#[test]
+fn hidden_second_family_still_surfaces_exhausted_state() {
+    let mut account = family_account();
+    account.quota_buckets[0].remaining = Some(0.5);
+    account.quota_buckets[1].remaining = Some(0.0);
+    for (width, expected) in [(68, true), (120, false)] {
+        let mut app = app_from_account(account.clone());
+        let (screen, _) = draw(&mut app, width, 10);
+        assert_eq!(screen.contains("exhausted"), expected, "{screen}");
+        let heading = screen.lines().find(|l| l.contains("Account")).unwrap();
+        assert!(!heading.trim_end().ends_with(" R"), "{screen}");
+    }
+}
+
+#[test]
 fn family_columns_align_with_other_providers_in_one_frame() {
     let mut legacy = acct("legacy");
     legacy.utilization_5h = Some(0.5);

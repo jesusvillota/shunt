@@ -11,6 +11,8 @@ struct Columns {
     labels: Vec<String>,
     name_width: usize,
     cell_width: usize,
+    /// A reported family column was dropped for width.
+    narrowed: bool,
 }
 
 impl Columns {
@@ -35,11 +37,13 @@ impl Columns {
             labels.push(String::new());
         }
         let name_width = NAME_W.min(width.saturating_sub(4 + 14));
+        let mut narrowed = false;
         let cell_width = if width >= 92 {
             WINDOW_W
         } else if width >= 80 {
             (width - (NAME_W + 5) - 4 - (STATE_W + 1)) / 2
         } else {
+            narrowed = labels.len() > 1;
             labels.truncate(1);
             WINDOW_W.min(width.saturating_sub(name_width + 5))
         };
@@ -47,6 +51,7 @@ impl Columns {
             labels,
             name_width,
             cell_width,
+            narrowed,
         }
     }
 
@@ -65,13 +70,28 @@ impl Columns {
     }
 }
 
+/// The longest countdown form that fits whole: full, largest unit only, none.
 fn cell(bucket: Option<&QuotaBucketDto>, now: u64, width: usize) -> Vec<Span<'static>> {
     let used = bucket
         .and_then(|b| b.remaining)
         .filter(|r| r.is_finite())
         .map(|r| 1.0 - r.clamp(0.0, 1.0));
+    let full = bucket
+        .and_then(QuotaBucketDto::reset_secs)
+        .filter(|r| *r > 0)
+        .map(|r| until(r, now));
+    let room = width.saturating_sub(BAR_WIDTH);
+    let countdown = full.as_deref().and_then(|full| {
+        let short = full.split(' ').next().unwrap_or(full);
+        [full, short].into_iter().find(|c| {
+            format!(" {:>3.0}% · {c}", used.unwrap_or(0.0) * 100.0)
+                .chars()
+                .count()
+                <= room
+        })
+    });
     let mut left = width;
-    window_cell(used, bucket.and_then(QuotaBucketDto::reset_secs), now)
+    window_cell_with(used, countdown, width)
         .into_iter()
         .map(|mut span| {
             let text: String = span.content.chars().take(left).collect();
@@ -95,11 +115,17 @@ pub(super) fn heading(provider: &ProviderView, width: usize) -> Line<'static> {
         }
         spans.push(Span::raw(columns.title(label)));
     }
-    spans.push(Span::raw(format!(
-        "  {}{}Plan",
-        fit("State", STATE_W + 1),
-        fit("Requests ok/fail · avg", REQUESTS_W + 1)
-    )));
+    // Trailing columns appear only when they fit whole.
+    for text in [
+        format!("  {}", fit("State", STATE_W + 1)),
+        fit("Requests ok/fail · avg", REQUESTS_W + 1),
+        "Plan".to_string(),
+    ] {
+        let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+        if used + text.chars().count() <= width {
+            spans.push(Span::raw(text));
+        }
+    }
     Line::from(spans).dark_gray()
 }
 
@@ -122,10 +148,14 @@ pub(super) fn account_line(entry: &Entry<'_>, now: u64, width: usize) -> Line<'s
             columns.cell_width,
         ));
     }
+    let spent = |b: &QuotaBucketDto| b.remaining.is_some_and(|r| r.is_finite() && r <= 0.0);
+    // A family column hidden for width must still surface in the state.
     let exhausted = !a.quota_buckets.is_empty()
-        && a.quota_buckets
-            .iter()
-            .all(|b| b.remaining.is_some_and(|r| r.is_finite() && r <= 0.0));
+        && if columns.narrowed {
+            a.quota_buckets.iter().any(spent)
+        } else {
+            a.quota_buckets.iter().all(spent)
+        };
     let (state, style) = if exhausted
         && matches!(
             row.state,
@@ -145,11 +175,14 @@ pub(super) fn account_line(entry: &Entry<'_>, now: u64, width: usize) -> Line<'s
             Style::new()
         },
     ));
-    spans.push(Span::raw(a.plan.clone().unwrap_or_default()));
+    spans.push(Span::raw(format!(
+        "{:<10}",
+        a.plan.clone().unwrap_or_default()
+    )));
     let mut line = Line::from(spans);
-    // Extra reported short windows fit as labelled cells after the usual columns.
+    // Extra reported windows fit as labelled cells after the usual columns.
     for bucket in &a.quota_buckets {
-        if bucket.label.ends_with(" · 5h") && !columns.labels.contains(&bucket.label) {
+        if !columns.labels.contains(&bucket.label) {
             let label = format!("  {}: ", bucket.label.replace(" Models", ""));
             if line.width() + label.chars().count() + WINDOW_W <= width {
                 line.spans.push(Span::raw(label));

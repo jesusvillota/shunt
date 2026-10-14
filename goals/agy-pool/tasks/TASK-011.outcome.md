@@ -155,10 +155,14 @@ Frames use a fixed clock of epoch second 1,000. Trailing padding spaces are remo
 
 
 ▾ antigravity            ON   ranking: balanced     · 1 account
-  # Account              Gemini · weekly          State            R
+  # Account              Gemini · weekly          State
   1 weekly               ████░░░░  50% · 1d       available        –
-
-
- ↑↓ or click: select · a: add account · ?: help · q: quit
 ```
 
+## Review round 2 (PR #21, CHANGES)
+
+1. Countdowns are never cut: `cell()` in `src/tui/view/family.rs` picks the full countdown, else the largest unit only (`2d`), else none. `family_countdowns_are_never_cut_mid_token` sweeps widths 80..=120.
+2. Heading drops trailing titles that do not fit (no clipped `R`). When a family column is hidden for width (<80), State reads `exhausted` if ANY reported family is exhausted. Test: `hidden_second_family_still_surfaces_exhausted_state` (68 → exhausted, 120 → available).
+3. Plan is padded to 10 columns so extra cells align. Extra cells now include any unshown reported family (not only 5h); one that does not fit is omitted, and the docs say so.
+
+Verify re-run: fmt, clippy, `cargo test --all-features --workspace --no-fail-fast` exit 0, 3800 passed, 0 failed, 3 ignored. One unrelated Codex test (`pool_http_dispatch_seeds_message_start_input_token_estimate`) failed once in a full run and passed on re-run (flaky). `npm run lint:docs --prefix site` clean. No new cross-page anchors.

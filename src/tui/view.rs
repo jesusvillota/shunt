@@ -58,17 +58,25 @@ fn fit(text: &str, width: usize) -> String {
 /// `████░░░░  50% · 2h 14m` — usage and the time until that limit resets —
 /// padded to a fixed width, or a dash when the account reports no reading.
 fn window_cell(utilization: Option<f64>, reset: Option<u64>, now: u64) -> Vec<Span<'static>> {
+    let countdown = reset.filter(|r| *r > 0).map(|r| until(r, now));
+    window_cell_with(utilization, countdown.as_deref(), WINDOW_W)
+}
+
+/// `window_cell` with a caller-chosen countdown text and total width.
+fn window_cell_with(
+    utilization: Option<f64>,
+    countdown: Option<&str>,
+    width: usize,
+) -> Vec<Span<'static>> {
     let Some(value) = utilization else {
         return vec![Span::styled(
-            fit("—", WINDOW_W),
+            fit("—", width),
             Style::new().fg(Color::DarkGray),
         )];
     };
     let clamped = value.clamp(0.0, 1.0);
     let filled = (clamped * BAR_WIDTH as f64).round() as usize;
-    let tail = reset
-        .filter(|r| *r > 0)
-        .map_or(String::new(), |r| format!(" · {}", until(r, now)));
+    let tail = countdown.map_or(String::new(), |c| format!(" · {c}"));
     let text = format!(" {:>3.0}%{tail}", value * 100.0);
     vec![
         Span::styled("█".repeat(filled), Style::new().fg(level_color(clamped))),
@@ -76,7 +84,7 @@ fn window_cell(utilization: Option<f64>, reset: Option<u64>, now: u64) -> Vec<Sp
             "░".repeat(BAR_WIDTH - filled),
             Style::new().fg(Color::DarkGray),
         ),
-        Span::raw(fit(&text, WINDOW_W - BAR_WIDTH)),
+        Span::raw(fit(&text, width.saturating_sub(BAR_WIDTH))),
     ]
 }
 

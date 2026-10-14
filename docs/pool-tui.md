@@ -84,9 +84,13 @@ shows red `exhausted`. Paused, disabled, and other blocking states keep their la
 
 The TUI reads `quota_buckets` from `GET /admin/api/pool`. Missing or unknown
 readings show a dim `—`, never `0%`. Missing or invalid reset times have no
-countdown. Weekly-only replies stay weekly-only. An extra reported 5h window
-appears as a labelled cell only when the whole cell fits. At narrower widths,
-titles shorten to `7d`, then the section shows one quota column. Very small
+countdown. Weekly-only replies stay weekly-only. Any further reported window (a 5h
+window or a third family) appears as a labelled cell after Plan, aligned, only
+when the whole cell fits; otherwise it is omitted. Reset countdowns are never
+cut: they shrink to the largest unit (`2d`) or disappear. At narrower widths,
+titles shorten to `7d`, then the section shows one quota column and the State
+column reads `exhausted` if any reported family is exhausted. The heading line
+drops trailing column titles that do not fit. Very small
 terminals shorten account names too. Rows never wrap. Clicking the account row
 selects it; column headings do not select an account. Claude and Codex keep
 their existing usage bars and resets.
