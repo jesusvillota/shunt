@@ -61,6 +61,23 @@ States: `disabled` (config) · `paused` · `needs re-login` · `unseen` (no traf
 
 ## Keys
 
+Antigravity accounts show `Quota remaining ↓` in place of the two limit cells.
+Indented lines under each account show every reported family and window, the
+percentage **left**, and the time until reset. For example:
+
+```text
+  1 weekly                Quota remaining ↓                             available
+                         Gemini Models · weekly: 0% left · resets in 6d
+                         Claude + GPT Models · weekly: 100% left · resets in 7d
+```
+
+These lines use `quota_buckets` from the pool API. Weekly-only replies stay
+weekly-only; a 5h window appears only when upstream reports it. Missing remaining
+values show `—`; missing or invalid reset times have no countdown. Remaining
+percentages turn yellow at 30% and red at 10%. Clicking a quota line selects its
+account. Claude and Codex keep their existing used-percentage bars and resets.
+The web dashboard already displays the same pool buckets.
+
 | Key | Action |
 | :-- | :-- |
 | `↑`/`↓`, `j`/`k`, `PgUp`/`PgDn`, click | Choose a provider line or an account |

@@ -15,7 +15,7 @@ use ratatui::{
 use super::{
     add::{AddFlow, Step},
     app::{App, DeleteConfirm, Entry, Notice, Sel},
-    model::{AccountDto, AccountState, ProviderView},
+    model::{AccountDto, AccountState, ProviderView, QuotaBucketDto},
 };
 
 const BAR_WIDTH: usize = 8;
@@ -168,9 +168,13 @@ fn account_line(entry: &Entry<'_>, now: u64) -> Line<'static> {
         Span::styled(format!("{rank:>3} "), Style::new().bold()),
         Span::raw(fit(&a.name, NAME_W + 1)),
     ];
-    spans.extend(window_cell(a.utilization_5h, a.reset_5h, now));
-    spans.push(Span::raw("  "));
-    spans.extend(window_cell(a.utilization_7d, a.reset_7d, now));
+    if has_family_quota(entry) {
+        spans.push(Span::raw(fit("Quota remaining ↓", WINDOW_W * 2 + 2)));
+    } else {
+        spans.extend(window_cell(a.utilization_5h, a.reset_5h, now));
+        spans.push(Span::raw("  "));
+        spans.extend(window_cell(a.utilization_7d, a.reset_7d, now));
+    }
     spans.push(Span::raw("  "));
     spans.push(Span::styled(
         fit(row.state.label(), STATE_W + 1),
@@ -191,6 +195,33 @@ fn account_line(entry: &Entry<'_>, now: u64) -> Line<'static> {
         line = line.style(Style::new().add_modifier(Modifier::DIM));
     }
     line
+}
+
+fn has_family_quota(entry: &Entry<'_>) -> bool {
+    entry.provider.auth.as_deref() == Some("antigravity_oauth")
+        && entry
+            .row
+            .is_some_and(|(_, row)| !row.account.quota_buckets.is_empty())
+}
+
+/// Keep upstream family/window labels intact, including weekly-only replies.
+fn quota_line(bucket: &QuotaBucketDto, now: u64) -> Line<'static> {
+    let remaining = bucket.remaining.filter(|value| value.is_finite());
+    let value = remaining.map_or_else(|| "—".into(), |r| format!("{:.0}% left", r * 100.0));
+    let reset = bucket
+        .reset_secs()
+        .map_or_else(String::new, |r| format!(" · resets in {}", until(r, now)));
+    Line::from(vec![
+        Span::raw(" ".repeat(NAME_W + 5)),
+        Span::raw(format!("{}: ", bucket.label)),
+        Span::styled(
+            value,
+            remaining.map_or(Style::new().dark_gray(), |r| {
+                Style::new().fg(level_color((1.0 - r).clamp(0.0, 1.0)))
+            }),
+        ),
+        Span::raw(reset),
+    ])
 }
 
 /// `ok/failed · mean latency` for the attempts this gateway process has sent
@@ -311,7 +342,22 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
             selected_line = Some(lines.len());
             line = line.style(Style::new().add_modifier(Modifier::REVERSED));
         }
-        lines.push((line, Some(entry.sel)));
+        lines.push((line, Some(entry.sel.clone())));
+        if has_family_quota(&entry) {
+            let (_, row) = entry.row.expect("account entry");
+            for bucket in &row.account.quota_buckets {
+                let mut line = quota_line(bucket, now);
+                if !entry.provider.is_on()
+                    || matches!(row.state, AccountState::Disabled | AccountState::Paused)
+                {
+                    line = line.style(Style::new().add_modifier(Modifier::DIM));
+                }
+                if selected.as_ref() == Some(&entry.sel) {
+                    line = line.style(Style::new().add_modifier(Modifier::REVERSED));
+                }
+                lines.push((line, Some(entry.sel.clone())));
+            }
+        }
     }
 
     let height = usize::from(list.height);

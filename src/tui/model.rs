@@ -55,12 +55,30 @@ pub struct AccountDto {
     pub utilization_7d: Option<f64>,
     pub reset_7d: Option<u64>,
     pub reset_7d_oi: Option<u64>,
+    /// Upstream-reported family/window quotas; remaining is a fraction, not usage.
+    pub quota_buckets: Vec<QuotaBucketDto>,
     /// Upstream attempts since the gateway started; absent (0) on a gateway
     /// that predates the counters.
     pub requests_attempted: u64,
     pub requests_succeeded: u64,
     pub requests_failed: u64,
     pub mean_latency_ms: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct QuotaBucketDto {
+    pub label: String,
+    pub remaining: Option<f64>,
+    pub reset_time: Option<String>,
+}
+
+impl QuotaBucketDto {
+    pub fn reset_secs(&self) -> Option<u64> {
+        self.reset_time
+            .as_deref()
+            .and_then(crate::auth::claude::usage::parse_rfc3339_to_epoch_secs)
+    }
 }
 
 /// The one state an account displays, mirroring the dashboard's ladder
@@ -361,6 +379,28 @@ impl Snapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_weekly_family_buckets_without_inventing_window_usage() {
+        let response = serde_json::from_str(r#"{"providers":[{"provider":"agy","auth":"antigravity_oauth","accounts":[{"name":"weekly","quota_buckets":[{"label":"Gemini Models · weekly","remaining":0.0,"reset_time":"2026-10-20T17:55:30Z"},{"label":"Claude + GPT Models · weekly","remaining":1.0,"reset_time":"2026-10-21T00:23:37Z"}]}]}]}"#).unwrap();
+        let snapshot = Snapshot::from_response(response);
+        let account = &snapshot.providers[0].rows[0].account;
+        assert!(account.utilization_5h.is_none());
+        assert!(account.utilization_7d.is_none());
+        assert!(account.reset_5h.is_none());
+        assert!(account.reset_7d.is_none());
+        assert_eq!(account.quota_buckets.len(), 2);
+        assert_eq!(account.quota_buckets[0].label, "Gemini Models · weekly");
+        assert_eq!(account.quota_buckets[0].remaining, Some(0.0));
+        assert_eq!(account.quota_buckets[1].remaining, Some(1.0));
+        assert_eq!(account.quota_buckets[0].reset_secs(), Some(1792518930));
+        assert_eq!(account.quota_buckets[1].reset_secs(), Some(1792542217));
+        let missing: QuotaBucketDto =
+            serde_json::from_str(r#"{"label":"weekly","remaining":null,"reset_time":"invalid"}"#)
+                .unwrap();
+        assert!(missing.remaining.is_none());
+        assert!(missing.reset_secs().is_none());
+    }
 
     fn acct(name: &str) -> AccountDto {
         AccountDto {

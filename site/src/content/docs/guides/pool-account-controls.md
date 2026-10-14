@@ -91,6 +91,14 @@ Like `sort_by_reset`, the runtime toggle overrides the config file's value until
 
 ## Terminal ranking cycle
 
+Antigravity accounts in `shunt tui` show `Quota remaining ↓` with indented lines
+for each reported family and window. Each line shows the percentage **left** and
+the time until reset, such as `Gemini Models · weekly: 0% left · resets in 6d`.
+The TUI reads `quota_buckets` from `GET /admin/api/pool`, like the web dashboard.
+It shows a 5h window only when upstream reports one. Missing remaining values
+show `—`; missing or invalid reset times have no countdown. Clicking a quota line
+selects its account. Claude and Codex keep their existing usage bars and resets.
+
 In `shunt tui` (built with `--features tui`), select a provider header or one of its accounts and press `m`. With at least two accounts, the cycle is **custom order → balanced → weekly reset → custom order**:
 
 - **Custom order → balanced** removes that provider's priorities from `shunt.toml` and sends `{"provider": "<name>", "sort_by_weekly_reset": false}` to the pool API.
