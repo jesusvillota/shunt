@@ -4,18 +4,14 @@ title: Fix the Antigravity pool and quota tracking
 objective: Make the shunt antigravity pool serve traffic across all configured accounts and track each account's quota.
 base: main
 success:
-  SC-1: <observable result and how it is verified>
+  SC-1: Each configured antigravity account shows live Gemini and Claude+GPT 5h/weekly quota in `goal pool` and the admin/TUI, verified against a live gateway.
+  SC-2: Requests to the antigravity provider rotate across all configured accounts and fail over when one is exhausted, verified by an integration test and a live smoke.
 milestones:
-  - {id: M-1, title: <first observable outcome>, success: [SC-1], exit: <verifiable evidence>}
+  - {id: M-1, title: Working agy pool with quota, success: [SC-1, SC-2], exit: "All M-1 PRs merged and live smoke shows per-account quota and multi-account rotation"}
 policy:
-  decide: human         # human | experts (a committee answers worker decision requests)
-  orchestrate: you      # you | agent: an orchestrator agent approves, dispatches and merges 
-  orchestrator_mode: interactive  # interactive | headless: visible agent vs background loop
-  routing: fixed        # with an orchestrator: fixed respects each task's route; dynamic lets it choose
-  orchestrator: null    # {platform: codex, model: MODEL, effort: LEVEL}
-  max_parallel: 7
-  default_route: null   # {platform: codex, model: MODEL, effort: LEVEL}
-  agent: claude         # claude | codex | opencode | agy
-  turn_budget: 40
-  plan_commits: push    # push | commit | off
-  worktree_setup: null  # shell run in each new task worktree, e.g. "uv sync"
+  decide: human
+  orchestrate: agent
+  orchestrator_mode: interactive
+  routing: fixed
+  orchestrator: {platform: claude, model: sonnet, effort: medium}
+  default_route: {platform: codex, model: gpt-6.1-sol, effort: high}
