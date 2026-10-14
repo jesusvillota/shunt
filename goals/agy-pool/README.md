@@ -31,6 +31,7 @@ flowchart TD
     TASK_007["TASK-007 Add shunt pool CLI command"]
     TASK_008["TASK-008 Remove the shunt top alias; only shunt tui remains"]
     TASK_009["TASK-009 Switch goal pool to call shunt pool --json"]
+    TASK_010["TASK-010 Live failover and ranking test of the agy pool"]
   end
   TASK_001 --> DEC_001
   DEC_001 --> TASK_002
@@ -43,6 +44,7 @@ flowchart TD
   TASK_006 --> TASK_007
   TASK_007 --> TASK_008
   TASK_007 --> TASK_009
+  TASK_007 --> TASK_010
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
