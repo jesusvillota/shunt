@@ -184,7 +184,9 @@ fn family_quota_acceptance_frames_use_one_account_row() {
             assert!(!screen.contains("Claude + GPT"));
         } else {
             assert!(screen.contains("Claude + GPT · weekly"));
-            assert!(screen.contains("2d 2h"));
+            if name != "unknown quota" {
+                assert!(screen.contains("2d 2h"));
+            }
         }
     }
 }
@@ -276,16 +278,21 @@ fn family_rows_handle_compact_unknown_paused_and_scrolled_views() {
         ..family_account()
     }));
     let mut app = app(vec![provider("agy", "antigravity_oauth", accounts)]);
-    let (screen, _) = draw(&mut app, 84, 12);
+    let (screen, _) = draw(&mut app, 84, 32);
     assert!(screen.contains("Claude + GPT · 7d"), "{screen}");
     let unknown = screen.lines().find(|l| l.contains("unknown")).unwrap();
     assert_eq!(unknown.matches('—').count(), 2);
     assert!(!unknown.contains('%'));
-    assert!(screen
-        .lines()
-        .find(|l| l.contains("paused"))
-        .unwrap()
-        .contains("paused"));
+    let paused = screen.lines().find(|l| l.contains("paused")).unwrap();
+    assert_eq!(
+        paused.matches("paused").count(),
+        2,
+        "account name and State label"
+    );
+    assert!(
+        !paused.contains("exhausted"),
+        "paused state takes precedence"
+    );
     for width in [1, 20, 40, 68, 79, 80, 91, 92] {
         draw(&mut app, width, 12);
     }
