@@ -2,9 +2,10 @@
 id: TASK-009
 title: Switch goal pool to call shunt pool --json
 milestone: M-1
-state: approved
+state: cancelled
 depends_on: [TASK-007, DEC-005, TASK-013]
 delivery: pr
+reason: Owner is switching goal pool to shunt pool directly in the config repo; no longer done through this goal.
 ---
 
 ## Why
