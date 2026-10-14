@@ -142,7 +142,7 @@ T012_SCRATCH=/var/folders/_j/7j25pgqd5z3dh647gtb8vmbw0000gn/T/shunt-task012-_k5n
 curl -sS -m 90 -D "$T012_SCRATCH/r1.headers.txt" -o "$T012_SCRATCH/r1.body.json" -w 'HTTP %{http_code} in %{time_total}s' http://127.0.0.1:39020/v1/messages -H 'content-type: application/json' -H 'anthropic-version: 2023-06-01' -d '{"model":"claude-gemini-3.8-flash-low-via-antigravity","max_tokens":16,"messages":[{"role":"user","content":"Say ok"}]}'
 ```
 
-Each `r*.request.txt` contains the exact status, headers and body.
+Each `r*.request.txt` contains the exact status, headers and body. Saved headers use LF line endings.
 
 | Request | HTTP | Time | `Retry-After` | Account attempts |
 | --- | --- | --- | --- | --- |
