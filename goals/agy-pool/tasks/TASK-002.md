@@ -3,7 +3,7 @@ id: TASK-002
 title: Read agy quota via the agy /usage command per account
 milestone: M-1
 state: approved
-depends_on: [DEC-001]
+depends_on: [DEC-001, DEC-002]
 delivery: pr
 ---
 

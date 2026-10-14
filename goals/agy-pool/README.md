@@ -20,6 +20,7 @@ Make the shunt antigravity pool serve traffic across all configured accounts and
 flowchart TD
   subgraph M_1["M-1 · Working agy pool with quota"]
     DEC_001{{"DEC-001 Choose the agy quota source"}}
+    DEC_002{{"DEC-002 Approve optional per-account profile_dir and upstream-reported-window acceptance with separate captured-weekly and four-window schema tests?"}}
     TASK_001["TASK-001 Diagnose why the agy pool fails and quota is missing"]
     TASK_002["TASK-002 Read agy quota via the agy /usage command per account"]
     TASK_003["TASK-003 Make the agy pool rotate and fail over across all accounts"]
@@ -27,6 +28,7 @@ flowchart TD
   end
   TASK_001 --> DEC_001
   DEC_001 --> TASK_002
+  DEC_002 --> TASK_002
   TASK_001 --> TASK_003
   TASK_002 --> TASK_004
   TASK_003 --> TASK_004
@@ -34,6 +36,7 @@ flowchart TD
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
   class DEC_001 decision
+  class DEC_002 decision
 ```
 <!-- goal:graph:end -->
 
