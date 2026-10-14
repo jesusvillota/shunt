@@ -249,7 +249,9 @@ priority and equal family quota rotate in order. If no account can be tried beca
 family is cooling down, a new request returns `429 rate_limit_error` without contacting upstream.
 Its message states the reset delay. `Retry-After` gives the seconds until the earliest active reset,
 rounded up. Paused or disabled accounts do not count toward that reset. A mix of cooled and paused
-accounts still returns 429. If all accounts are paused or disabled, the gateway returns 503 with
+accounts still returns 429. This applies only when every enabled, unpaused account is cooling down
+for the family; if another account was skipped or failed to resolve a token, the gateway returns 503
+`no Antigravity accounts are available` without `Retry-After`. If all accounts are paused or disabled, the gateway returns 503 with
 `all Antigravity accounts are paused or disabled`. The request that exhausts the pool still relays
 its last upstream error.
 

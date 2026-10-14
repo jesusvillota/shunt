@@ -1675,8 +1675,12 @@ impl AccountPool {
         crate::metrics::record_pool_rotation(provider, "rate_limit");
     }
 
-    /// Earliest active refusal reset for the requested Antigravity family.
-    /// Operator-paused and disabled accounts cannot become usable at reset.
+    /// Earliest active refusal reset for the requested Antigravity family, only
+    /// when EVERY enabled, unpaused account is cooled for it. One account that
+    /// is merely skipped (relogin, token_env, near quota) or failed to resolve a
+    /// token has no family cooldown, so the pool is not provably exhausted and
+    /// the caller must not claim a reset time. Operator-paused and disabled
+    /// accounts cannot become usable at reset, so they are ignored.
     pub(crate) fn antigravity_retry_after(
         &self,
         provider: &str,
@@ -1685,15 +1689,18 @@ impl AccountPool {
     ) -> Option<Duration> {
         let now = Instant::now();
         let entries = self.entries.lock().expect("account health lock poisoned");
-        accounts
-            .iter()
-            .filter(|account| !account.disabled)
-            .filter_map(|account| entries.get(&account_key(provider, account)))
-            .filter(|health| !health.paused_providers.contains(provider))
-            .filter_map(|health| antigravity_cooldown(health, Some(model)))
-            .filter(|until| *until > now)
-            .min()
-            .map(|until| until.duration_since(now))
+        let mut earliest: Option<Instant> = None;
+        for account in accounts.iter().filter(|account| !account.disabled) {
+            let health = entries.get(&account_key(provider, account));
+            if health.is_some_and(|health| health.paused_providers.contains(provider)) {
+                continue;
+            }
+            let until = health
+                .and_then(|health| antigravity_cooldown(health, Some(model)))
+                .filter(|until| *until > now)?;
+            earliest = Some(earliest.map_or(until, |current| current.min(until)));
+        }
+        earliest.map(|until| until.duration_since(now))
     }
 
     pub fn cooldown(
@@ -6736,6 +6743,28 @@ mod tests {
             pool.antigravity_retry_after("antigravity", &accounts, "gemini-3.1-pro"),
             None
         );
+    }
+
+    #[test]
+    fn antigravity_retry_after_requires_every_unpaused_account_cooled() {
+        let pool = AccountPool::default();
+        let accounts = vec![account("a"), account("b")];
+        pool.cooldown_antigravity_family(
+            "antigravity",
+            &accounts[0],
+            ModelFamily::Gemini,
+            Duration::from_secs(60),
+        );
+        // b has no family cooldown (skipped or failed for another reason).
+        assert_eq!(
+            pool.antigravity_retry_after("antigravity", &accounts, "gemini-3.1-pro"),
+            None
+        );
+        // Pausing b removes it from the set that must be cooled.
+        pool.set_paused("antigravity", &accounts[1], true);
+        assert!(pool
+            .antigravity_retry_after("antigravity", &accounts, "gemini-3.1-pro")
+            .is_some());
     }
 
     #[test]

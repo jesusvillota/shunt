@@ -239,6 +239,7 @@ Gemini 모델은 하나의 할당량 풀을 공유하며, Claude와 GPT 모델�
 시도할 계정이 없으면 새 요청은 upstream에 연결하지 않고 `429 rate_limit_error`를 반환합니다.
 메시지는 재설정까지의 대기 시간을 표시하며, `Retry-After`는 가장 이른 활성 재설정까지의 초를 올림하여 제공합니다.
 일시 중지되거나 비활성화된 계정은 재설정 계산에서 제외합니다. 쿨다운 계정과 일시 중지 계정이 섞여 있어도 429를 반환합니다.
+이 429는 활성화되고 일시 중지되지 않은 모든 계정이 해당 모델군에서 쿨다운 중일 때만 적용됩니다. 다른 계정이 건너뛰어졌거나 토큰 확인에 실패했다면 `Retry-After` 없이 `no Antigravity accounts are available` 메시지와 503을 반환합니다.
 모든 계정이 일시 중지되거나 비활성화되면 `all Antigravity accounts are paused or disabled` 메시지와 503을 반환합니다.
 풀을 소진시킨 요청은 마지막 upstream 오류를 전달합니다.
 

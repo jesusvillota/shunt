@@ -439,3 +439,32 @@ async fn cooled_and_paused_accounts_use_only_the_unpaused_reset() {
     assert_exhausted(pool.response("gemini-3.8-flash").await, started).await;
     assert_eq!(backend.received_requests().await.unwrap().len(), calls);
 }
+
+async fn assert_no_account_available(response: reqwest::Response) {
+    assert_eq!(response.status(), 503);
+    assert!(!response.headers().contains_key("retry-after"));
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"]["type"], "api_error");
+    assert_eq!(
+        body["error"]["message"],
+        "no Antigravity accounts are available"
+    );
+}
+
+#[tokio::test]
+async fn cooled_account_with_a_token_failure_on_another_is_not_a_429() {
+    let backend = healthy_backend().await;
+    exhaust_account(&backend, "a", 60).await;
+    let pool = Pool::start(&backend, &["a", "b"]).await;
+    // The first request tries a (429 -> family cooldown), then b serves it.
+    assert_eq!(pool.request("gemini-3.8-flash").await.0, 200);
+    // b's token cannot be resolved inside the loop: expired, nothing to refresh.
+    std::fs::write(
+        pool.dir.join("accounts/b.json"),
+        json!({"access_token": "token-b", "expiry_date": 1, "project_id": "project-b"}).to_string(),
+    )
+    .unwrap();
+    let calls = backend.received_requests().await.unwrap().len();
+    assert_no_account_available(pool.response("gemini-3.8-flash").await).await;
+    assert_eq!(backend.received_requests().await.unwrap().len(), calls);
+}

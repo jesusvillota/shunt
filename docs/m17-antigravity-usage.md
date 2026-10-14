@@ -101,7 +101,9 @@ even when every account is exhausted. TASK-012 changes subsequent requests to
 The message states the reset delay. `Retry-After` reports seconds until the earliest
 active cooldown end for that family, rounded up. Paused or disabled accounts are
 excluded from this reset calculation. A mix of cooled and paused accounts still
-returns 429. If all accounts are paused or disabled, the response remains 503 with
+returns 429. The 429 applies only when every enabled, unpaused account is cooled
+for the family; if any other account was skipped or failed to resolve a token, the
+gateway returns 503 `no Antigravity accounts are available` with no `Retry-After`. If all accounts are paused or disabled, the response remains 503 with
 `all Antigravity accounts are paused or disabled`. Other unavailability, such as
 missing credentials, remains a non-429 error. The request that exhausted the pool
 retains the last upstream error. Successful

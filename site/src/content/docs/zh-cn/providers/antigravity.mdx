@@ -214,6 +214,7 @@ Gemini 模型共享一个配额池，Claude 和 GPT 模型共享另一个配额�
 如果请求组的冷却导致没有可尝试的账号，新请求直接返回 `429 rate_limit_error`，不连接上游。
 消息说明距离重置的等待时间，`Retry-After` 给出距离最早有效重置的秒数，向上取整。
 暂停或禁用的账号不参与重置时间计算。冷却和暂停的账号混合时仍返回 429。
+仅当所有已启用且未暂停的账号都在该请求组上冷却时才返回 429；如果其他账号被跳过或令牌解析失败，则返回 503，消息为 `no Antigravity accounts are available`，且不带 `Retry-After`。
 如果所有账号均已暂停或禁用，则返回 503，消息为 `all Antigravity accounts are paused or disabled`。
 耗尽池的那次请求仍透传最后一个上游错误。
 
