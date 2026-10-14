@@ -61,7 +61,7 @@ Choose option 1. Repair goal-tui separately, then resume TASK-013 with the origi
   cannot pass because formatting fails first. Scoped formatting passes with
   `cargo fmt --package goal --package goal-core --check`; this is diagnostic evidence,
   not a substitute for the required workspace check.
-- [x] **2. Root causes and added allows recorded.** The confirmed fixture faults are below.
+- [ ] **2. Root causes and added allows recorded.** The confirmed fixture faults are below.
   The complete repair and diagnosis of the other execution failures remain pending.
   No new `#[allow]` was added; there are no allowance reasons to list.
 - [x] **3. No test removed, ignored, or weakened.** `cargo test -- --list` records
