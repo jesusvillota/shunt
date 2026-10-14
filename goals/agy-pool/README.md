@@ -36,6 +36,7 @@ flowchart TD
     TASK_010["TASK-010 Live failover and ranking test of the agy pool"]
     TASK_011["TASK-011 Redesign the Antigravity section of shunt tui as aligned quota columns"]
     TASK_012["TASK-012 Return 429 with the reset time when every agy account is exhausted"]
+    TASK_013["TASK-013 Repair the goal-rust baseline checks in the config repo"]
   end
   TASK_001 --> DEC_001
   DEC_001 --> TASK_002
