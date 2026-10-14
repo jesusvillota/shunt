@@ -59,8 +59,6 @@ space, or press `Esc`, and nothing is selected again.
 States: `disabled` (config) · `paused` · `needs re-login` · `unseen` (no traffic yet) ·
 `cooling down` · `near quota` · `cooling (fable)` · `available`.
 
-## Keys
-
 Antigravity accounts show `Quota remaining ↓` in place of the two limit cells.
 Indented lines under each account show every reported family and window, the
 percentage **left**, and the time until reset. For example:
@@ -77,6 +75,8 @@ values show `—`; missing or invalid reset times have no countdown. Remaining
 percentages turn yellow at 30% and red at 10%. Clicking a quota line selects its
 account. Claude and Codex keep their existing used-percentage bars and resets.
 The web dashboard already displays the same pool buckets.
+
+## Keys
 
 | Key | Action |
 | :-- | :-- |

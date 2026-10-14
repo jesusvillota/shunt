@@ -126,7 +126,7 @@ fn weekly_only_quota_shows_families_remaining_resets_and_account_hit_targets() {
         .lines()
         .position(|line| line.contains("Gemini Models"))
         .unwrap() as u16;
-    assert_eq!(terminal.backend().buffer()[(48, y)].fg, Color::Red);
+    assert_eq!(terminal.backend().buffer()[(49, y)].fg, Color::Red);
     assert_eq!(terminal.backend().buffer()[(54, y + 1)].fg, Color::Green);
     for hit in &app.hits[1..4] {
         assert_eq!(hit.as_ref().unwrap().account.as_deref(), Some("ref-weekly"));
