@@ -210,7 +210,7 @@ schema 未声明类型的数组,除非元素通过 `enum` 或 `properties` 暗�
 
 Gemini 模型共享一个配额池，Claude 和 GPT 模型共享另一个配额池。
 遇到 429 后，在重置前，该账号会从已耗尽组的所有模型中排除。另一组仍可使用，
-且该组的成功请求不会清除已耗尽组的冷却。优先级相同的正常账号按顺序轮换。
+且该组的成功请求不会清除已耗尽组的冷却。优先级和该组配额相同的正常账号按顺序轮换。
 如果请求组的所有账号都在冷却，新请求直接返回 503，不连接上游。
 耗尽池的那次请求仍透传最后一个上游错误。
 
@@ -220,12 +220,13 @@ Gemini 模型共享一个配额池，Claude 和 GPT 模型共享另一个配额�
 
 ## 用量报告
 
-Antigravity 配额轮询在账户设置了 `profile_dir` 且 agy 版本不低于 1.1.11 时，优先使用 `agy -p /usage --output-format json --print-timeout 20s`。设置 `[server.pool] usage_refresh_seconds = 60` 即可启用。账户配置目录是该账户登录 agy 时使用的现有 HOME 目录；`~` 会展开，相对路径以网关工作目录为基准。探测器设置子进程的 `HOME`/`USERPROFILE`，移除宿主的 Google/Gemini 凭据。没有配置目录的账户不会使用宿主的登录状态，也不会传入 `--disable-slash-commands`。配置目录缺失、CLI 不受支持或失败时，使用同一账户的现有 HTTP `retrieveUserQuotaSummary` 路径，但要求凭据可刷新。响应包含 `num_turns > 0` 时，所有 CLI 配额探测会停止，直到网关重启；HTTP 回退仍继续。子进程限制为 25 秒和 1 MiB 输出。`GET /admin/api/pool` 只显示上游实际报告的 Gemini 和 Claude + GPT 5h/每周配额桶，不补造缺失的窗口。`token_env` 账户仍被排除，账户选择行为不变。
+Antigravity 配额轮询在账户设置了 `profile_dir` 且 agy 版本不低于 1.1.11 时，优先使用 `agy -p /usage --output-format json --print-timeout 20s`。设置 `[server.pool] usage_refresh_seconds = 60` 即可启用。账户配置目录是该账户登录 agy 时使用的现有 HOME 目录；`~` 会展开，相对路径以网关工作目录为基准。探测器设置子进程的 `HOME`/`USERPROFILE`，移除宿主的 Google/Gemini 凭据。没有配置目录的账户不会使用宿主的登录状态，也不会传入 `--disable-slash-commands`。配置目录缺失、CLI 不受支持或失败时，使用同一账户的现有 HTTP `retrieveUserQuotaSummary` 路径，但要求凭据可刷新。响应包含 `num_turns > 0` 时，所有 CLI 配额探测会停止，直到网关重启；HTTP 回退仍继续。子进程限制为 25 秒和 1 MiB 输出。`GET /admin/api/pool` 只显示上游实际报告的 Gemini 和 Claude + GPT 5h/每周配额桶，不补造缺失的窗口。`token_env` 账户仍被排除在轮询之外。
 
 响应不是每个模型各自拥有独立配额,而是分成两个共享的模型家族配额池:**Gemini Models** 与
 **Claude + GPT Models**。当账号方案提供对应窗口时,每组都包含 5 小时和每周窗口,并携带各自的剩余比例
-与重置时间。仪表盘展示这些共享窗口,而不是为目录中的每个模型绘制一条。它们仅用于展示,池选择与轮换
-不会使用这些值。
+与重置时间。仪表盘展示这些共享窗口,而不是为目录中的每个模型绘制一条。在相同配置优先级内，先选择请求组剩余比例最高的账号，再按最早重置时间排序。两个窗口都存在时，使用较低比例。忽略已过期的窗口。正值排在未知值之前，未知值排在已知零值之前。没有读数的账号仍可使用。读数相同时轮换。通用重置排序设置不会覆盖此组内排序。
+
+运行 `goal pool --json` 查看每个账号的分组配额。普通文本视图显示账号整体窗口；JSON 保留 `quota_buckets`。
 
 ## 校验
 
