@@ -91,13 +91,22 @@ Like `sort_by_reset`, the runtime toggle overrides the config file's value until
 
 ## Terminal ranking cycle
 
-Antigravity accounts in `shunt tui` show `Quota remaining ↓` with indented lines
-for each reported family and window. Each line shows the percentage **left** and
-the time until reset, such as `Gemini Models · weekly: 0% left · resets in 6d`.
-The TUI reads `quota_buckets` from `GET /admin/api/pool`, like the web dashboard.
-It shows a 5h window only when upstream reports one. Missing remaining values
-show `—`; missing or invalid reset times have no countdown. Clicking a quota line
-selects its account. Claude and Codex keep their existing usage bars and resets.
+Antigravity accounts in Antigravity accounts in `shunt tui` use one row per account. The quota columns
+are `Gemini · weekly` and `Claude + GPT · weekly`. At full width, they start at
+the same positions as the other providers' 5h and 7d columns.
+Bars and percentages show **used** quota (`used = 1 - remaining`). Bars turn
+yellow at 70% used and red at 90%. An exhausted family shows a red full bar
+and `100%`. When every reported family window is exhausted, the State column
+shows red `exhausted`. Paused, disabled, and other blocking states keep their labels.
+
+The TUI reads `quota_buckets` from `GET /admin/api/pool`. Missing or unknown
+readings show a dim `—`, never `0%`. Missing or invalid reset times have no
+countdown. Weekly-only replies stay weekly-only. An extra reported 5h window
+appears as a labelled cell only when the whole cell fits. At narrower widths,
+titles shorten to `7d`, then the section shows one quota column. Very small
+terminals shorten account names too. Rows never wrap. Clicking the account row
+selects it; column headings do not select an account. Claude and Codex keep
+their existing usage bars and resets.
 
 In `shunt tui` (built with `--features tui`), select a provider header or one of its accounts and press `m`. With at least two accounts, the cycle is **custom order → balanced → weekly reset → custom order**:
 

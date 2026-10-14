@@ -91,12 +91,18 @@ curl -X PATCH "$SHUNT_URL/admin/api/pool" \
 
 ## 终端排序模式切换
 
-`shunt tui` 中的 Antigravity 账户显示 `Quota remaining ↓`，并在缩进的行中
-显示每个模型系列和上游报告的时间窗口。每行显示**剩余百分比**和距离重置的时间，
-例如 `Gemini Models · weekly: 0% left · resets in 6d`。
-TUI 与网页控制台一样，读取 `GET /admin/api/pool` 的 `quota_buckets`。
-只有上游报告了 5h 窗口时才显示该窗口。没有剩余值时显示 `—`；
-重置时间缺失或无效时不显示倒计时。点击配额行会选中对应账户。
+`shunt tui` 中的 Antigravity 账户每个占一行。配额列为 `Gemini · weekly`
+和 `Claude + GPT · weekly`。宽度充足时，这两列与其他提供商的 5h 和 7d
+列位于相同位置。使用量条和百分比显示**已使用**的配额
+（`used = 1 - remaining`）。使用率达到 70% 时变为黄色，达到 90% 时变为红色。
+某个系列耗尽时，显示红色满条和 `100%`。所有已报告系列的时间窗口都耗尽时，
+State 列显示红色 `exhausted`。暂停、禁用和其他阻止使用的状态保留原有文字。
+
+TUI 读取 `GET /admin/api/pool` 的 `quota_buckets`。缺失或未知的读数显示暗色
+`—`，不会显示成 `0%`。重置时间缺失或无效时不显示倒计时。只报告每周配额时，
+只显示每周窗口。上游额外报告的 5h 窗口，仅在带名称的单元格能完整显示时出现。
+宽度变小时，标题缩短为 `7d`；更窄时只显示一个配额列。非常小的终端也会缩短
+账户名。行不会换行。点击账户行可选择账户，点击列标题不会选择账户。
 Claude 和 Codex 的现有使用量条和重置时间显示保持不变。
 
 在 `shunt tui`（使用 `--features tui` 构建）中，选择提供商标题或账户，然后按 `m`。提供商至少有两个账户时，按 **custom order → balanced → weekly reset → custom order** 顺序切换。

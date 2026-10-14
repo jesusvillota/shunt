@@ -4,7 +4,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::pool::{quota_parts, until};
+use crate::pool::until;
 
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -17,8 +17,10 @@ use ratatui::{
 use super::{
     add::{AddFlow, Step},
     app::{App, DeleteConfirm, Entry, Notice, Sel},
-    model::{AccountDto, AccountState, ProviderView, QuotaBucketDto},
+    model::{AccountDto, AccountState, ProviderView},
 };
+
+mod family;
 
 const BAR_WIDTH: usize = 8;
 const NAME_W: usize = 20;
@@ -154,13 +156,9 @@ fn account_line(entry: &Entry<'_>, now: u64) -> Line<'static> {
         Span::styled(format!("{rank:>3} "), Style::new().bold()),
         Span::raw(fit(&a.name, NAME_W + 1)),
     ];
-    if has_family_quota(entry) {
-        spans.push(Span::raw(fit("Quota remaining ↓", WINDOW_W * 2 + 2)));
-    } else {
-        spans.extend(window_cell(a.utilization_5h, a.reset_5h, now));
-        spans.push(Span::raw("  "));
-        spans.extend(window_cell(a.utilization_7d, a.reset_7d, now));
-    }
+    spans.extend(window_cell(a.utilization_5h, a.reset_5h, now));
+    spans.push(Span::raw("  "));
+    spans.extend(window_cell(a.utilization_7d, a.reset_7d, now));
     spans.push(Span::raw("  "));
     spans.push(Span::styled(
         fit(row.state.label(), STATE_W + 1),
@@ -181,30 +179,6 @@ fn account_line(entry: &Entry<'_>, now: u64) -> Line<'static> {
         line = line.style(Style::new().add_modifier(Modifier::DIM));
     }
     line
-}
-
-fn has_family_quota(entry: &Entry<'_>) -> bool {
-    entry.provider.auth.as_deref() == Some("antigravity_oauth")
-        && entry
-            .row
-            .is_some_and(|(_, row)| !row.account.quota_buckets.is_empty())
-}
-
-/// Keep upstream family/window labels intact, including weekly-only replies.
-fn quota_line(bucket: &QuotaBucketDto, now: u64) -> Line<'static> {
-    let remaining = bucket.remaining.filter(|value| value.is_finite());
-    let (value, reset) = quota_parts(bucket, now);
-    Line::from(vec![
-        Span::raw(" ".repeat(NAME_W + 5)),
-        Span::raw(format!("{}: ", bucket.label)),
-        Span::styled(
-            value,
-            remaining.map_or(Style::new().dark_gray(), |r| {
-                Style::new().fg(level_color((1.0 - r).clamp(0.0, 1.0)))
-            }),
-        ),
-        Span::raw(reset),
-    ])
 }
 
 /// `ok/failed · mean latency` for the attempts this gateway process has sent
@@ -304,7 +278,13 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
         );
         return;
     }
-    frame.render_widget(Paragraph::new(column_heading()), heading);
+    if app
+        .entries()
+        .iter()
+        .any(|entry| !family::applies(entry.provider))
+    {
+        frame.render_widget(Paragraph::new(column_heading()), heading);
+    }
 
     // Build every line with the selection it stands for, then window it.
     let selected = app.selected.clone();
@@ -318,6 +298,8 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
         current_provider = Some(entry.sel.provider.clone());
         let mut line = if entry.row.is_none() {
             provider_line(&entry, app.collapsed.contains(&entry.sel.provider))
+        } else if family::applies(entry.provider) {
+            family::account_line(&entry, now, usize::from(list.width))
         } else {
             account_line(&entry, now)
         };
@@ -326,20 +308,14 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
             line = line.style(Style::new().add_modifier(Modifier::REVERSED));
         }
         lines.push((line, Some(entry.sel.clone())));
-        if has_family_quota(&entry) {
-            let (_, row) = entry.row.expect("account entry");
-            for bucket in &row.account.quota_buckets {
-                let mut line = quota_line(bucket, now);
-                if !entry.provider.is_on()
-                    || matches!(row.state, AccountState::Disabled | AccountState::Paused)
-                {
-                    line = line.style(Style::new().add_modifier(Modifier::DIM));
-                }
-                if selected.as_ref() == Some(&entry.sel) {
-                    line = line.style(Style::new().add_modifier(Modifier::REVERSED));
-                }
-                lines.push((line, Some(entry.sel.clone())));
-            }
+        if entry.row.is_none()
+            && family::applies(entry.provider)
+            && !app.collapsed.contains(&entry.sel.provider)
+        {
+            lines.push((
+                family::heading(entry.provider, usize::from(list.width)),
+                None,
+            ));
         }
     }
 
