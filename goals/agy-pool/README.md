@@ -35,6 +35,7 @@ flowchart TD
     TASK_009["TASK-009 Switch goal pool to call shunt pool --json"]
     TASK_010["TASK-010 Live failover and ranking test of the agy pool"]
     TASK_011["TASK-011 Redesign the Antigravity section of shunt tui as aligned quota columns"]
+    TASK_012["TASK-012 Return 429 with the reset time when every agy account is exhausted"]
   end
   TASK_001 --> DEC_001
   DEC_001 --> TASK_002
@@ -51,6 +52,7 @@ flowchart TD
   DEC_005 --> TASK_009
   TASK_007 --> TASK_010
   TASK_008 --> TASK_011
+  TASK_010 --> TASK_012
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
