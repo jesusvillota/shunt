@@ -1,0 +1,11 @@
+r1 HTTP 429 in 1.831189s
+HTTP/1.1 429 Too Many Requests
+{"type":"error","error":{"type":"rate_limit_error","message":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 150h44m15s."}}
+r2 HTTP 429 in 0.001140s
+HTTP/1.1 429 Too Many Requests
+retry-after: 526578
+{"type":"error","error":{"type":"rate_limit_error","message":"Antigravity quota exhausted. Resets in 526578s."}}
+r3 HTTP 429 in 0.000948s
+HTTP/1.1 429 Too Many Requests
+retry-after: 526578
+{"type":"error","error":{"type":"rate_limit_error","message":"Antigravity quota exhausted. Resets in 526578s."}}

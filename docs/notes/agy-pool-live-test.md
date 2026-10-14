@@ -1,7 +1,7 @@
 # Antigravity pool: live failover and ranking test
 
 **Date:** 2026-10-14 · goal `agy-pool`, TASK-010 · build: this branch (`cargo build`, shunt 0.51.1, debug)
-**Result:** cases 1, 2, 3 PASS; case 4 PASS **on a mock upstream only**; case 5 FAIL (bug recorded with `agent-note bug`).
+**Result:** cases 1, 2, 3 PASS; case 4 PASS **on a mock upstream only**; case 5 PASS after TASK-012 (live recheck below).
 
 All raw evidence is in [`agy-pool-live-test/`](agy-pool-live-test/). This note was re-run from scratch on
 2026-10-14 (11:26–11:28 CEST) after review; every number below comes from the committed files.
@@ -116,26 +116,63 @@ Gemini command with port `39012`. Times are local.
 The account was skipped inside the cooldown and tried again 16 s later. **PASS (mock only)**. Live expiry is covered
 only by the TASK-003 unit test for weekly cooldown expiry, not by this note.
 
-## Case 5 — All exhausted: FAIL
+## Case 5 — All exhausted: PASS (TASK-012 live recheck)
 
-`keepuntouser` and `cemfi` paused through the admin API; the other three are Gemini-exhausted. Clean gateway.
-The pause commands (admin token read from the file, never written to the evidence) and the responses are in
-`c5-pause.txt` (both `{"ok":true} HTTP 200`); `c5-paused.pool.json` shows `paused: true` for exactly those two.
-Gemini command, three times:
+**Rechecked:** 2026-10-14 10:02:26–10:02:29 UTC, revision `ff732df`.
+The original TASK-010 run returned 503 on its second and third requests.
+TASK-012 fixes that fallback; the original evidence remains in `c5-r*.request.txt`.
+New raw evidence is in [`task012-case5/`](agy-pool-live-test/task012-case5/).
 
-| Label | HTTP | Time | Body |
-| --- | --- | --- | --- |
-| `c5-r1` | **429** | 1.84 s | `{"type":"error","error":{"type":"rate_limit_error","message":"Individual quota reached. ... Resets in 151h41m46s."}}` |
-| `c5-r2` | **503** | 1 ms | `{"type":"error","error":{"type":"api_error","message":"no Antigravity accounts are available"}}` |
-| `c5-r3` | **503** | 1 ms | same as `c5-r2` |
+Scratch gateway only: port **39020**, separate HOME
+`/var/folders/_j/7j25pgqd5z3dh647gtb8vmbw0000gn/T/shunt-task012-_k5nvecd/home`,
+copied account credentials and admin token. `scratch.shunt.toml` records the exact config.
+The gateway used the real `https://daily-cloudcode-pa.googleapis.com` upstream, with
+`usage_refresh_seconds = 60`. No mock was used. Start command (from the worktree):
 
-`c5-r1` is a prompt Anthropic-shaped 429 (computingjvm, tommyshelby and personal each tried once: failed +1). After
-that they are cooled and `c5-r2`/`c5-r3` are an immediate **5xx**, which the case forbids. Log
-(`phase3.gateway.log`): `WARN ... upstream request failed latency_ms=0 error=no Antigravity accounts are available`
-with `http.response.status_code=503`, twice.
-Root cause: `src/adapters/gemini/mod.rs` returns that 503 fallback when the loop attempts no account. Not fixed here
-(out of scope). Recorded with `agent-note bug` ("Antigravity pool returns 503 api_error instead of 429 once every
-account is cooled or paused"). **FAIL**.
+```sh
+HOME=/var/folders/_j/7j25pgqd5z3dh647gtb8vmbw0000gn/T/shunt-task012-_k5nvecd/home RUST_LOG=shunt=debug ./target/debug/shunt run --config /var/folders/_j/7j25pgqd5z3dh647gtb8vmbw0000gn/T/shunt-task012-_k5nvecd/shunt.toml
+```
+
+Paused `keepuntouser` and `cemfi` through the scratch admin API (HTTP 200, `{"ok":true}` each).
+`paused.pool.json` confirms these two pauses. The three other accounts reported zero Gemini weekly quota.
+Repeated this command three times, changing the output label to `r1`, `r2`, then `r3`:
+
+```sh
+T012_SCRATCH=/var/folders/_j/7j25pgqd5z3dh647gtb8vmbw0000gn/T/shunt-task012-_k5nvecd
+curl -sS -m 90 -D "$T012_SCRATCH/r1.headers.txt" -o "$T012_SCRATCH/r1.body.json" -w 'HTTP %{http_code} in %{time_total}s' http://127.0.0.1:39020/v1/messages -H 'content-type: application/json' -H 'anthropic-version: 2023-06-01' -d '{"model":"claude-gemini-3.8-flash-low-via-antigravity","max_tokens":16,"messages":[{"role":"user","content":"Say ok"}]}'
+```
+
+Each `r*.request.txt` contains the exact status, headers and body. Saved headers use LF line endings.
+
+| Request | HTTP | Time | `Retry-After` | Account attempts |
+| --- | --- | --- | --- | --- |
+| First (`r1`) | **429** | 3.144431 s | absent (last upstream error relayed) | computingjvm, tommyshelby, personal: +1 failed each |
+| Second (`r2`) | **429** | 0.002427 s | **527947** seconds | none |
+| Third (`r3`) | **429** | 0.002363 s | **527947** seconds | none |
+
+First response body:
+
+```json
+{"type":"error","error":{"type":"rate_limit_error","message":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 151h7m4s."}}
+```
+
+Second and third response bodies:
+
+```json
+{"type":"error","error":{"type":"rate_limit_error","message":"Antigravity quota exhausted. Resets in 527947s."}}
+```
+
+The earliest eligible Gemini reset was tommyshelby's `2026-10-20T12:41:36Z`.
+At `2026-10-14T10:02:29Z`, it was 527947 seconds away. This is earlier than the other two resets.
+The `r*.before.pool.json` and `r*.after.pool.json` snapshots show zero changes to all attempt,
+success and failure counters on the second and third requests. The gateway returned both locally.
+`gateway.log` records three 429 responses, with the later requests at 0 ms and 1 ms logged latency.
+**PASS**: every request returned Anthropic `rate_limit_error`; later requests include the earliest reset and make no inference attempt.
+
+The scratch gateway was stopped by its own PID (94158). `production-before.json` and
+`production-after.json` are identical: the live config SHA-256 stayed
+`41c267ae3f54974b6644357922a7b85fb501d1e98ab5cbddea243d485a7438b0`,
+and the launchd gateway stayed PID 57240. No live credential or config file was written.
 
 ## Live gateway untouched
 
@@ -156,3 +193,20 @@ $ ps -o pid,lstart,command -p 57240
 The launchd gateway (pid 57240, started 10:57:13) kept the same pid and start time, so it was not restarted. The
 scratch gateways ran on ports 39010/39012 with `HOME=/tmp/t010/home` and were killed with
 `pkill -f 'shunt run --config /tmp/t010'`, which cannot match the live process. No live account file was written.
+
+### Case 5 addendum — recheck after the "every account" fix (2026-10-14)
+
+Re-run with the fixed helper (`antigravity_retry_after` now needs every enabled, unpaused account
+cooled). Scratch gateway only: port 39020, the same scratch HOME, `./target/debug/shunt run` at
+the fix commit. The admin pause call returned 401 with the copied token, so instead of pausing, the
+scratch config omits `keepuntouser` and `cemfi` (the two accounts that still have Gemini quota); the
+three exhausted accounts remain. Evidence is in [`task012-case5-recheck2/`](agy-pool-live-test/task012-case5-recheck2/).
+
+| Request | HTTP | Time | `Retry-After` | Body message |
+| --- | --- | --- | --- | --- |
+| First | **429** | 1.83 s | absent | `Individual quota reached. … Resets in 150h44m15s.` (last upstream error) |
+| Second | **429** | 0.0011 s | **526578** | `Antigravity quota exhausted. Resets in 526578s.` |
+| Third | **429** | 0.0009 s | **526578** | `Antigravity quota exhausted. Resets in 526578s.` |
+
+All bodies are `{"type":"error","error":{"type":"rate_limit_error",…}}`. **PASS.** The live config SHA-256
+stayed `41c267ae…438b0` and the launchd gateway stayed PID 57240.

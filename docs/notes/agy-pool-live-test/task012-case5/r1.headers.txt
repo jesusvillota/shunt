@@ -1,0 +1,7 @@
+HTTP/1.1 429 Too Many Requests
+content-type: application/json
+x-gateway-upstream: antigravity
+x-gateway-model: claude-gemini-3.8-flash-low-via-antigravity
+x-gateway-upstream-model: gemini-3.8-flash-low
+content-length: 168
+date: Wed, 14 Oct 2026 10:02:29 GMT

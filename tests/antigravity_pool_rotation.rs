@@ -26,6 +26,10 @@ struct Pool {
 
 impl Pool {
     async fn start(backend: &MockServer, names: &[&str]) -> Self {
+        Self::start_with(backend, names, "").await
+    }
+
+    async fn start_with(backend: &MockServer, names: &[&str], extra_config: &str) -> Self {
         let mut vars = common::env_lock().await;
         let dir = std::env::temp_dir().join(format!(
             "shunt-agy-rotation-{}-{}",
@@ -57,8 +61,9 @@ impl Pool {
             &config_path,
             format!(
                 "[server]\nbind = \"127.0.0.1:0\"\ndefault_provider = \"antigravity\"\n\
-                 [providers.antigravity]\nauth = \"antigravity_oauth\"\nbase_url = \"{}\"\n",
-                backend.uri()
+                 [providers.antigravity]\nauth = \"antigravity_oauth\"\nbase_url = \"{}\"\n{}",
+                backend.uri(),
+                extra_config
             ),
         )
         .unwrap();
@@ -82,16 +87,7 @@ impl Pool {
     }
 
     async fn request(&self, model: &str) -> (u16, Option<String>) {
-        let response = reqwest::Client::new()
-            .post(format!("http://{}/v1/messages", self.addr))
-            .json(&json!({
-                "model": model,
-                "max_tokens": 16,
-                "messages": [{"role": "user", "content": "Reply with OK."}]
-            }))
-            .send()
-            .await
-            .unwrap();
+        let response = self.response(model).await;
         let status = response.status().as_u16();
         let account = response
             .headers()
@@ -102,6 +98,19 @@ impl Pool {
             assert_eq!(body["content"][0]["text"], "OK");
         }
         (status, account)
+    }
+
+    async fn response(&self, model: &str) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(format!("http://{}/v1/messages", self.addr))
+            .json(&json!({
+                "model": model,
+                "max_tokens": 16,
+                "messages": [{"role": "user", "content": "Reply with OK."}]
+            }))
+            .send()
+            .await
+            .unwrap()
     }
 }
 
@@ -303,7 +312,7 @@ async fn gemini_exhaustion_leaves_claude_and_gpt_available_on_the_same_account()
     for model in ["claude-sonnet-4-6", "gpt-oss-120b-medium"] {
         assert_eq!(pool.request(model).await, (200, Some("a".into())));
     }
-    assert_eq!(pool.request("gemini-3.1-pro").await, (503, None));
+    assert_eq!(pool.request("gemini-3.1-pro").await, (429, None));
     let requests = inference(&backend).await;
     assert_eq!(
         requests.len(),
@@ -331,11 +340,170 @@ async fn claude_exhaustion_also_blocks_gpt_but_leaves_gemini_available() {
         .await;
     let pool = Pool::start(&backend, &["a"]).await;
     assert_eq!(pool.request("claude-sonnet-4-6").await, (429, None));
-    assert_eq!(pool.request("gpt-oss-120b-medium").await, (503, None));
+    assert_eq!(pool.request("gpt-oss-120b-medium").await, (429, None));
     assert_eq!(
         pool.request("gemini-3.8-flash").await,
         (200, Some("a".into()))
     );
-    assert_eq!(pool.request("claude-opus-4-6-thinking").await, (503, None));
+    assert_eq!(pool.request("claude-opus-4-6-thinking").await, (429, None));
     assert_eq!(inference(&backend).await.len(), 2);
+}
+
+async fn exhaust_account(backend: &MockServer, name: &str, seconds: u64) {
+    Mock::given(method("POST"))
+        .and(path("/v1internal:generateContent"))
+        .and(header("authorization", format!("Bearer token-{name}")))
+        .and(body_partial_json(
+            json!({"model": "gemini-3.8-flash-medium"}),
+        ))
+        .respond_with(ResponseTemplate::new(429).set_body_json(json!({
+            "error": {"message": format!("Individual quota reached. Resets in {seconds}s."),
+                      "status": "RESOURCE_EXHAUSTED"}
+        })))
+        .expect(1)
+        .mount(backend)
+        .await;
+}
+
+async fn assert_exhausted(response: reqwest::Response, started: std::time::Instant) {
+    assert_eq!(response.status(), 429);
+    let seconds: u64 = response.headers()["retry-after"]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    // The earliest reset is 60 seconds from the first refusal, rounded up.
+    // Bound elapsed wall time so a slow test machine cannot cause a false failure.
+    assert!((60_u64.saturating_sub(started.elapsed().as_secs())..=60).contains(&seconds));
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["type"], "error");
+    assert_eq!(body["error"]["type"], "rate_limit_error");
+    assert_eq!(
+        body["error"]["message"],
+        format!("Antigravity quota exhausted. Resets in {seconds}s.")
+    );
+}
+
+#[tokio::test]
+async fn all_cooled_requests_return_earliest_reset_without_upstream_calls() {
+    let backend = healthy_backend().await;
+    exhaust_account(&backend, "a", 60).await;
+    exhaust_account(&backend, "b", 7200).await;
+    let pool = Pool::start(&backend, &["a", "b"]).await;
+    let started = std::time::Instant::now();
+    assert_eq!(pool.request("gemini-3.8-flash").await, (429, None));
+    assert_eq!(inference(&backend).await.len(), 2);
+    let calls = backend.received_requests().await.unwrap().len();
+    for model in ["gemini-3.8-flash", "gemini-3.1-pro", "gemini-3.8-flash"] {
+        assert_exhausted(pool.response(model).await, started).await;
+    }
+    assert_eq!(backend.received_requests().await.unwrap().len(), calls);
+    for model in ["claude-sonnet-4-6", "gpt-oss-120b-medium"] {
+        assert_eq!(pool.request(model).await.0, 200);
+    }
+    assert_eq!(inference(&backend).await.len(), 4);
+}
+
+#[tokio::test]
+async fn all_paused_accounts_report_operator_action_without_upstream_calls() {
+    let backend = healthy_backend().await;
+    let pool = Pool::start(&backend, &["a", "b"]).await;
+    // Even an active quota refusal on a paused account is an operator pause.
+    exhaust_account(&backend, "a", 60).await;
+    exhaust_account(&backend, "b", 7200).await;
+    assert_eq!(pool.request("gemini-3.8-flash").await.0, 429);
+    for account in &pool.resolved_accounts {
+        pool.accounts.set_paused("antigravity", account, true);
+    }
+    let calls = backend.received_requests().await.unwrap().len();
+    let response = pool.response("gemini-3.8-flash").await;
+    assert_eq!(response.status(), 503);
+    assert!(!response.headers().contains_key("retry-after"));
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["type"], "error");
+    assert_eq!(body["error"]["type"], "api_error");
+    assert_eq!(
+        body["error"]["message"],
+        "all Antigravity accounts are paused or disabled"
+    );
+    assert_eq!(backend.received_requests().await.unwrap().len(), calls);
+}
+
+#[tokio::test]
+async fn cooled_and_paused_accounts_use_only_the_unpaused_reset() {
+    let backend = healthy_backend().await;
+    // The paused account's earlier reset must not determine Retry-After.
+    exhaust_account(&backend, "a", 10).await;
+    exhaust_account(&backend, "b", 60).await;
+    let pool = Pool::start(&backend, &["a", "b"]).await;
+    let started = std::time::Instant::now();
+    assert_eq!(pool.request("gemini-3.8-flash").await.0, 429);
+    pool.accounts
+        .set_paused("antigravity", &pool.resolved_accounts[0], true);
+    let calls = backend.received_requests().await.unwrap().len();
+    assert_exhausted(pool.response("gemini-3.8-flash").await, started).await;
+    assert_eq!(backend.received_requests().await.unwrap().len(), calls);
+}
+
+async fn assert_no_account_available(response: reqwest::Response) {
+    assert_eq!(response.status(), 503);
+    assert!(!response.headers().contains_key("retry-after"));
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["error"]["type"], "api_error");
+    assert_eq!(
+        body["error"]["message"],
+        "no Antigravity accounts are available"
+    );
+}
+
+#[tokio::test]
+async fn cooled_account_with_a_token_failure_on_another_is_not_a_429() {
+    let backend = healthy_backend().await;
+    exhaust_account(&backend, "a", 60).await;
+    let pool = Pool::start(&backend, &["a", "b"]).await;
+    // The first request tries a (429 -> family cooldown), then b serves it.
+    assert_eq!(pool.request("gemini-3.8-flash").await.0, 200);
+    // b's token cannot be resolved inside the loop: expired, nothing to refresh.
+    std::fs::write(
+        pool.dir.join("accounts/b.json"),
+        json!({"access_token": "token-b", "expiry_date": 1, "project_id": "project-b"}).to_string(),
+    )
+    .unwrap();
+    let calls = backend.received_requests().await.unwrap().len();
+    assert_no_account_available(pool.response("gemini-3.8-flash").await).await;
+    assert_eq!(backend.received_requests().await.unwrap().len(), calls);
+}
+
+#[tokio::test]
+async fn cooled_account_with_a_deferred_uncooled_account_is_not_a_429() {
+    let backend = healthy_backend().await;
+    exhaust_account(&backend, "a", 60).await;
+    let pool = Pool::start_with(
+        &backend,
+        &["a", "b", "c"],
+        "[server.pool]\nramp_initial_concurrency = 1\n",
+    )
+    .await;
+    // The first request tries a (429 -> family cooldown), then b serves it.
+    assert_eq!(pool.request("gemini-3.8-flash").await.0, 200);
+    // Next order is [b, c]: b is skipped by storm admission (one request in
+    // flight) without a cooldown, and the last candidate c fails token resolution.
+    std::fs::write(
+        pool.dir.join("accounts/c.json"),
+        json!({"access_token": "token-c", "expiry_date": 1, "project_id": "project-c"}).to_string(),
+    )
+    .unwrap();
+    // Saturate b's admission allowance (it grows after a success) with held guards.
+    let b = pool
+        .resolved_accounts
+        .iter()
+        .find(|account| account.name == "b")
+        .unwrap();
+    let mut _in_flight = Vec::new();
+    while let Some(guard) = pool.accounts.clone().try_admit("antigravity", b, 1, false) {
+        _in_flight.push(guard);
+    }
+    let calls = backend.received_requests().await.unwrap().len();
+    assert_no_account_available(pool.response("gemini-3.8-flash").await).await;
+    assert_eq!(backend.received_requests().await.unwrap().len(), calls);
 }
