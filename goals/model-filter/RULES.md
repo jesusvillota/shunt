@@ -1,0 +1,1 @@
+- If the OpenCode worker does a poor job on TASK-002, discard its work and run TASK-002 and all later tasks of this goal on Claude Code (platform claude, model sonnet, effort medium). Owner authorized this reroute on 2026-10-17.
