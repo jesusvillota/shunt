@@ -207,6 +207,20 @@ stored as overrides in `~/.shunt/models.json`, so a new model release can still 
 The state affects only those two tools: gateway routing, `/v1/models` and Claude Code's `/model`
 picker are unchanged. `shunt models` prints the same list outside the TUI.
 
+On the `opencode` tab the dialog also shows each free model's **status**, read from this machine's
+`~/.local/share/opencode/log/opencode.log`:
+
+- **reachable** — the newest log line for the model is a request start (`message=stream`);
+- **rate limited** — the newest line is a rate-limit error, shown with the age of that error;
+- **unknown** — the model has no line in the last 24 hours, or its newest line is a non-rate-limit
+  error (overload, outage, country block, billing).
+
+A model you switch off is drawn dimmed, and the line under the list counts how many models are
+reachable. This is local only: `shunt tui` reads the log tail (the last 5 MB) on a background thread
+and refreshes it about every 10 seconds; it never calls the gateway or the admin API. If the log is
+missing or unreadable, every model shows `unknown` and that line names the reason — the TUI keeps
+working. The line shapes and the state rule are in `docs/notes/opencode-log-format.md`.
+
 ## Adding an account
 
 `a` opens a short dialog: choose a provider (skipped when one is selected), type a

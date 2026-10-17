@@ -72,7 +72,7 @@ shunt tui --config /path/to/shunt.toml
 
 일시 중지와 공급자 on/off는 런타임에만 적용됩니다. 순위 변경과 명시적 계정 구성 변경은 TOML 설정에 저장되고 핫 리로드로 반영됩니다. 공급자 숨기기(`h`)와 섹션 순서 변경(헤더에서 `Shift+↑/↓`)은 터미널 로컬 표시 설정으로 `~/.shunt/top.json`에 저장되며 라우팅에는 영향을 주지 않습니다.
 
-`M`을 누르면 Models 대화상자가 열리며, `goal` 도구와 `/delegate-cli`가 사용할 codex·opencode·agy 모델을 켜고 끌 수 있습니다. 게이트웨이 라우팅에는 영향이 없습니다.
+`M`을 누르면 Models 대화상자가 열리며, `goal` 도구와 `/delegate-cli`가 사용할 codex·opencode·agy 모델을 켜고 끌 수 있습니다. 게이트웨이 라우팅에는 영향이 없습니다. `opencode` 탭에서는 이 머신의 `~/.local/share/opencode/log/opencode.log`에서 읽은 각 무료 모델의 상태(`reachable`, `rate limited`(오류 경과 시간 포함), `unknown`)도 보여 줍니다. 상태는 로컬 전용이며 약 10초마다 갱신됩니다.
 
 ## `shunt check`
 

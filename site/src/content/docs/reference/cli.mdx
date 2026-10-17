@@ -72,7 +72,7 @@ Deletion removes the managed Claude, Codex, or Antigravity credential through th
 
 Pause/provider switches are runtime-only. Ranking changes and explicit account membership edits are persisted to the TOML config and picked up by hot reload. Hiding a provider (`h`) and reordering sections (`Shift+↑/↓` on a header) are local display preferences stored in `~/.shunt/top.json`; they never affect routing.
 
-Press `M` to open the Models dialog and switch codex, opencode and agy models on or off for the `goal` tool and `/delegate-cli`. It never affects gateway routing.
+Press `M` to open the Models dialog and switch codex, opencode and agy models on or off for the `goal` tool and `/delegate-cli`. It never affects gateway routing. On the `opencode` tab it also shows each free model's status — `reachable`, `rate limited` (with the age of the error), or `unknown` — read from this machine's `~/.local/share/opencode/log/opencode.log`. The status is local only and refreshes about every 10 seconds.
 
 ## `shunt check`
 

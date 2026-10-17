@@ -72,7 +72,7 @@ shunt tui --config /path/to/shunt.toml
 
 暂停和提供商开关只影响当前运行时。排序变化和显式账户成员变更会持久化到 TOML 配置，并通过热重载生效。隐藏提供商（`h`）和调整分节顺序（在标题行按 `Shift+↑/↓`）是本终端的显示偏好，保存在 `~/.shunt/top.json` 中，不会影响路由。
 
-按 `M` 打开 Models 对话框，为 `goal` 工具和 `/delegate-cli` 开关 codex、opencode、agy 的模型。它不影响网关路由。
+按 `M` 打开 Models 对话框，为 `goal` 工具和 `/delegate-cli` 开关 codex、opencode、agy 的模型。它不影响网关路由。在 `opencode` 选项卡中，它还会显示从本机 `~/.local/share/opencode/log/opencode.log` 读取的每个免费模型的状态：`reachable`、`rate limited`（含距离出错的时间）或 `unknown`。该状态仅本地读取，约每 10 秒刷新一次。
 
 ## `shunt check`
 
