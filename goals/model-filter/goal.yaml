@@ -7,10 +7,12 @@ success:
   SC-1: "`shunt models --json` and the Models dialog (`M`) in `shunt tui` list the live codex, opencode and agy models and switch each on or off, with the newest version of each family on by default. Verified by unit tests and a run against the real config."
   SC-2: "`shunt tui` shows, for each OpenCode free model, whether it is reachable or rate limited, read from the OpenCode log. Verified by tests on log fixtures and one live run."
   SC-3: "A rerank key in `shunt tui` runs a configurable headless agent and stores a validated ranking of the OpenCode models, shown in the TUI. Verified by tests with a fake ranker and one live run."
+  SC-4: "The ranker is chosen as platform, model and effort, and the rerank scores each model per parameter so shunt computes the order from the owner's weights. Verified by tests with a fake ranker and one live rerank."
 milestones:
   - {id: M-1, title: Models list and switches, success: [SC-1], exit: "PR #23 merged and `shunt models --json` lists live models"}
   - {id: M-2, title: OpenCode status, success: [SC-2], exit: "OpenCode section merged; status checked on a real log"}
   - {id: M-3, title: OpenCode rerank, success: [SC-3], exit: "Rerank merged; fake-ranker tests pass and one live rerank works"}
+  - {id: M-4, title: Selectable ranker and weighted scoring, success: [SC-4], exit: "Ranker platform, model and effort selectable; order computed from per-parameter scores and the owner's weights; one live rerank works"}
 policy:
   decide: human         # human | experts (a committee answers worker decision requests)
   orchestrator: {platform: claude, model: sonnet, effort: medium}
