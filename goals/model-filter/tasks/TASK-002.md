@@ -6,6 +6,7 @@ state: approved
 depends_on: []
 delivery: pr
 kind: discovery
+route: {platform: opencode, model: opencode/deepseek-v4.1-flash-free}
 ---
 
 ## Why
