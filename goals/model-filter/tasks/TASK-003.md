@@ -5,6 +5,7 @@ milestone: M-2
 state: approved
 depends_on: [TASK-001, TASK-002]
 delivery: pr
+route: {platform: opencode, model: opencode/deepseek-v4.1-flash-free}
 ---
 
 ## Why
