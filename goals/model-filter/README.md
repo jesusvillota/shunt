@@ -9,8 +9,7 @@ Let the operator switch codex, opencode and agy models on or off in shunt tui, f
 
 Model names are hard-coded in the goal tool, the `delegate-cli` skill and the global rules, and they go
 stale. This goal makes `shunt tui` the one place that lists the models of the three CLI platforms
-(`codex`, `opencode`, `agy`) live, and lets the operator switch each model on or off. The approved plan is
-`~/.claude/plans/idempotent-snacking-puzzle.md`.
+(`codex`, `opencode`, `agy`) live, and lets the operator switch each model on or off. The owner approved the design in a planning session.
 
 **Included (this goal, shunt repo):** the Models dialog and `shunt models` (PR #23, in review), an OpenCode
 section with reachable / rate-limited status, and an on-demand rerank of the OpenCode models.
@@ -38,6 +37,8 @@ already track the latest); changing `deny_models` in `goal.yaml`.
   Later work can still add `Plan: decompose M-n` tasks if a spike changes the shape.
 - **Needs a live `opencode` and `claude` on `PATH`** for the live runs. The launchd daemon has a minimal `PATH`,
   so all of this runs in the TUI or CLI process, never in the daemon.
+- **`chatgptweb` as ranker:** the owner wants any platform to be usable as the ranker, but `chatgptweb` needs a
+  browser session that shunt cannot start. TASK-004 reports it as unsupported. Say so if you want another route.
 - **Docs:** each PR that changes shunt behaviour updates README (+ko/ja/zh-CN), `docs/` and the site pages
   with their ko/ja/zh-cn copies, per `AGENTS.md`.
 
