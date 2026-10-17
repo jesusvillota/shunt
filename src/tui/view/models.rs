@@ -77,6 +77,40 @@ fn ranking_line(dialog: &ModelsDialog) -> Line<'static> {
 }
 
 pub(super) fn render(frame: &mut Frame, dialog: &ModelsDialog) {
+    if let Some(picker) = &dialog.picker {
+        let title = ["Ranker platform", "Ranker model", "Ranker effort"][picker.step];
+        let rows = dialog.picker_rows();
+        let room = frame.area().height.saturating_sub(10).max(1) as usize;
+        let skip = picker.at.saturating_sub(room - 1);
+        let mut lines: Vec<Line> = rows
+            .into_iter()
+            .enumerate()
+            .skip(skip)
+            .take(room)
+            .map(|(at, row)| {
+                Line::from(format!("{} {row}", if at == picker.at { "▶" } else { " " }))
+            })
+            .collect();
+        if picker.step == 1 {
+            let platform = crate::models_catalog::RANKER_PLATFORMS[picker.platform];
+            match dialog.ranker_catalogs.get(platform) {
+                None => lines.push(Line::from("loading the live model list…")),
+                Some(Err(error)) => lines.push(Line::from(format!(
+                    "cannot list models: {}",
+                    error.replace(['\n', '\r'], " ")
+                ))),
+                _ => {}
+            }
+        }
+        lines.push(Line::from("↑↓ choose · Enter continue/save · Esc cancel"));
+        let rect = popup(frame.area(), 92, lines.len() as u16 + 4);
+        frame.render_widget(Clear, rect);
+        frame.render_widget(
+            Paragraph::new(lines).block(Block::bordered().title(title)),
+            rect,
+        );
+        return;
+    }
     let filter = if dialog.prefs.filter {
         Span::styled("ON ", Style::new().fg(Color::Green).bold())
     } else {
@@ -104,6 +138,20 @@ pub(super) fn render(frame: &mut Frame, dialog: &ModelsDialog) {
         Line::from(tabs),
         Line::default(),
     ];
+    if dialog.platform() == "opencode" {
+        let ranker = &dialog.prefs.ranker;
+        lines.push(Line::from(format!(
+            "ranker: {} · {} · {}{}",
+            ranker.platform(),
+            ranker.model().unwrap_or("default"),
+            ranker.effort().unwrap_or("default"),
+            if ranker.platform() == "opencode" {
+                " (effort ignored)"
+            } else {
+                ""
+            }
+        )));
+    }
     match &dialog.catalogs[dialog.tab] {
         Catalog::Loading => lines.push(Line::from("loading the live model list…")),
         Catalog::Failed(error) => lines.push(Line::styled(

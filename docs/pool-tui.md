@@ -231,9 +231,33 @@ appended at the end. The tab lists the models best-first with a rank number and 
 If the agent answers with invalid JSON or times out, the old ranking stays and the dialog names the
 error.
 
-The agent is the `ranker` key of `~/.shunt/models.json` — `claude` by default, or `codex`, `opencode`
-or `agy`. `claude` runs `claude -p` with web search allowed, so it can look up current benchmarks;
-`agy` runs `claude -p` against a pooled Antigravity model. The criteria come from
+Press `s` in the Models dialog to choose the ranker platform, model, then effort. Use the arrow
+keys and Enter at each step; Esc cancels without saving. The models come from the existing catalog.
+Codex lists each model's supported effort levels. Claude offers the latest `sonnet`, `opus` and
+`haiku` aliases. The `opencode` tab shows `platform · model · effort`; `default` means the CLI default.
+Choosing the default model also uses the default effort. OpenCode offers no effort selection.
+A missing or failed catalog still allows the CLI default and shows its status.
+
+The choice is stored in the `ranker` key of `~/.shunt/models.json`, for example:
+
+```json
+{"ranker": {"platform": "codex", "model": "gpt-6-sol", "effort": "high"}}
+```
+
+Both `model` and `effort` are optional. Existing strings such as `"ranker": "claude"` still run the
+TASK-004 command unchanged. An unrelated preference edit preserves that string; only a ranker
+selection writes the object form. The default remains `claude` with its CLI defaults and web search.
+
+| Platform | Model argument | Effort argument |
+| --- | --- | --- |
+| `claude` | `--model MODEL` | `--effort EFFORT` |
+| `codex` | `-m MODEL` | `-c 'model_reasoning_effort="EFFORT"'` |
+| `opencode` | `-m MODEL` | Ignored: the installed `opencode run --help` exposes no effort flag |
+| `agy` | `claude -p --model MODEL` | `--effort EFFORT` through Claude |
+
+These arguments were checked against the installed CLIs' help. No `--variant` flag is invented for
+OpenCode. AGY keeps `claude-gemini-3.8-flash-medium-via-antigravity` when no model is selected;
+a selected model overrides it. The criteria come from
 `~/.shunt/opencode-rank-criteria.md`, written once with the default text from DEC-001 when absent, so
 the parameters and weights can change without a code change. `chatgptweb` is refused: it needs a
 browser session that shunt cannot start. `shunt models opencode` prints the same order, and

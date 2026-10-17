@@ -377,7 +377,13 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             ""
         };
-        format!("↑↓ choose · Space on/off · Tab platform · f filter{rerank} · Esc close")
+        if models.picker.is_some() {
+            "↑↓ choose · Enter continue/save · Esc cancel ranker".into()
+        } else {
+            format!(
+                "↑↓ choose · Space on/off · Tab platform · f filter · s ranker{rerank} · Esc close"
+            )
+        }
     } else if app.selected.is_none() {
         format!("↑↓ or click: select{unhide} · a: add account · M: models · ?: help · q: quit")
     } else if app.header_selected() {

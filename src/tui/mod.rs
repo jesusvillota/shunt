@@ -62,7 +62,10 @@ enum Msg {
     WeeklyResetSet(String, bool),
     RanksCleared(String),
     ModelsOpened(crate::models_prefs::ModelPrefs),
-    ModelsLoaded(String, Result<Vec<String>, String>),
+    ModelsLoaded(
+        String,
+        Result<Vec<crate::models_catalog::RankerModel>, String>,
+    ),
     OpencodeStatus(Result<crate::opencode_status::Table, String>),
     Ranked(Result<crate::models_prefs::OpenCodeRank, String>),
     AddStarted(Result<String, String>),
@@ -375,10 +378,11 @@ fn perform(ctx: &Ctx, effect: Effect) {
                 let prefs = crate::models_prefs::load();
                 let _ = ctx.tx.send(Msg::ModelsOpened(prefs));
                 // One blocking fetch per platform, so a slow CLI never holds up the others.
-                for platform in crate::models_catalog::PLATFORMS {
+                for platform in crate::models_catalog::RANKER_PLATFORMS {
                     let (tx, config) = (ctx.tx.clone(), config.clone());
                     tokio::task::spawn_blocking(move || {
-                        let result = crate::models_catalog::fetch(platform, config.as_deref());
+                        let result =
+                            crate::models_catalog::fetch_ranker(platform, config.as_deref());
                         let _ = tx.send(Msg::ModelsLoaded(platform.into(), result));
                     });
                 }
@@ -395,19 +399,19 @@ fn perform(ctx: &Ctx, effect: Effect) {
                 }
             });
         }
-        Effect::RerankOpencode { ids } => {
+        Effect::RerankOpencode { ids, ranker } => {
             tokio::spawn(async move {
                 let result = tokio::task::spawn_blocking(move || {
-                    let mut prefs = crate::models_prefs::load();
                     let path = crate::rerank::default_criteria_path()
                         .ok_or_else(|| "no home directory for the criteria file".to_string())?;
                     let rank = crate::rerank::run(
                         &path,
-                        &prefs.ranker,
+                        &ranker,
                         &ids,
                         &crate::rerank::ShellRunner,
                         SystemTime::now(),
                     )?;
+                    let mut prefs = crate::models_prefs::load();
                     prefs.opencode_rank = Some(rank.clone());
                     crate::models_prefs::save(&prefs).map_err(|e| format!("{e:#}"))?;
                     Ok::<_, String>(rank)

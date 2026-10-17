@@ -74,6 +74,8 @@ shunt tui --config /path/to/shunt.toml
 
 按 `M` 打开 Models 对话框，为 `goal` 工具和 `/delegate-cli` 开关 codex、opencode、agy 的模型。它不影响网关路由。在 `opencode` 选项卡中，它还会显示从本机 `~/.local/share/opencode/log/opencode.log` 读取的每个免费模型的状态：`reachable`、`rate limited`（含距离出错的时间）或 `unknown`。该状态仅本地读取，约每 10 秒刷新一次。在同一选项卡按 `r` 会用无头 agent 重新排列免费模型（`~/.shunt/models.json` 中的 `ranker` 键，默认 `claude`）；验证后的顺序保存在该文件中，并显示排名编号和 `ranked_at` 时间。
 
+在 Models 对话框按 `s`，依次选择排名 agent 的平台、模型和推理强度。用方向键选择，Enter 进入下一步，最后一步按 Enter 保存，Esc 取消。`opencode` 选项卡显示 `platform · model · effort`（`default` 表示 CLI 默认值）。模型来自现有目录；Codex 显示各模型支持的推理强度。Claude 提供最新的 `sonnet`、`opus` 和 `haiku` 别名。选择以 `"ranker": {"platform": "codex", "model": "gpt-6-sol", "effort": "high"}` 保存到 `~/.shunt/models.json`。model 和 effort 均可省略。旧的 `"ranker": "claude"` 继续使用原有命令；更改排名 agent 前，字符串格式保持不变。Claude 和 AGY 传入 `--model`、`--effort`；Codex 传入 `-m` 和 `-c 'model_reasoning_effort="high"'`。OpenCode 传入 `-m`，但已安装的 CLI 没有强度参数，因此忽略 effort。AGY 未指定模型时仍通过 `claude -p` 使用原有 Antigravity 默认模型。`chatgptweb` 仍被拒绝，因为 shunt 无法启动其浏览器会话。
+
 ## `shunt check`
 
 校验解析后的配置并退出(`shunt --check` 也可以):

@@ -2,11 +2,13 @@
 //! switch them on or off for the `goal` tool and `/delegate-cli`. It changes
 //! only `~/.shunt/models.json`; gateway routing is untouched.
 
+use std::collections::BTreeMap;
+
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use crate::{
-    models_catalog::PLATFORMS,
-    models_prefs::{ModelPrefs, OpenCodeRank, Resolved},
+    models_catalog::{RankerModel, PLATFORMS, RANKER_PLATFORMS},
+    models_prefs::{ModelPrefs, OpenCodeRank, Ranker, Resolved},
     opencode_status::Table,
 };
 
@@ -35,6 +37,14 @@ pub enum Ranking {
     Failed(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RankerPicker {
+    pub step: usize,
+    pub at: usize,
+    pub platform: usize,
+    pub model: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelsDialog {
     pub prefs: ModelPrefs,
@@ -46,6 +56,8 @@ pub struct ModelsDialog {
     pub opencode: OpencodeStatus,
     /// The OpenCode rerank run, and its error when it failed.
     pub ranking: Ranking,
+    pub picker: Option<RankerPicker>,
+    pub ranker_catalogs: BTreeMap<String, Result<Vec<RankerModel>, String>>,
 }
 
 /// What a key press asks the app to do.
@@ -68,6 +80,8 @@ impl ModelsDialog {
             at: 0,
             opencode: OpencodeStatus::Pending,
             ranking: Ranking::Idle,
+            picker: None,
+            ranker_catalogs: BTreeMap::new(),
         }
     }
 
@@ -114,14 +128,105 @@ impl ModelsDialog {
         }
     }
 
+    pub fn ranker_loaded(&mut self, platform: &str, result: Result<Vec<RankerModel>, String>) {
+        self.loaded(
+            platform,
+            result
+                .clone()
+                .map(|models| models.into_iter().map(|m| m.id).collect()),
+        );
+        self.ranker_catalogs.insert(platform.into(), result);
+    }
+
+    pub fn picker_models(&self) -> &[RankerModel] {
+        self.picker
+            .as_ref()
+            .and_then(|picker| self.ranker_catalogs.get(RANKER_PLATFORMS[picker.platform]))
+            .and_then(|result| result.as_ref().ok())
+            .map_or(&[], Vec::as_slice)
+    }
+
+    pub fn picker_rows(&self) -> Vec<String> {
+        let Some(picker) = &self.picker else {
+            return Vec::new();
+        };
+        match picker.step {
+            0 => RANKER_PLATFORMS.map(String::from).to_vec(),
+            1 => std::iter::once("CLI default model".into())
+                .chain(self.picker_models().iter().map(|m| {
+                    if m.efforts.is_empty() {
+                        m.id.clone()
+                    } else {
+                        format!("{} · {}", m.id, m.efforts.join(" / "))
+                    }
+                }))
+                .collect(),
+            _ => std::iter::once(if RANKER_PLATFORMS[picker.platform] == "opencode" {
+                "CLI default effort (ignored on opencode)".into()
+            } else {
+                "CLI default effort".into()
+            })
+            .chain(
+                self.picker_models()
+                    .iter()
+                    .find(|m| Some(&m.id) == picker.model.as_ref())
+                    .into_iter()
+                    .flat_map(|m| m.efforts.clone()),
+            )
+            .collect(),
+        }
+    }
+
+    fn picker_key(&mut self, key: KeyEvent) -> Outcome {
+        let rows = self.picker_rows();
+        let models = self.picker_models().to_vec();
+        let picker = self.picker.as_mut().expect("picker is open");
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.picker = None,
+            KeyCode::Up | KeyCode::Char('k') => picker.at = picker.at.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => {
+                picker.at = (picker.at + 1).min(rows.len().saturating_sub(1))
+            }
+            KeyCode::Enter => {
+                match picker.step {
+                    0 => picker.platform = picker.at,
+                    1 => {
+                        picker.model = picker
+                            .at
+                            .checked_sub(1)
+                            .and_then(|at| models.get(at))
+                            .map(|m| m.id.clone())
+                    }
+                    _ => {
+                        self.prefs.ranker = Ranker::Selection {
+                            platform: RANKER_PLATFORMS[picker.platform].into(),
+                            model: picker.model.clone(),
+                            effort: (picker.at > 0).then(|| rows[picker.at].clone()),
+                        };
+                        self.picker = None;
+                        return Outcome::Save(self.prefs.clone());
+                    }
+                }
+                picker.step += 1;
+                picker.at = 0;
+            }
+            _ => {}
+        }
+        Outcome::Stay
+    }
+
     /// Store a fresh read of the OpenCode log.
     pub fn set_opencode(&mut self, result: Result<Table, String>) {
         self.opencode = result.map_or_else(OpencodeStatus::Failed, OpencodeStatus::Ready);
     }
 
     pub fn key(&mut self, key: KeyEvent) -> Outcome {
+        if self.picker.is_some() {
+            return self.picker_key(key);
+        }
         let len = self.rows().len();
         match key.code {
+            KeyCode::Char('s') => self.picker = Some(RankerPicker::default()),
             KeyCode::Esc | KeyCode::Char('q') => return Outcome::Close,
             KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => self.switch_tab(1),
             KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => {
@@ -172,6 +277,57 @@ mod tests {
         let mut dialog = ModelsDialog::new(ModelPrefs::default());
         dialog.loaded("codex", Ok(vec!["gpt-6-sol".into(), "gpt-6.1-sol".into()]));
         dialog
+    }
+
+    #[test]
+    fn ranker_picker_saves_the_catalog_model_and_its_effort_as_an_object() {
+        let mut dialog = ready();
+        dialog.ranker_loaded(
+            "codex",
+            Ok(vec![RankerModel {
+                id: "gpt-6-sol".into(),
+                efforts: vec!["low".into(), "high".into()],
+            }]),
+        );
+        press(&mut dialog, KeyCode::Char('s'));
+        assert_eq!(dialog.picker_rows(), RANKER_PLATFORMS);
+        press(&mut dialog, KeyCode::Down); // codex
+        press(&mut dialog, KeyCode::Enter);
+        assert!(dialog.picker_rows()[1].contains("gpt-6-sol · low / high"));
+        press(&mut dialog, KeyCode::Down); // catalog model
+        press(&mut dialog, KeyCode::Enter);
+        assert_eq!(dialog.picker_rows(), ["CLI default effort", "low", "high"]);
+        press(&mut dialog, KeyCode::Down);
+        press(&mut dialog, KeyCode::Down);
+        let Outcome::Save(prefs) = press(&mut dialog, KeyCode::Enter) else {
+            panic!("choice must save")
+        };
+        assert!(dialog.picker.is_none());
+        let dir = std::env::temp_dir().join(format!("shunt-ranker-picker-{}", std::process::id()));
+        let path = dir.join("models.json");
+        crate::models_prefs::save_to(&path, &prefs).unwrap();
+        assert_eq!(crate::models_prefs::load_from(&path), prefs);
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(
+            json["ranker"],
+            serde_json::json!({"platform":"codex","model":"gpt-6-sol","effort":"high"})
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn canceling_the_ranker_picker_never_rewrites_a_legacy_choice() {
+        let mut dialog = ready();
+        for step in 0..3 {
+            press(&mut dialog, KeyCode::Char('s'));
+            for _ in 0..step {
+                press(&mut dialog, KeyCode::Enter);
+            }
+            assert_eq!(press(&mut dialog, KeyCode::Esc), Outcome::Stay);
+            assert_eq!(dialog.prefs.ranker, Ranker::from("claude"));
+            assert!(dialog.picker.is_none());
+        }
     }
 
     #[test]
