@@ -16,8 +16,62 @@ use std::{
 use serde_json::Value;
 
 pub const PLATFORMS: [&str; 3] = ["codex", "opencode", "agy"];
+pub const RANKER_PLATFORMS: [&str; 4] = ["claude", "codex", "opencode", "agy"];
 const TIMEOUT: Duration = Duration::from_secs(30);
 const AGY_SUFFIX: &str = "-via-antigravity";
+
+/// A ranker model and the effort levels its CLI exposes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RankerModel {
+    pub id: String,
+    pub efforts: Vec<String>,
+}
+
+/// Reuse the live catalog; retain Codex's per-model effort metadata.
+pub fn fetch_ranker(platform: &str, config: Option<&Path>) -> Result<Vec<RankerModel>, String> {
+    if platform == "codex" {
+        return parse_codex_ranker(&run(&["codex", "debug", "models"])?);
+    }
+    let ids = if platform == "claude" {
+        // Claude aliases track the latest release; it has no model-list command.
+        vec!["sonnet".into(), "opus".into(), "haiku".into()]
+    } else {
+        fetch(platform, config)?
+    };
+    Ok(ids
+        .into_iter()
+        .map(|id| RankerModel {
+            id,
+            efforts: if platform == "opencode" {
+                Vec::new() // No effort flag in `opencode run --help`.
+            } else {
+                ["low", "medium", "high", "xhigh", "max"]
+                    .map(String::from)
+                    .to_vec()
+            },
+        })
+        .collect())
+}
+
+pub fn parse_codex_ranker(text: &str) -> Result<Vec<RankerModel>, String> {
+    let raw: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    let list = raw["models"].as_array().ok_or("models must be an array")?;
+    Ok(list
+        .iter()
+        .filter(|m| m["visibility"] != "hide")
+        .filter_map(|m| {
+            Some(RankerModel {
+                id: m["slug"].as_str()?.into(),
+                efforts: m["supported_reasoning_levels"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|level| level["effort"].as_str().map(String::from))
+                    .collect(),
+            })
+        })
+        .collect())
+}
 
 /// One platform's catalog with each model's resolved on/off state, or the
 /// reason the live list could not be read.
@@ -177,6 +231,25 @@ fn run(argv: &[&str]) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ranker_catalog_keeps_each_models_supported_efforts() {
+        let models = parse_codex_ranker(r#"{"models":[{"slug":"gpt-6-sol","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}]},{"slug":"hidden","visibility":"hide"},{"slug":"plain"}]}"#).unwrap();
+        assert_eq!(
+            models,
+            vec![
+                RankerModel {
+                    id: "gpt-6-sol".into(),
+                    efforts: vec!["low".into(), "high".into()]
+                },
+                RankerModel {
+                    id: "plain".into(),
+                    efforts: vec![]
+                },
+            ]
+        );
+        assert!(parse_codex_ranker("{}").is_err());
+    }
 
     #[test]
     fn codex_keeps_visible_slugs() {

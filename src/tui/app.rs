@@ -74,6 +74,7 @@ pub enum Effect {
     /// live ids the Models dialog already loaded.
     RerankOpencode {
         ids: Vec<String>,
+        ranker: crate::models_prefs::Ranker,
     },
     /// Persist the TUI-local display preferences (`~/.shunt/top.json`).
     SaveDisplayPrefs {
@@ -514,7 +515,10 @@ impl App {
                 Outcome::Rerank => match dialog.ready_ids() {
                     Some(ids) => {
                         dialog.start_ranking();
-                        Effect::RerankOpencode { ids }
+                        Effect::RerankOpencode {
+                            ids,
+                            ranker: dialog.prefs.ranker.clone(),
+                        }
                     }
                     None => Effect::None,
                 },
@@ -585,9 +589,13 @@ impl App {
         }
     }
 
-    pub fn on_models_loaded(&mut self, platform: &str, result: Result<Vec<String>, String>) {
+    pub fn on_models_loaded(
+        &mut self,
+        platform: &str,
+        result: Result<Vec<crate::models_catalog::RankerModel>, String>,
+    ) {
         if let Some(dialog) = &mut self.models {
-            dialog.loaded(platform, result);
+            dialog.ranker_loaded(platform, result);
         }
     }
 

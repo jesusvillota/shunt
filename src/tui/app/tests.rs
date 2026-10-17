@@ -7,6 +7,30 @@ fn key(c: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
 }
 
+#[test]
+fn rerank_uses_the_current_picker_choice_before_the_disk_write_finishes() {
+    let mut app = App::new("http://x".into());
+    app.on_models_opened(ModelPrefs::default());
+    let dialog = app.models.as_mut().unwrap();
+    dialog.tab = 1;
+    dialog.loaded("opencode", Ok(vec!["opencode/a".into()]));
+    let ranker = crate::models_prefs::Ranker::Selection {
+        platform: "codex".into(),
+        model: Some("gpt-6-sol".into()),
+        effort: Some("high".into()),
+    };
+    dialog.prefs.ranker = ranker.clone();
+    let Effect::RerankOpencode {
+        ids,
+        ranker: selected,
+    } = app.on_key(key('r'))
+    else {
+        panic!("must rerank")
+    };
+    assert_eq!(selected, ranker);
+    assert_eq!(ids, ["opencode/a"]);
+}
+
 fn code(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
 }

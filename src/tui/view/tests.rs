@@ -871,3 +871,37 @@ fn a_failed_rerank_shows_the_error_and_keeps_the_ranking() {
         "the old ranking stays:\n{text}"
     );
 }
+
+#[test]
+fn opencode_shows_the_selected_ranker_and_the_picker_key() {
+    use crate::models_prefs::Ranker;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut dialog = opencode_dialog(vec!["opencode/a"], &opencode_tail(&[]));
+    dialog.prefs.ranker = Ranker::Selection {
+        platform: "codex".into(),
+        model: Some("gpt-6-sol".into()),
+        effort: Some("high".into()),
+    };
+    let mut app = app(vec![]);
+    app.models = Some(dialog);
+    let (text, _) = draw(&mut app, 120, 40);
+    assert!(text.contains("ranker: codex · gpt-6-sol · high"), "{text}");
+    assert!(
+        text.contains("s ranker") && text.contains("r rerank"),
+        "{text}"
+    );
+    app.models
+        .as_mut()
+        .unwrap()
+        .key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+    let (text, _) = draw(&mut app, 120, 40);
+    assert!(text.contains("Ranker platform"), "{text}");
+    assert!(
+        text.contains("claude")
+            && text.contains("codex")
+            && text.contains("opencode")
+            && text.contains("agy"),
+        "{text}"
+    );
+    assert!(!text.contains("chatgptweb"), "{text}");
+}

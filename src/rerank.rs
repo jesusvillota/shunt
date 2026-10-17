@@ -18,7 +18,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use crate::models_prefs::OpenCodeRank;
+use crate::models_prefs::{OpenCodeRank, Ranker};
 
 /// Default run limit; a stuck agent is killed after this.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -144,15 +144,15 @@ pub fn prompt(ids: &[String], criteria: &str) -> String {
     )
 }
 
-/// The ranker argv for `platform`, with `prompt` as the last argument. `Err`
-/// names why the platform cannot run a ranking.
-pub fn command(platform: &str, prompt: &str) -> Result<Vec<String>, String> {
-    let argv: Vec<&str> = match platform {
+/// The ranker argv. Preserve TASK-004 arguments when no model or effort is set.
+/// OpenCode has no effort flag in the installed CLI; its effort is ignored.
+pub fn command(ranker: &Ranker, prompt: &str) -> Result<Vec<String>, String> {
+    let mut argv: Vec<&str> = match ranker.platform() {
         // `--allowedTools` is variadic, so the prompt goes before it.
         "claude" => vec!["claude", "-p", prompt, "--allowedTools", "WebSearch"],
         "codex" => vec!["codex", "exec", "--skip-git-repo-check", prompt],
         "opencode" => vec!["opencode", "run", prompt],
-        "agy" => vec!["claude", "-p", prompt, "--model", AGY_MODEL],
+        "agy" => vec!["claude", "-p", prompt, "--model", ranker.model().unwrap_or(AGY_MODEL)],
         "chatgptweb" => {
             return Err(
                 "the 'chatgptweb' ranker needs a browser session shunt cannot start; use claude, codex, opencode or agy".into(),
@@ -164,7 +164,34 @@ pub fn command(platform: &str, prompt: &str) -> Result<Vec<String>, String> {
             ))
         }
     };
-    Ok(argv.into_iter().map(String::from).collect())
+    if ranker.platform() != "agy" {
+        if let Some(model) = ranker.model() {
+            argv.extend([
+                if ranker.platform() == "claude" {
+                    "--model"
+                } else {
+                    "-m"
+                },
+                model,
+            ]);
+        }
+    }
+    let mut argv: Vec<String> = argv.into_iter().map(String::from).collect();
+    if let Some(effort) = ranker.effort() {
+        match ranker.platform() {
+            "claude" | "agy" => argv.extend(["--effort".into(), effort.into()]),
+            "codex" => argv.extend([
+                "-c".into(),
+                format!(
+                    "model_reasoning_effort={}",
+                    serde_json::to_string(effort).unwrap()
+                ),
+            ]),
+            // `opencode run --help` has no effort/variant flag. Never invent one.
+            _ => {}
+        }
+    }
+    Ok(argv)
 }
 
 /// The first JSON object in `text`, so a stray code fence or a sentence around
@@ -205,13 +232,13 @@ pub fn validate(answer: &str, ids: &[String]) -> Result<Vec<String>, String> {
 /// answer, and stamp it. `Err` leaves any previous ranking untouched.
 pub fn run(
     criteria_path: &Path,
-    platform: &str,
+    ranker: &Ranker,
     ids: &[String],
     runner: &dyn Runner,
     now: SystemTime,
 ) -> Result<OpenCodeRank, String> {
     let criteria = criteria_text(criteria_path)?;
-    let argv = command(platform, &prompt(ids, &criteria))?;
+    let argv = command(ranker, &prompt(ids, &criteria))?;
     let answer = runner.run(&argv, DEFAULT_TIMEOUT)?;
     let order = validate(&answer, ids)?;
     Ok(OpenCodeRank {
@@ -221,155 +248,4 @@ pub fn run(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::cell::RefCell;
-
-    fn ids(list: &[&str]) -> Vec<String> {
-        list.iter().map(|s| (*s).to_string()).collect()
-    }
-
-    /// A fake ranker: returns canned stdout, or an error, and records the argv.
-    struct Fake {
-        answer: Result<String, String>,
-        seen: RefCell<Vec<String>>,
-    }
-
-    impl Fake {
-        fn answering(answer: &str) -> Self {
-            Self {
-                answer: Ok(answer.to_string()),
-                seen: RefCell::new(Vec::new()),
-            }
-        }
-
-        fn failing(error: &str) -> Self {
-            Self {
-                answer: Err(error.to_string()),
-                seen: RefCell::new(Vec::new()),
-            }
-        }
-    }
-
-    impl Runner for Fake {
-        fn run(&self, argv: &[String], _timeout: Duration) -> Result<String, String> {
-            *self.seen.borrow_mut() = argv.to_vec();
-            self.answer.clone()
-        }
-    }
-
-    fn temp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("shunt-rerank-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
-    }
-
-    #[test]
-    fn a_valid_answer_is_stored_in_its_order() {
-        let all = ids(&["opencode/a", "opencode/b", "opencode/c"]);
-        let fake = Fake::answering(r#"{"order": ["opencode/c", "opencode/b", "opencode/a"]}"#);
-        let dir = temp_dir("order");
-        let rank = run(
-            &dir.join("criteria.md"),
-            "claude",
-            &all,
-            &fake,
-            SystemTime::UNIX_EPOCH + Duration::from_secs(1_792_246_537),
-        )
-        .unwrap();
-        assert_eq!(rank.order, ids(&["opencode/c", "opencode/b", "opencode/a"]));
-        assert_eq!(rank.ranked_at, "2026-10-17T14:15:37Z");
-        assert!(
-            fake.seen
-                .borrow()
-                .iter()
-                .any(|arg| arg.contains("opencode/a")),
-            "the prompt names the live models"
-        );
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn unknown_ids_are_dropped_and_missing_ids_appended() {
-        let all = ids(&["opencode/a", "opencode/b", "opencode/c"]);
-        let fake = Fake::answering(
-            r#"Here is the ranking:
-```json
-{"order": ["opencode/b", "opencode/gone", "opencode/b"]}
-```"#,
-        );
-        let order = validate(&fake.answer.clone().unwrap(), &all).unwrap();
-        assert_eq!(
-            order,
-            ids(&["opencode/b", "opencode/a", "opencode/c"]),
-            "unknown drops, the duplicate collapses, missing ids append"
-        );
-    }
-
-    #[test]
-    fn an_invalid_answer_is_an_error() {
-        let all = ids(&["opencode/a"]);
-        assert!(validate("I could not decide", &all).is_err());
-        assert!(validate("{\"ranking\": []}", &all).is_err());
-        assert!(validate("{}", &all).is_err());
-    }
-
-    #[test]
-    fn a_failing_or_timing_out_ranker_leaves_no_ranking() {
-        let dir = temp_dir("fail");
-        let path = dir.join("criteria.md");
-        let fake = Fake::failing("claude timed out after 600s");
-        let result = run(
-            &path,
-            "claude",
-            &ids(&["opencode/a"]),
-            &fake,
-            SystemTime::now(),
-        );
-        assert!(result.unwrap_err().contains("timed out"));
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn the_default_criteria_file_is_written_once_and_not_overwritten() {
-        let dir = temp_dir("criteria");
-        let path = dir.join("opencode-rank-criteria.md");
-        assert_eq!(criteria_text(&path).unwrap(), DEFAULT_CRITERIA);
-        std::fs::write(&path, "my own weights").unwrap();
-        assert_eq!(criteria_text(&path).unwrap(), "my own weights");
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn chatgptweb_and_unknown_rankers_are_refused() {
-        assert!(command("chatgptweb", "p")
-            .unwrap_err()
-            .contains("browser session"),);
-        assert!(command("nope", "p").unwrap_err().contains("unknown ranker"));
-        assert_eq!(command("claude", "p").unwrap()[0], "claude");
-        assert_eq!(command("codex", "p").unwrap()[..2], ["codex", "exec"]);
-        assert_eq!(command("opencode", "p").unwrap()[..2], ["opencode", "run"]);
-        assert_eq!(command("agy", "p").unwrap()[..3], ["claude", "-p", "p"]);
-    }
-
-    /// One-time live check: run the default ranker over the live OpenCode list,
-    /// print the validated order, and mirror the TUI by storing it in
-    /// `~/.shunt/models.json` so `shunt models opencode --json` reports `rank`.
-    /// Needs `claude` and `opencode` on `PATH`.
-    /// `cargo test --features tui --lib rerank -- --ignored --nocapture`.
-    #[test]
-    #[ignore = "runs the real claude ranker over the live opencode list and stores the result"]
-    fn live_rerank_prints_the_validated_order() {
-        let path = default_criteria_path().expect("a home directory");
-        let ids = crate::models_catalog::fetch("opencode", None).expect("live opencode models");
-        eprintln!("criteria: {}\nmodels: {} live", path.display(), ids.len());
-        let rank = run(&path, "claude", &ids, &ShellRunner, SystemTime::now()).unwrap();
-        let mut prefs = crate::models_prefs::load();
-        prefs.opencode_rank = Some(rank.clone());
-        crate::models_prefs::save(&prefs).unwrap();
-        println!("ranked_at: {}", rank.ranked_at);
-        for (at, id) in rank.order.iter().enumerate() {
-            println!("  #{} {id}", at + 1);
-        }
-    }
-}
+mod tests;
