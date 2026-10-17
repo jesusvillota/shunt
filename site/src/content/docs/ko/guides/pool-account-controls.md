@@ -125,4 +125,4 @@ TUI는 `GET /admin/api/pool`의 `quota_buckets`를 읽습니다. 값이 없거�
 
 `shunt tui`에서 `M`을 누르면 Models 대화상자가 열립니다. `codex`, `opencode`, `agy` 탭이 각각 있고, 해당 CLI가 지금 제공하는 모델을 나열합니다. `Space`는 선택한 모델을 켜거나 끄고, `Tab`은 플랫폼을 바꾸며, `f`는 필터를 켜거나 끕니다.
 
-필터가 켜져 있는 동안 `goal` 도구와 `/delegate-cli`는 켜진 모델만 보며, `goal`은 꺼진 모델을 지정한 경로를 거부합니다. 기본값으로 각 모델 계열의 최신 버전이 켜집니다. 예를 들어 `gpt-6.1-sol`은 켜지고 `gpt-6-sol`은 꺼집니다. 선택은 `~/.shunt/models.json`에 저장되며 게이트웨이 라우팅, `/v1/models`, Claude Code의 `/model` 선택기에는 영향을 주지 않습니다. 셸에서는 `shunt models`로 같은 목록을 볼 수 있습니다.
+필터가 켜져 있는 동안 `goal` 도구와 `/delegate-cli`는 켜진 모델만 보며, `goal`은 꺼진 모델을 지정한 경로를 거부합니다. 기본값으로 각 모델 계열의 최신 버전이 켜집니다. 예를 들어 `gpt-6.1-sol`은 켜지고 `gpt-6-sol`은 꺼집니다. 선택은 `~/.shunt/models.json`에 저장되며 게이트웨이 라우팅, `/v1/models`, Claude Code의 `/model` 선택기에는 영향을 주지 않습니다. 셸에서는 `shunt models`로 같은 목록을 볼 수 있습니다. `opencode` 탭에서 `r`을 누르면 헤드리스 에이전트로 무료 모델 순위를 다시 매기며, 검증된 순서와 `ranked_at` 시간이 같은 파일에 저장되고 `shunt models opencode`가 `rank` 번호를 출력합니다.

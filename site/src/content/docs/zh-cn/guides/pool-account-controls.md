@@ -121,4 +121,4 @@ Claude 和 Codex 的现有使用量条和重置时间显示保持不变。
 
 在 `shunt tui` 中按 `M` 打开 Models 对话框。它为 `codex`、`opencode` 和 `agy` 各设一个标签页，列出这些 CLI 当前提供的模型。`Space` 开关选中的模型，`Tab` 切换平台，`f` 开关过滤器。
 
-过滤器开启时，`goal` 工具和 `/delegate-cli` 只能看到已开启的模型，`goal` 会拒绝指定了已关闭模型的路由。默认情况下，每个模型系列的最新版本为开启：`gpt-6.1-sol` 开启，`gpt-6-sol` 关闭。你的选择保存在 `~/.shunt/models.json`，不会改变网关路由、`/v1/models` 或 Claude Code 的 `/model` 选择器。在 shell 中可用 `shunt models` 输出同一份列表。
+过滤器开启时，`goal` 工具和 `/delegate-cli` 只能看到已开启的模型，`goal` 会拒绝指定了已关闭模型的路由。默认情况下，每个模型系列的最新版本为开启：`gpt-6.1-sol` 开启，`gpt-6-sol` 关闭。你的选择保存在 `~/.shunt/models.json`，不会改变网关路由、`/v1/models` 或 Claude Code 的 `/model` 选择器。在 shell 中可用 `shunt models` 输出同一份列表。在 `opencode` 选项卡按 `r` 会用无头 agent 重新排列免费模型，验证后的顺序和 `ranked_at` 时间保存在同一文件中，且 `shunt models opencode` 会输出 `rank` 编号。

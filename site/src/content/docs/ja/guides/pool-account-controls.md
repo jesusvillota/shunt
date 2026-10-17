@@ -127,4 +127,4 @@ TUI は `GET /admin/api/pool` の `quota_buckets` を読みます。値がない
 
 `shunt tui` で `M` を押すと Models ダイアログが開きます。`codex`、`opencode`、`agy` のタブがあり、各 CLI が現在提供しているモデルを一覧表示します。`Space` で選択中のモデルを ON/OFF、`Tab` でプラットフォームを切り替え、`f` でフィルターを ON/OFF します。
 
-フィルターが ON の間、`goal` ツールと `/delegate-cli` は ON のモデルだけを見ます。`goal` は OFF のモデルを指定したルートを拒否します。既定では各モデルファミリーの最新バージョンが ON になります。たとえば `gpt-6.1-sol` は ON、`gpt-6-sol` は OFF です。選択は `~/.shunt/models.json` に保存され、ゲートウェイのルーティング、`/v1/models`、Claude Code の `/model` ピッカーには影響しません。シェルでは `shunt models` で同じ一覧を表示できます。
+フィルターが ON の間、`goal` ツールと `/delegate-cli` は ON のモデルだけを見ます。`goal` は OFF のモデルを指定したルートを拒否します。既定では各モデルファミリーの最新バージョンが ON になります。たとえば `gpt-6.1-sol` は ON、`gpt-6-sol` は OFF です。選択は `~/.shunt/models.json` に保存され、ゲートウェイのルーティング、`/v1/models`、Claude Code の `/model` ピッカーには影響しません。シェルでは `shunt models` で同じ一覧を表示できます。`opencode` タブで `r` を押すと、ヘッドレスエージェントで無料モデルを再ランキングし、検証済みの順序と `ranked_at` 時刻が同じファイルに保存され、`shunt models opencode` が `rank` 番号を出力します。

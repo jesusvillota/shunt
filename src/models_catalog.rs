@@ -83,8 +83,9 @@ pub fn report(platform: Option<&str>, config: Option<&Path>, json: bool) -> Resu
             ));
         }
         for m in c.models {
+            let rank = m.rank.map_or_else(String::new, |rank| format!("#{rank} "));
             out.push_str(&format!(
-                "  [{}] {}\n",
+                "  {rank}[{}] {}\n",
                 if m.active { "on " } else { "off" },
                 m.id
             ));

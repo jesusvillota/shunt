@@ -64,6 +64,7 @@ enum Msg {
     ModelsOpened(crate::models_prefs::ModelPrefs),
     ModelsLoaded(String, Result<Vec<String>, String>),
     OpencodeStatus(Result<crate::opencode_status::Table, String>),
+    Ranked(Result<crate::models_prefs::OpenCodeRank, String>),
     AddStarted(Result<String, String>),
     /// `Err`: the gateway refused the code (the dialog stays open to retry).
     /// `Ok`: the account is stored; the notice says whether the config edit worked too.
@@ -394,6 +395,31 @@ fn perform(ctx: &Ctx, effect: Effect) {
                 }
             });
         }
+        Effect::RerankOpencode { ids } => {
+            tokio::spawn(async move {
+                let result = tokio::task::spawn_blocking(move || {
+                    let mut prefs = crate::models_prefs::load();
+                    let path = crate::rerank::default_criteria_path()
+                        .ok_or_else(|| "no home directory for the criteria file".to_string())?;
+                    let rank = crate::rerank::run(
+                        &path,
+                        &prefs.ranker,
+                        &ids,
+                        &crate::rerank::ShellRunner,
+                        SystemTime::now(),
+                    )?;
+                    prefs.opencode_rank = Some(rank.clone());
+                    crate::models_prefs::save(&prefs).map_err(|e| format!("{e:#}"))?;
+                    Ok::<_, String>(rank)
+                })
+                .await;
+                let result = match result {
+                    Ok(result) => result,
+                    Err(error) => Err(format!("ranking task failed: {error}")),
+                };
+                let _ = ctx.tx.send(Msg::Ranked(result));
+            });
+        }
         Effect::SaveDisplayPrefs { hidden, order } => {
             // Best effort: losing display prefs must never interrupt monitoring.
             tokio::spawn(async move {
@@ -545,6 +571,10 @@ async fn event_loop(
             }
             Msg::OpencodeStatus(result) => {
                 app.on_opencode_status(result);
+                Effect::None
+            }
+            Msg::Ranked(result) => {
+                app.on_ranked(result);
                 Effect::None
             }
             Msg::RanksCleared(provider) => {

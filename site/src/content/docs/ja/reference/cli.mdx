@@ -25,7 +25,7 @@ shunt models
 shunt models codex --json
 ```
 
-`--json` は `{"filter": true, "platforms": {"codex": {"models": [{"id": "gpt-6.1-sol", "active": true, "reason": "default"}], "error": null}}}` の形で出力します。ツールは `filter` が `true` の間だけ `"active": false` のモデルを隠します。一覧を読めなかったプラットフォームには `error` があり、モデルはありません。ON/OFF の状態は `shunt tui`（`M` キー）が編集する `~/.shunt/models.json` に保存され、`goal` ツールと `/delegate-cli` だけが使います。
+`--json` は `{"filter": true, "platforms": {"codex": {"models": [{"id": "gpt-6.1-sol", "active": true, "reason": "default"}], "error": null}}}` の形で出力します。ツールは `filter` が `true` の間だけ `"active": false` のモデルを隠します。一覧を読めなかったプラットフォームには `error` があり、モデルはありません。ON/OFF の状態は `shunt tui`（`M` キー）が編集する `~/.shunt/models.json` に保存され、`goal` ツールと `/delegate-cli` だけが使います。ランキングが保存されているときは `opencode` のモデルに `rank` 番号も付き、opencode の一覧はランキング順に出力されます。
 
 ## `shunt import opencodex`
 
@@ -72,7 +72,7 @@ shunt tui --config /path/to/shunt.toml
 
 一時停止とプロバイダーのオン/オフはランタイムのみです。ランキング変更と明示的なアカウント構成の編集は TOML 設定に保存され、ホットリロードで反映されます。プロバイダーの非表示（`h`）やセクションの並べ替え（ヘッダー上で `Shift+↑/↓`）は端末ローカルの表示設定で、`~/.shunt/top.json` に保存されます。ルーティングには影響しません。
 
-`M` を押すと Models ダイアログが開き、`goal` ツールと `/delegate-cli` が使う codex・opencode・agy のモデルを ON/OFF できます。ゲートウェイのルーティングには影響しません。`opencode` タブでは、このマシンの `~/.local/share/opencode/log/opencode.log` から読み取った各無料モデルの状態（`reachable`、`rate limited`（エラーからの経過時間付き）、`unknown`）も表示します。状態はローカル専用で、約 10 秒ごとに更新されます。
+`M` を押すと Models ダイアログが開き、`goal` ツールと `/delegate-cli` が使う codex・opencode・agy のモデルを ON/OFF できます。ゲートウェイのルーティングには影響しません。`opencode` タブでは、このマシンの `~/.local/share/opencode/log/opencode.log` から読み取った各無料モデルの状態（`reachable`、`rate limited`（エラーからの経過時間付き）、`unknown`）も表示します。状態はローカル専用で、約 10 秒ごとに更新されます。同じタブで `r` を押すと、ヘッドレスエージェントで無料モデルを再ランキングします（`~/.shunt/models.json` の `ranker` キー、既定は `claude`）。検証済みの順序はそのファイルに保存され、順位番号と `ranked_at` 時刻とともに表示されます。
 
 ## `shunt check`
 

@@ -70,6 +70,11 @@ pub enum Effect {
     OpenModels,
     /// Persist the model on/off list (`~/.shunt/models.json`).
     SaveModels(ModelPrefs),
+    /// Rerank the OpenCode models with the configured headless agent, over the
+    /// live ids the Models dialog already loaded.
+    RerankOpencode {
+        ids: Vec<String>,
+    },
     /// Persist the TUI-local display preferences (`~/.shunt/top.json`).
     SaveDisplayPrefs {
         hidden: Vec<String>,
@@ -498,13 +503,21 @@ impl App {
             return self.unhide_key(key);
         }
         if let Some(dialog) = &mut self.models {
-            return match dialog.key(key) {
+            let outcome = dialog.key(key);
+            return match outcome {
                 Outcome::Stay => Effect::None,
                 Outcome::Close => {
                     self.models = None;
                     Effect::None
                 }
                 Outcome::Save(prefs) => Effect::SaveModels(prefs),
+                Outcome::Rerank => match dialog.ready_ids() {
+                    Some(ids) => {
+                        dialog.start_ranking();
+                        Effect::RerankOpencode { ids }
+                    }
+                    None => Effect::None,
+                },
             };
         }
         if self.show_help {
@@ -581,6 +594,26 @@ impl App {
     pub fn on_opencode_status(&mut self, result: Result<crate::opencode_status::Table, String>) {
         if let Some(dialog) = &mut self.models {
             dialog.set_opencode(result);
+        }
+    }
+
+    /// The OpenCode rerank finished: store the rank, or show the error while the
+    /// old ranking stays.
+    pub fn on_ranked(&mut self, result: Result<crate::models_prefs::OpenCodeRank, String>) {
+        match result {
+            Ok(rank) => {
+                let models = rank.order.len();
+                if let Some(dialog) = &mut self.models {
+                    dialog.on_ranked(Ok(rank));
+                }
+                self.notify(Notice::Info(format!("opencode: ranked {models} models")));
+            }
+            Err(error) => {
+                if let Some(dialog) = &mut self.models {
+                    dialog.on_ranked(Err(error.clone()));
+                }
+                self.notify(Notice::Error(format!("opencode rerank failed: {error}")));
+            }
         }
     }
 
