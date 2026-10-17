@@ -562,7 +562,14 @@ impl App {
     }
 
     pub fn on_models_opened(&mut self, prefs: ModelPrefs) {
-        self.models = Some(ModelsDialog::new(prefs));
+        // `M` pressed twice, or another dialog opened meanwhile: keep what is on screen.
+        if self.models.is_none()
+            && self.dialog.is_none()
+            && self.delete_confirm.is_none()
+            && self.unhide.is_none()
+        {
+            self.models = Some(ModelsDialog::new(prefs));
+        }
     }
 
     pub fn on_models_loaded(&mut self, platform: &str, result: Result<Vec<String>, String>) {

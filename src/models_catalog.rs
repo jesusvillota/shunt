@@ -98,7 +98,13 @@ pub fn fetch(platform: &str, config: Option<&Path>) -> Result<Vec<String>, Strin
         "codex" => parse_codex(&run(&["codex", "debug", "models"])?),
         "opencode" => Ok(parse_opencode(&run(&["opencode", "models"])?)),
         "agy" => {
-            let config = crate::config::Config::load(config).map_err(|e| e.to_string())?;
+            // `Config::load` logs through tracing to stderr, which is the TUI
+            // screen when this runs inside `shunt tui`.
+            let config = tracing::subscriber::with_default(
+                tracing::subscriber::NoSubscriber::default(),
+                || crate::config::Config::load(config),
+            )
+            .map_err(|e| e.to_string())?;
             Ok(agy_ids(config.models.iter().map(|m| m.id.as_str())))
         }
         other => Err(format!("unknown platform '{other}'")),

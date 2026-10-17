@@ -80,7 +80,9 @@ impl ModelPrefs {
     }
 }
 
-const TIERS: [&str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+/// Effort levels that ids such as `…-flash-high` carry. `max` and `xhigh` are
+/// not here on purpose: `gpt-5.1-codex-max` is a different model, not a tier.
+const TIERS: [&str; 3] = ["low", "medium", "high"];
 
 /// `(family key, version)` of a model id, or `None` when it carries no version
 /// (such a model is always on by default).
@@ -110,14 +112,21 @@ fn family_and_version(id: &str) -> Option<(String, Vec<u32>)> {
     Some((key, version))
 }
 
-/// `6.1` -> `[6, 1]`, `v2.6` -> `[2, 6]`, `6` -> `[6]`. Long digit strings
-/// (dates, build numbers) are not versions.
+/// `6.1` -> `[6, 1]`, `v2.6` -> `[2, 6]`, `6` -> `[6]`. Each part is one to
+/// three digits with no leading zero, so dates and build numbers (`0905`,
+/// `2411`, `20251001`) are not versions.
 fn version_part(token: &str) -> Option<Vec<u32>> {
     let token = token.strip_prefix('v').unwrap_or(token);
-    if token.is_empty() || token.len() > 4 {
-        return None;
-    }
-    token.split('.').map(|p| p.parse().ok()).collect()
+    token
+        .split('.')
+        .map(|part| {
+            let plain = !part.is_empty()
+                && part.len() <= 3
+                && part.bytes().all(|b| b.is_ascii_digit())
+                && (part == "0" || !part.starts_with('0'));
+            plain.then(|| part.parse().ok()).flatten()
+        })
+        .collect()
 }
 
 /// The ids that are on without an override: for each family the highest
@@ -159,6 +168,34 @@ pub fn load_from(path: &Path) -> ModelPrefs {
 pub fn save(prefs: &ModelPrefs) -> anyhow::Result<()> {
     match default_path() {
         Some(path) => save_to(&path, prefs),
+        None => Ok(()),
+    }
+}
+
+static PENDING: std::sync::Mutex<Option<ModelPrefs>> = std::sync::Mutex::new(None);
+static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Remember the newest snapshot to write. Call it in event order, on the
+/// thread that produced the snapshots; it never blocks on disk.
+pub fn queue(prefs: ModelPrefs) {
+    *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = Some(prefs);
+}
+
+/// Write the newest queued snapshot, if any. Writes are serialized, and each
+/// one takes the latest snapshot at that moment, so two quick toggles can never
+/// leave the older state on disk.
+pub fn flush() -> anyhow::Result<()> {
+    match default_path() {
+        Some(path) => flush_to(&path),
+        None => Ok(()),
+    }
+}
+
+fn flush_to(path: &Path) -> anyhow::Result<()> {
+    let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    let next = PENDING.lock().unwrap_or_else(|e| e.into_inner()).take();
+    match next {
+        Some(prefs) => save_to(path, &prefs),
         None => Ok(()),
     }
 }
@@ -251,6 +288,38 @@ mod tests {
         );
         prefs.set("codex", &all, "gpt-6-sol", false); // back to the default
         assert!(prefs.overrides.is_empty());
+    }
+
+    #[test]
+    fn dates_and_snapshots_are_not_versions_and_max_is_not_a_tier() {
+        // 0905 / 0613 / 2411 are dates: no version, so both ids stay on.
+        assert_eq!(
+            active(&["kimi-k2-0905", "kimi-k2-0711"]),
+            ["kimi-k2-0711", "kimi-k2-0905"]
+        );
+        assert_eq!(active(&["gpt-4-0613", "gpt-4.1"]).len(), 2);
+        // codex-max is its own model, not an effort tier of codex.
+        assert_eq!(
+            active(&["gpt-5.1-codex", "gpt-5.1-codex-max", "gpt-5.2-codex"]),
+            ["gpt-5.1-codex-max", "gpt-5.2-codex"]
+        );
+    }
+
+    #[test]
+    fn queued_snapshots_write_newest_once() {
+        let dir = std::env::temp_dir().join(format!("shunt-models-q-{}", std::process::id()));
+        let path = dir.join("models.json");
+        queue(ModelPrefs {
+            filter: false,
+            ..ModelPrefs::default()
+        });
+        queue(ModelPrefs::default()); // newer snapshot replaces the older one
+        flush_to(&path).unwrap();
+        assert!(load_from(&path).filter, "the newest snapshot is written");
+        std::fs::remove_file(&path).unwrap();
+        flush_to(&path).unwrap(); // nothing queued: no write
+        assert!(!path.exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

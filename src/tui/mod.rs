@@ -381,8 +381,10 @@ fn perform(ctx: &Ctx, effect: Effect) {
             });
         }
         Effect::SaveModels(prefs) => {
+            // Queue here, in key order; the blocking task writes the newest snapshot.
+            crate::models_prefs::queue(prefs);
             tokio::spawn(async move {
-                match tokio::task::spawn_blocking(move || crate::models_prefs::save(&prefs)).await {
+                match tokio::task::spawn_blocking(crate::models_prefs::flush).await {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => ctx.say(Notice::Error(format!("model list not saved: {e:#}"))),
                     Err(e) => ctx.say(Notice::Error(format!("model list not saved: {e}"))),
