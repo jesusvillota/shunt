@@ -32,6 +32,8 @@ pub mod models_prefs;
 pub mod oauth_usage;
 pub(crate) mod observability;
 pub(crate) mod offload;
+#[cfg(feature = "tui")]
+pub mod opencode_status;
 pub mod pool;
 pub mod protocol;
 pub mod proxy;

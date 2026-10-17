@@ -32,6 +32,15 @@ fn has_reversed_cell(terminal: &Terminal<TestBackend>) -> bool {
         .any(|cell| cell.modifier.contains(Modifier::REVERSED))
 }
 
+fn has_dim_cell(terminal: &Terminal<TestBackend>) -> bool {
+    terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .any(|cell| cell.modifier.contains(Modifier::DIM))
+}
+
 fn acct(name: &str) -> AccountDto {
     AccountDto {
         name: name.into(),
@@ -747,4 +756,72 @@ fn models_dialog_shows_the_filter_switch_tabs_and_each_models_state() {
         text.contains("cannot list models: opencode not found"),
         "{text}"
     );
+}
+
+/// A tail in the fixture's logfmt shape, one line per event.
+fn opencode_tail(lines: &[&str]) -> String {
+    lines.join("\n")
+}
+
+fn opencode_dialog(catalog: Vec<&str>, tail: &str) -> crate::tui::models::ModelsDialog {
+    use crate::{models_prefs::ModelPrefs, opencode_status, tui::models::ModelsDialog};
+    // 2026-10-16T15:00:00Z, an hour after the events below.
+    let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_792_162_800);
+    let mut dialog = ModelsDialog::new(ModelPrefs::default());
+    let ids: Vec<String> = catalog.iter().map(|s| (*s).to_string()).collect();
+    dialog.loaded("opencode", Ok(ids.clone()));
+    dialog.set_opencode(Ok(opencode_status::parse(tail, now)));
+    dialog.tab = 1;
+    // Switch the last model off, as the operator would in the dialog.
+    let last = ids.last().unwrap();
+    dialog.prefs.set("opencode", &ids, last, false);
+    dialog
+}
+
+#[test]
+fn opencode_section_shows_the_three_states_and_dims_the_off_model() {
+    let tail = opencode_tail(&[
+        "timestamp=2026-10-16T14:00:00.000Z level=INFO run=REDACTED message=stream providerID=opencode modelID=fast-free session.id=ses_REDACTED small=false agent=build mode=primary",
+        "timestamp=2026-10-16T14:00:00.000Z level=ERROR run=REDACTED message=\"stream error\" providerID=opencode modelID=slow-free session.id=ses_REDACTED small=false agent=build mode=primary error.error=\"AI_APICallError: Rate limit exceeded. Please try again later.\"",
+    ]);
+    let dialog = opencode_dialog(
+        vec![
+            "opencode/fast-free",
+            "opencode/slow-free",
+            "opencode/quiet-free",
+        ],
+        &tail,
+    );
+    let mut app = app(vec![]);
+    app.models = Some(dialog);
+    let (text, terminal) = draw(&mut app, 120, 40);
+    assert!(
+        text.contains("fast-free") && text.contains("reachable"),
+        "{text}"
+    );
+    assert!(text.contains("rate limited"), "{text}");
+    assert!(
+        text.contains("quiet-free") && text.contains("unknown"),
+        "{text}"
+    );
+    assert!(text.contains("1 of 3 reachable"), "summary: {text}");
+    assert!(
+        has_dim_cell(&terminal),
+        "the off model must be dimmed:\n{text}"
+    );
+}
+
+#[test]
+fn opencode_section_with_no_log_renders_unknown_and_a_reason() {
+    use crate::{models_prefs::ModelPrefs, tui::models::ModelsDialog};
+    let mut dialog = ModelsDialog::new(ModelPrefs::default());
+    dialog.loaded("opencode", Ok(vec!["opencode/fast-free".into()]));
+    dialog.set_opencode(Err("no such file".into()));
+    dialog.tab = 1;
+    let mut app = app(vec![]);
+    app.models = Some(dialog);
+    let (text, _) = draw(&mut app, 120, 40);
+    assert!(text.contains("fast-free"), "{text}");
+    assert!(text.contains("unknown"), "{text}");
+    assert!(text.contains("OpenCode log unreadable"), "{text}");
 }

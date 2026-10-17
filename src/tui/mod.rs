@@ -18,7 +18,7 @@ use std::{
     io::{stdout, Write},
     path::PathBuf,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::Context;
@@ -41,6 +41,8 @@ const MIN_INTERVAL_MS: u64 = 500;
 /// The gateway debounces config-file changes for 400 ms before it reloads; a
 /// second refresh this long after a write catches the reloaded state.
 const RELOAD_SETTLE: Duration = Duration::from_millis(1200);
+/// How often the OpenCode log status is reread while the Models dialog is open.
+const OPENCODE_REFRESH: Duration = Duration::from_secs(10);
 
 pub struct Options {
     pub url: Option<String>,
@@ -61,6 +63,7 @@ enum Msg {
     RanksCleared(String),
     ModelsOpened(crate::models_prefs::ModelPrefs),
     ModelsLoaded(String, Result<Vec<String>, String>),
+    OpencodeStatus(Result<crate::opencode_status::Table, String>),
     AddStarted(Result<String, String>),
     /// `Err`: the gateway refused the code (the dialog stays open to retry).
     /// `Ok`: the account is stored; the notice says whether the config edit worked too.
@@ -497,13 +500,28 @@ async fn event_loop(
     let mut app = App::new(client.base().to_string());
     app.apply_prefs(prefs::load());
     let mut mouse_on = true;
+    // The OpenCode log is read only while the Models dialog is open, at most
+    // once per `OPENCODE_REFRESH`.
+    let mut opencode_at: Option<Instant> = None;
     let outcome = loop {
         terminal.draw(|frame| view::render(frame, &mut app, view::now_secs()))?;
         let Some(msg) = rx.recv().await else {
             break Ok(());
         };
         let effect = match msg {
-            Msg::Tick => Effect::None,
+            Msg::Tick => {
+                if app.models.is_some()
+                    && opencode_at.is_none_or(|at| at.elapsed() >= OPENCODE_REFRESH)
+                {
+                    opencode_at = Some(Instant::now());
+                    let tx = tx.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let result = crate::opencode_status::read(SystemTime::now());
+                        let _ = tx.send(Msg::OpencodeStatus(result));
+                    });
+                }
+                Effect::None
+            }
             Msg::Pool(result) => {
                 app.on_poll(result);
                 Effect::None
@@ -518,10 +536,15 @@ async fn event_loop(
             }
             Msg::ModelsOpened(prefs) => {
                 app.on_models_opened(prefs);
+                opencode_at = None;
                 Effect::None
             }
             Msg::ModelsLoaded(platform, result) => {
                 app.on_models_loaded(&platform, result);
+                Effect::None
+            }
+            Msg::OpencodeStatus(result) => {
+                app.on_opencode_status(result);
                 Effect::None
             }
             Msg::RanksCleared(provider) => {

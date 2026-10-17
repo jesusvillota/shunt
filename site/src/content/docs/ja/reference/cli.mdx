@@ -72,7 +72,7 @@ shunt tui --config /path/to/shunt.toml
 
 一時停止とプロバイダーのオン/オフはランタイムのみです。ランキング変更と明示的なアカウント構成の編集は TOML 設定に保存され、ホットリロードで反映されます。プロバイダーの非表示（`h`）やセクションの並べ替え（ヘッダー上で `Shift+↑/↓`）は端末ローカルの表示設定で、`~/.shunt/top.json` に保存されます。ルーティングには影響しません。
 
-`M` を押すと Models ダイアログが開き、`goal` ツールと `/delegate-cli` が使う codex・opencode・agy のモデルを ON/OFF できます。ゲートウェイのルーティングには影響しません。
+`M` を押すと Models ダイアログが開き、`goal` ツールと `/delegate-cli` が使う codex・opencode・agy のモデルを ON/OFF できます。ゲートウェイのルーティングには影響しません。`opencode` タブでは、このマシンの `~/.local/share/opencode/log/opencode.log` から読み取った各無料モデルの状態（`reachable`、`rate limited`（エラーからの経過時間付き）、`unknown`）も表示します。状態はローカル専用で、約 10 秒ごとに更新されます。
 
 ## `shunt check`
 

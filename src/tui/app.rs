@@ -578,6 +578,12 @@ impl App {
         }
     }
 
+    pub fn on_opencode_status(&mut self, result: Result<crate::opencode_status::Table, String>) {
+        if let Some(dialog) = &mut self.models {
+            dialog.set_opencode(result);
+        }
+    }
+
     pub fn header_selected(&self) -> bool {
         self.selected.as_ref().is_some_and(|s| s.account.is_none())
     }
