@@ -148,10 +148,11 @@ pub fn prompt(ids: &[String], criteria: &str) -> String {
 /// names why the platform cannot run a ranking.
 pub fn command(platform: &str, prompt: &str) -> Result<Vec<String>, String> {
     let argv: Vec<&str> = match platform {
-        "claude" => vec!["claude", "-p", "--allowedTools", "WebSearch", prompt],
+        // `--allowedTools` is variadic, so the prompt goes before it.
+        "claude" => vec!["claude", "-p", prompt, "--allowedTools", "WebSearch"],
         "codex" => vec!["codex", "exec", "--skip-git-repo-check", prompt],
         "opencode" => vec!["opencode", "run", prompt],
-        "agy" => vec!["claude", "-p", "--model", AGY_MODEL, prompt],
+        "agy" => vec!["claude", "-p", prompt, "--model", AGY_MODEL],
         "chatgptweb" => {
             return Err(
                 "the 'chatgptweb' ranker needs a browser session shunt cannot start; use claude, codex, opencode or agy".into(),
@@ -278,7 +279,13 @@ mod tests {
         .unwrap();
         assert_eq!(rank.order, ids(&["opencode/c", "opencode/b", "opencode/a"]));
         assert_eq!(rank.ranked_at, "2026-10-17T14:15:37Z");
-        assert!(fake.seen.borrow().last().unwrap().contains("opencode/a"));
+        assert!(
+            fake.seen
+                .borrow()
+                .iter()
+                .any(|arg| arg.contains("opencode/a")),
+            "the prompt names the live models"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -342,22 +349,24 @@ mod tests {
         assert_eq!(command("claude", "p").unwrap()[0], "claude");
         assert_eq!(command("codex", "p").unwrap()[..2], ["codex", "exec"]);
         assert_eq!(command("opencode", "p").unwrap()[..2], ["opencode", "run"]);
-        assert_eq!(
-            command("agy", "p").unwrap()[..3],
-            ["claude", "-p", "--model"]
-        );
+        assert_eq!(command("agy", "p").unwrap()[..3], ["claude", "-p", "p"]);
     }
 
-    /// One-time live check: run the default ranker on the live OpenCode list
-    /// and print the validated order. Needs `claude` and `opencode` on `PATH`.
+    /// One-time live check: run the default ranker over the live OpenCode list,
+    /// print the validated order, and mirror the TUI by storing it in
+    /// `~/.shunt/models.json` so `shunt models opencode --json` reports `rank`.
+    /// Needs `claude` and `opencode` on `PATH`.
     /// `cargo test --features tui --lib rerank -- --ignored --nocapture`.
     #[test]
-    #[ignore = "runs the real claude ranker over the live opencode list"]
+    #[ignore = "runs the real claude ranker over the live opencode list and stores the result"]
     fn live_rerank_prints_the_validated_order() {
         let path = default_criteria_path().expect("a home directory");
         let ids = crate::models_catalog::fetch("opencode", None).expect("live opencode models");
         eprintln!("criteria: {}\nmodels: {} live", path.display(), ids.len());
         let rank = run(&path, "claude", &ids, &ShellRunner, SystemTime::now()).unwrap();
+        let mut prefs = crate::models_prefs::load();
+        prefs.opencode_rank = Some(rank.clone());
+        crate::models_prefs::save(&prefs).unwrap();
         println!("ranked_at: {}", rank.ranked_at);
         for (at, id) in rank.order.iter().enumerate() {
             println!("  #{} {id}", at + 1);

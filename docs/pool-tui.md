@@ -221,6 +221,24 @@ and refreshes it about every 10 seconds; it never calls the gateway or the admin
 missing or unreadable, every model shows `unknown` and that line names the reason — the TUI keeps
 working. The line shapes and the state rule are in `docs/notes/opencode-log-format.md`.
 
+### Reranking the OpenCode models
+
+On the `opencode` tab, `r` starts a rerank in the background: the dialog shows `ranking…`, the list
+stays usable, and only one rerank runs at a time (a run that does not finish in 10 minutes is killed).
+shunt asks a headless agent for an order of the live models, then stores the validated result as
+`opencode_rank` in `~/.shunt/models.json`: an id the agent invented is dropped, and an id it missed is
+appended at the end. The tab lists the models best-first with a rank number and the `ranked_at` time.
+If the agent answers with invalid JSON or times out, the old ranking stays and the dialog names the
+error.
+
+The agent is the `ranker` key of `~/.shunt/models.json` — `claude` by default, or `codex`, `opencode`
+or `agy`. `claude` runs `claude -p` with web search allowed, so it can look up current benchmarks;
+`agy` runs `claude -p` against a pooled Antigravity model. The criteria come from
+`~/.shunt/opencode-rank-criteria.md`, written once with the default text from DEC-001 when absent, so
+the parameters and weights can change without a code change. `chatgptweb` is refused: it needs a
+browser session that shunt cannot start. `shunt models opencode` prints the same order, and
+`shunt models opencode --json` carries a `rank` number on each model.
+
 ## Adding an account
 
 `a` opens a short dialog: choose a provider (skipped when one is selected), type a

@@ -25,7 +25,7 @@ shunt models
 shunt models codex --json
 ```
 
-`--json` prints `{"filter": true, "platforms": {"codex": {"models": [{"id": "gpt-6.1-sol", "active": true, "reason": "default"}], "error": null}}}`. A tool hides the models with `"active": false` only while `filter` is `true`. A platform whose list cannot be read has an `error` and no models. The on/off state lives in `~/.shunt/models.json`, which `shunt tui` edits (press `M`); only the `goal` tool and `/delegate-cli` use it.
+`--json` prints `{"filter": true, "platforms": {"codex": {"models": [{"id": "gpt-6.1-sol", "active": true, "reason": "default"}], "error": null}}}`. A tool hides the models with `"active": false` only while `filter` is `true`. A platform whose list cannot be read has an `error` and no models. The on/off state lives in `~/.shunt/models.json`, which `shunt tui` edits (press `M`); only the `goal` tool and `/delegate-cli` use it. An `opencode` model also carries a `rank` number when a ranking is stored, and the opencode list is printed in rank order.
 
 ## `shunt import opencodex`
 
@@ -72,7 +72,7 @@ Deletion removes the managed Claude, Codex, or Antigravity credential through th
 
 Pause/provider switches are runtime-only. Ranking changes and explicit account membership edits are persisted to the TOML config and picked up by hot reload. Hiding a provider (`h`) and reordering sections (`Shift+↑/↓` on a header) are local display preferences stored in `~/.shunt/top.json`; they never affect routing.
 
-Press `M` to open the Models dialog and switch codex, opencode and agy models on or off for the `goal` tool and `/delegate-cli`. It never affects gateway routing. On the `opencode` tab it also shows each free model's status — `reachable`, `rate limited` (with the age of the error), or `unknown` — read from this machine's `~/.local/share/opencode/log/opencode.log`. The status is local only and refreshes about every 10 seconds.
+Press `M` to open the Models dialog and switch codex, opencode and agy models on or off for the `goal` tool and `/delegate-cli`. It never affects gateway routing. On the `opencode` tab it also shows each free model's status — `reachable`, `rate limited` (with the age of the error), or `unknown` — read from this machine's `~/.local/share/opencode/log/opencode.log`. The status is local only and refreshes about every 10 seconds. Press `r` there to rerank the free models with a headless agent (the `ranker` key in `~/.shunt/models.json`, `claude` by default); the validated order is stored in that file and shown with a rank number and its `ranked_at` time.
 
 ## `shunt check`
 

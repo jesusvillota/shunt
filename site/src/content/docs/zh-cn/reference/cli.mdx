@@ -25,7 +25,7 @@ shunt models
 shunt models codex --json
 ```
 
-`--json` 输出形如 `{"filter": true, "platforms": {"codex": {"models": [{"id": "gpt-6.1-sol", "active": true, "reason": "default"}], "error": null}}}`。仅当 `filter` 为 `true` 时，工具才会隐藏 `"active": false` 的模型。无法读取列表的平台带有 `error` 且没有模型。开关状态保存在 `~/.shunt/models.json`，由 `shunt tui`（按 `M`）编辑，只有 `goal` 工具和 `/delegate-cli` 使用。
+`--json` 输出形如 `{"filter": true, "platforms": {"codex": {"models": [{"id": "gpt-6.1-sol", "active": true, "reason": "default"}], "error": null}}}`。仅当 `filter` 为 `true` 时，工具才会隐藏 `"active": false` 的模型。无法读取列表的平台带有 `error` 且没有模型。开关状态保存在 `~/.shunt/models.json`，由 `shunt tui`（按 `M`）编辑，只有 `goal` 工具和 `/delegate-cli` 使用。当存在排名时，`opencode` 模型还会带有 `rank` 编号，且 opencode 列表按排名顺序输出。
 
 ## `shunt import opencodex`
 
@@ -72,7 +72,7 @@ shunt tui --config /path/to/shunt.toml
 
 暂停和提供商开关只影响当前运行时。排序变化和显式账户成员变更会持久化到 TOML 配置，并通过热重载生效。隐藏提供商（`h`）和调整分节顺序（在标题行按 `Shift+↑/↓`）是本终端的显示偏好，保存在 `~/.shunt/top.json` 中，不会影响路由。
 
-按 `M` 打开 Models 对话框，为 `goal` 工具和 `/delegate-cli` 开关 codex、opencode、agy 的模型。它不影响网关路由。在 `opencode` 选项卡中，它还会显示从本机 `~/.local/share/opencode/log/opencode.log` 读取的每个免费模型的状态：`reachable`、`rate limited`（含距离出错的时间）或 `unknown`。该状态仅本地读取，约每 10 秒刷新一次。
+按 `M` 打开 Models 对话框，为 `goal` 工具和 `/delegate-cli` 开关 codex、opencode、agy 的模型。它不影响网关路由。在 `opencode` 选项卡中，它还会显示从本机 `~/.local/share/opencode/log/opencode.log` 读取的每个免费模型的状态：`reachable`、`rate limited`（含距离出错的时间）或 `unknown`。该状态仅本地读取，约每 10 秒刷新一次。在同一选项卡按 `r` 会用无头 agent 重新排列免费模型（`~/.shunt/models.json` 中的 `ranker` 键，默认 `claude`）；验证后的顺序保存在该文件中，并显示排名编号和 `ranked_at` 时间。
 
 ## `shunt check`
 
