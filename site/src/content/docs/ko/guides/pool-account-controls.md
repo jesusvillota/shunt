@@ -120,3 +120,9 @@ TUI는 `GET /admin/api/pool`의 `quota_buckets`를 읽습니다. 값이 없거�
 주간 리셋 스위치는 **선택한 공급자에게만** 영향을 줍니다. 사용자 지정 우선순위가 먼저 적용되므로 해당 공급자는 계속 `custom order`로 표시됩니다. Balanced로 돌아가면 해당 공급자의 주간 리셋을 끄며 `sort_by_reset`은 변경하지 않습니다. 런타임 덮어쓰기는 해제하거나 게이트웨이를 재시작할 때 끝나지만 사용자 지정 우선순위는 유지됩니다. TUI는 `[server.pool]`을 쓰지 않습니다. 설정 편집이 성공하고 API 호출이 실패하면 부분 변경을 알리고 실제 상태를 새로 조회합니다.
 
 주간 리셋에는 `[server.pool]`과 `sort_by_weekly_reset`을 지원하는 게이트웨이가 필요합니다. 유효한 값이 계속 false이면 TUI는 설정이 비활성 상태라고 알립니다.
+
+## `goal`과 `/delegate-cli`가 사용할 모델 고르기
+
+`shunt tui`에서 `M`을 누르면 Models 대화상자가 열립니다. `codex`, `opencode`, `agy` 탭이 각각 있고, 해당 CLI가 지금 제공하는 모델을 나열합니다. `Space`는 선택한 모델을 켜거나 끄고, `Tab`은 플랫폼을 바꾸며, `f`는 필터를 켜거나 끕니다.
+
+필터가 켜져 있는 동안 `goal` 도구와 `/delegate-cli`는 켜진 모델만 보며, `goal`은 꺼진 모델을 지정한 경로를 거부합니다. 기본값으로 각 모델 계열의 최신 버전이 켜집니다. 예를 들어 `gpt-6.1-sol`은 켜지고 `gpt-6-sol`은 꺼집니다. 선택은 `~/.shunt/models.json`에 저장되며 게이트웨이 라우팅, `/v1/models`, Claude Code의 `/model` 선택기에는 영향을 주지 않습니다. 셸에서는 `shunt models`로 같은 목록을 볼 수 있습니다.

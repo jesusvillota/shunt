@@ -121,3 +121,9 @@ In `shunt tui` (built with `--features tui`), select a provider header or one of
 The weekly-reset switch affects **only the selected provider**. Custom priorities take precedence, so that provider still shows `custom order`. Returning to balanced disables weekly reset for that provider and leaves `sort_by_reset` unchanged. Both runtime overrides end when cleared or when the gateway restarts; custom priorities survive restarts. The TUI never writes `[server.pool]`. If the config edit succeeds but the API call fails, the TUI reports the partial change and refreshes the live state.
 
 Weekly reset requires `[server.pool]` and a gateway that supports `sort_by_weekly_reset`. The TUI reports an inactive setting if the effective value stays false.
+
+## Choosing which models `goal` and `/delegate-cli` use
+
+In `shunt tui`, press `M` to open the Models dialog. It has one tab each for `codex`, `opencode` and `agy`, and lists the models those CLIs offer right now. `Space` switches the highlighted model on or off, `Tab` changes platform, and `f` turns the filter on or off.
+
+While the filter is on, the `goal` tool and `/delegate-cli` see only the models that are on, and `goal` refuses a route that names a model that is off. By default the newest version of each model family is on: `gpt-6.1-sol` is on and `gpt-6-sol` is off. Your choices are saved in `~/.shunt/models.json`. They change nothing in gateway routing, `/v1/models` or Claude Code's `/model` picker. `shunt models` prints the same list in a shell.

@@ -16,6 +16,17 @@ Text output has one section per provider and one line per account: name, availab
 
 `--json` prints the gateway snapshot unchanged, including unknown fields. `--url` overrides the URL derived from the configured bind. Token lookup uses `--token`, then `SHUNT_ADMIN_TOKEN`, the first entry of `SHUNT_ADMIN_TOKENS`, and `~/.shunt/admin-token`. `--header` defaults to `x-shunt-admin-token`. Missing or refused tokens and unreachable gateways print a one-line error to stderr and exit non-zero.
 
+## `shunt models`
+
+List the models of three CLI platforms, each marked on or off: `codex` (from `codex debug models`), `opencode` (from `opencode models`) and `agy` (the `…-via-antigravity` entries of `[[models]]`). The lists are read live on every call. The command is in the default build, needs no running gateway, and needs `codex` and `opencode` on `PATH`.
+
+```bash
+shunt models
+shunt models codex --json
+```
+
+`--json` prints `{"filter": true, "platforms": {"codex": {"models": [{"id": "gpt-6.1-sol", "active": true, "reason": "default"}], "error": null}}}`. A tool hides the models with `"active": false` only while `filter` is `true`. A platform whose list cannot be read has an `error` and no models. The on/off state lives in `~/.shunt/models.json`, which `shunt tui` edits (press `M`); only the `goal` tool and `/delegate-cli` use it.
+
 ## `shunt import opencodex`
 
 Read compatible credentials offline into a new private snapshot. Existing settings, credential files and OpenCodex state are never overwritten. Preview first; a non-interactive export requires `--yes`.
@@ -60,6 +71,8 @@ Select rows with the arrow keys or `j`/`k`. Press `a` to add an account. With an
 Deletion removes the managed Claude, Codex, or Antigravity credential through the admin API and removes its explicit pool entry from `shunt.toml` when that edit is safe. Before deleting anything, the TUI dry-runs the config cleanup. It refuses the operation if the cleanup cannot be made safely—for example, deleting the last explicitly listed account would turn an empty list into "scan every stored account". The same safety check means deletion is unavailable for YAML configs or providers defined through `[[upstreams]]`.
 
 Pause/provider switches are runtime-only. Ranking changes and explicit account membership edits are persisted to the TOML config and picked up by hot reload. Hiding a provider (`h`) and reordering sections (`Shift+↑/↓` on a header) are local display preferences stored in `~/.shunt/top.json`; they never affect routing.
+
+Press `M` to open the Models dialog and switch codex, opencode and agy models on or off for the `goal` tool and `/delegate-cli`. It never affects gateway routing.
 
 ## `shunt check`
 

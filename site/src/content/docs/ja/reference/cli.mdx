@@ -16,6 +16,17 @@ shunt pool --url http://127.0.0.1:3001 --json
 
 `--json` は未知のフィールドも含めてスナップショットをそのまま出力します。`--url` は設定の bind から得た URL を上書きします。トークンは `--token`、`SHUNT_ADMIN_TOKEN`、`SHUNT_ADMIN_TOKENS` の最初の項目、`~/.shunt/admin-token` の順で探します。`--header` の既定値は `x-shunt-admin-token` です。トークンの欠落・拒否や接続失敗では stderr に一行のエラーを表示し、非ゼロで終了します。
 
+## `shunt models`
+
+3 つの CLI プラットフォームのモデルを ON/OFF 付きで一覧表示します。`codex`（`codex debug models`）、`opencode`（`opencode models`）、`agy`（`[[models]]` のうち `…-via-antigravity` のもの）です。一覧は呼び出しのたびにリアルタイムで読み取ります。既定のビルドに含まれ、実行中のゲートウェイは不要で、`codex` と `opencode` が `PATH` 上に必要です。
+
+```bash
+shunt models
+shunt models codex --json
+```
+
+`--json` は `{"filter": true, "platforms": {"codex": {"models": [{"id": "gpt-6.1-sol", "active": true, "reason": "default"}], "error": null}}}` の形で出力します。ツールは `filter` が `true` の間だけ `"active": false` のモデルを隠します。一覧を読めなかったプラットフォームには `error` があり、モデルはありません。ON/OFF の状態は `shunt tui`（`M` キー）が編集する `~/.shunt/models.json` に保存され、`goal` ツールと `/delegate-cli` だけが使います。
+
 ## `shunt import opencodex`
 
 互換性のある認証情報をオフラインで読み、新しい非公開スナップショットに保存します。既存の設定、認証情報ファイル、OpenCodex の状態は上書きしません。まずプレビューしてください。非対話型のエクスポートには `--yes` が必要です。
@@ -60,6 +71,8 @@ shunt tui --config /path/to/shunt.toml
 削除では Admin API を通じて管理対象の Claude、Codex、または Antigravity の認証情報を削除し、安全に編集できる場合は `shunt.toml` の明示的なプールエントリも削除します。破壊的な操作の前に TUI は設定のクリーンアップをドライランします。たとえば、最後の明示的アカウントを削除すると空のリストが「保存済みアカウントをすべてスキャンする」という意味に変わるため、そのような削除は拒否されます。同じ安全チェックにより、YAML 設定や `[[upstreams]]` で定義されたプロバイダーでは削除できません。
 
 一時停止とプロバイダーのオン/オフはランタイムのみです。ランキング変更と明示的なアカウント構成の編集は TOML 設定に保存され、ホットリロードで反映されます。プロバイダーの非表示（`h`）やセクションの並べ替え（ヘッダー上で `Shift+↑/↓`）は端末ローカルの表示設定で、`~/.shunt/top.json` に保存されます。ルーティングには影響しません。
+
+`M` を押すと Models ダイアログが開き、`goal` ツールと `/delegate-cli` が使う codex・opencode・agy のモデルを ON/OFF できます。ゲートウェイのルーティングには影響しません。
 
 ## `shunt check`
 

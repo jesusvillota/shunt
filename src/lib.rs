@@ -27,6 +27,8 @@ pub mod init;
 pub mod keepalive;
 pub mod metrics;
 pub mod model;
+pub mod models_catalog;
+pub mod models_prefs;
 pub mod oauth_usage;
 pub(crate) mod observability;
 pub(crate) mod offload;

@@ -16,6 +16,17 @@ shunt pool --url http://127.0.0.1:3001 --json
 
 `--json` 原样输出网关快照，包括未知字段。`--url` 覆盖从配置 bind 推导的 URL。令牌依次取自 `--token`、`SHUNT_ADMIN_TOKEN`、`SHUNT_ADMIN_TOKENS` 的首项和 `~/.shunt/admin-token`。`--header` 默认为 `x-shunt-admin-token`。令牌缺失、被拒绝或网关无法连接时，在 stderr 输出单行错误并以非零状态退出。
 
+## `shunt models`
+
+列出三个 CLI 平台的模型，并标明开或关：`codex`（来自 `codex debug models`）、`opencode`（来自 `opencode models`）和 `agy`（`[[models]]` 中以 `…-via-antigravity` 结尾的条目）。每次调用都会实时读取列表。该命令包含在默认构建中，不需要正在运行的网关，但需要 `codex` 和 `opencode` 在 `PATH` 中。
+
+```bash
+shunt models
+shunt models codex --json
+```
+
+`--json` 输出形如 `{"filter": true, "platforms": {"codex": {"models": [{"id": "gpt-6.1-sol", "active": true, "reason": "default"}], "error": null}}}`。仅当 `filter` 为 `true` 时，工具才会隐藏 `"active": false` 的模型。无法读取列表的平台带有 `error` 且没有模型。开关状态保存在 `~/.shunt/models.json`，由 `shunt tui`（按 `M`）编辑，只有 `goal` 工具和 `/delegate-cli` 使用。
+
 ## `shunt import opencodex`
 
 离线读取兼容凭据并保存为新的私有快照，不覆盖现有设置、凭据文件或 OpenCodex 状态。请先预览；非交互式导出需要 `--yes`。
@@ -60,6 +71,8 @@ shunt tui --config /path/to/shunt.toml
 删除会通过 Admin API 移除托管的 Claude、Codex 或 Antigravity 凭据，并在能够安全修改时同步删除 `shunt.toml` 中显式列出的池条目。执行任何破坏性操作之前，TUI 会先试运行配置清理。例如，删除最后一个显式账户会让空列表变成“扫描所有已存储账户”，因此这种删除会被拒绝。同一安全检查也意味着 YAML 配置或通过 `[[upstreams]]` 定义的提供商不能使用该删除操作。
 
 暂停和提供商开关只影响当前运行时。排序变化和显式账户成员变更会持久化到 TOML 配置，并通过热重载生效。隐藏提供商（`h`）和调整分节顺序（在标题行按 `Shift+↑/↓`）是本终端的显示偏好，保存在 `~/.shunt/top.json` 中，不会影响路由。
+
+按 `M` 打开 Models 对话框，为 `goal` 工具和 `/delegate-cli` 开关 codex、opencode、agy 的模型。它不影响网关路由。
 
 ## `shunt check`
 

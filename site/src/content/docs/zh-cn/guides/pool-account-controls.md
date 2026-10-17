@@ -116,3 +116,9 @@ Claude 和 Codex 的现有使用量条和重置时间显示保持不变。
 按周重置开关只影响 **所选的提供商**。自定义优先级优先，因此该提供商仍显示 `custom order`。返回 balanced 会关闭该提供商的按周重置，但不会修改 `sort_by_reset`。运行时覆盖在清除或网关重启时结束；自定义优先级在重启后保留。TUI 不会写入 `[server.pool]`。如果配置编辑成功而 API 调用失败，TUI 会报告部分修改并重新获取实际状态。
 
 按周重置需要 `[server.pool]` 和支持 `sort_by_weekly_reset` 的网关。如果实际生效值仍为 false，TUI 会提示该设置未生效。
+
+## 选择 `goal` 和 `/delegate-cli` 使用的模型
+
+在 `shunt tui` 中按 `M` 打开 Models 对话框。它为 `codex`、`opencode` 和 `agy` 各设一个标签页，列出这些 CLI 当前提供的模型。`Space` 开关选中的模型，`Tab` 切换平台，`f` 开关过滤器。
+
+过滤器开启时，`goal` 工具和 `/delegate-cli` 只能看到已开启的模型，`goal` 会拒绝指定了已关闭模型的路由。默认情况下，每个模型系列的最新版本为开启：`gpt-6.1-sol` 开启，`gpt-6-sol` 关闭。你的选择保存在 `~/.shunt/models.json`，不会改变网关路由、`/v1/models` 或 Claude Code 的 `/model` 选择器。在 shell 中可用 `shunt models` 输出同一份列表。

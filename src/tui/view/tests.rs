@@ -726,3 +726,25 @@ fn the_unhide_picker_lists_hidden_providers() {
     assert!(screen.contains("codex"), "{screen}");
     assert!(screen.contains("Enter unhide"), "{screen}");
 }
+
+#[test]
+fn models_dialog_shows_the_filter_switch_tabs_and_each_models_state() {
+    use crate::{models_prefs::ModelPrefs, tui::models::ModelsDialog};
+    let mut app = app(vec![]);
+    let mut dialog = ModelsDialog::new(ModelPrefs::default());
+    dialog.loaded("codex", Ok(vec!["gpt-6-sol".into(), "gpt-6.1-sol".into()]));
+    dialog.loaded("opencode", Err("opencode not found".into()));
+    app.models = Some(dialog);
+    let (text, _) = draw(&mut app, 120, 40);
+    assert!(text.contains("Model filter ON"), "{text}");
+    assert!(text.contains(" codex ") && text.contains(" agy "), "{text}");
+    assert!(text.contains("[off] gpt-6-sol"), "{text}");
+    assert!(text.contains("[on ] gpt-6.1-sol"), "{text}");
+    assert!(text.contains("Space on/off"), "footer hint: {text}");
+    app.models.as_mut().unwrap().tab = 1;
+    let (text, _) = draw(&mut app, 120, 40);
+    assert!(
+        text.contains("cannot list models: opencode not found"),
+        "{text}"
+    );
+}

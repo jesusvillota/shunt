@@ -192,6 +192,21 @@ restored on the next run. Nothing is sent to the gateway: no admin API call, no
 provider that appears after the prefs were saved (or one the prefs never named)
 is shown at the end in gateway order.
 
+## Choosing which models `goal` and `/delegate-cli` use
+
+`M` opens the Models dialog: one tab per CLI platform (`codex`, `opencode`, `agy`), each listing
+its **live** models (read from `codex debug models`, `opencode models`, and the
+`…-via-antigravity` entries of `[[models]]`). `Space` switches the model under the cursor on or
+off, `Tab` changes platform, and `f` flips the **filter** switch. While the filter is on, the
+`goal` tool and `/delegate-cli` see only the models that are on (they read them with
+`shunt models --json`); while it is off they see everything.
+
+By default the newest version of each model family is on and every effort level of it stays on
+(`gpt-6.1-sol` on, `gpt-6-sol` off). A model with no version in its name stays on. Your changes are
+stored as overrides in `~/.shunt/models.json`, so a new model release can still move the default.
+The state affects only those two tools: gateway routing, `/v1/models` and Claude Code's `/model`
+picker are unchanged. `shunt models` prints the same list outside the TUI.
+
 ## Adding an account
 
 `a` opens a short dialog: choose a provider (skipped when one is selected), type a
