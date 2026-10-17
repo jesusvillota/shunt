@@ -7,12 +7,23 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use crate::{
     models_catalog::PLATFORMS,
     models_prefs::{ModelPrefs, Resolved},
+    opencode_status::Table,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Catalog {
     Loading,
     Ready(Vec<String>),
+    Failed(String),
+}
+
+/// The OpenCode free-model status, read from this machine's `opencode` log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OpencodeStatus {
+    /// Not read yet.
+    Pending,
+    Ready(Table),
+    /// The log could not be read; every model shows unknown.
     Failed(String),
 }
 
@@ -23,6 +34,8 @@ pub struct ModelsDialog {
     pub catalogs: Vec<Catalog>,
     pub tab: usize,
     pub at: usize,
+    /// The OpenCode log status, refreshed while the dialog is open.
+    pub opencode: OpencodeStatus,
 }
 
 /// What a key press asks the app to do.
@@ -41,6 +54,7 @@ impl ModelsDialog {
             catalogs: vec![Catalog::Loading; PLATFORMS.len()],
             tab: 0,
             at: 0,
+            opencode: OpencodeStatus::Pending,
         }
     }
 
@@ -60,6 +74,11 @@ impl ModelsDialog {
         if let Some(i) = PLATFORMS.iter().position(|p| *p == platform) {
             self.catalogs[i] = result.map_or_else(Catalog::Failed, Catalog::Ready);
         }
+    }
+
+    /// Store a fresh read of the OpenCode log.
+    pub fn set_opencode(&mut self, result: Result<Table, String>) {
+        self.opencode = result.map_or_else(OpencodeStatus::Failed, OpencodeStatus::Ready);
     }
 
     pub fn key(&mut self, key: KeyEvent) -> Outcome {

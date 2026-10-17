@@ -3,8 +3,57 @@
 use super::*;
 use crate::{
     models_catalog::PLATFORMS,
-    tui::models::{Catalog, ModelsDialog},
+    models_prefs::Resolved,
+    opencode_status::{self, State, Status},
+    tui::models::{Catalog, ModelsDialog, OpencodeStatus},
 };
+
+/// `reachable · 3h`, `rate limited · 12m`, or `unknown` for a model the log
+/// does not mention (and for every model while the log is unreadable).
+fn status_spans(status: Option<&Status>) -> Vec<Span<'static>> {
+    match status {
+        Some(s) => vec![
+            Span::styled(format!("  {:<12}", s.state.label()), state_style(s.state)),
+            Span::styled(
+                format!("· {}", opencode_status::age_text(s.age)),
+                Style::new().dark_gray(),
+            ),
+        ],
+        None => vec![Span::styled("  unknown", Style::new().dark_gray())],
+    }
+}
+
+fn state_style(state: State) -> Style {
+    match state {
+        State::Reachable => Style::new().fg(Color::Green),
+        State::RateLimited => Style::new().fg(Color::Yellow).bold(),
+        State::Unknown => Style::new().dark_gray(),
+    }
+}
+
+/// The one summary line under the OpenCode list: how many models are reachable,
+/// or why the log could not be read.
+fn opencode_summary(dialog: &ModelsDialog, rows: &[Resolved]) -> Line<'static> {
+    match &dialog.opencode {
+        OpencodeStatus::Pending => {
+            Line::styled("reading the OpenCode log…", Style::new().dark_gray())
+        }
+        OpencodeStatus::Failed(reason) => Line::styled(
+            format!("OpenCode log unreadable ({reason}) — every model shows unknown"),
+            Style::new().fg(Color::Red),
+        ),
+        OpencodeStatus::Ready(table) => {
+            let reachable = rows
+                .iter()
+                .filter(|row| table.state(&row.id) == State::Reachable)
+                .count();
+            Line::styled(
+                format!("{reachable} of {} reachable", rows.len()),
+                Style::new().dark_gray(),
+            )
+        }
+    }
+}
 
 pub(super) fn render(frame: &mut Frame, dialog: &ModelsDialog) {
     let filter = if dialog.prefs.filter {
@@ -42,6 +91,7 @@ pub(super) fn render(frame: &mut Frame, dialog: &ModelsDialog) {
         )),
         Catalog::Ready(_) => {
             let rows = dialog.rows();
+            let opencode = dialog.platform() == "opencode";
             let room = frame.area().height.saturating_sub(16).max(3) as usize;
             let skip = dialog.at.saturating_sub(room - 1);
             for (i, row) in rows.iter().enumerate().skip(skip).take(room) {
@@ -56,7 +106,7 @@ pub(super) fn render(frame: &mut Frame, dialog: &ModelsDialog) {
                 } else {
                     ""
                 };
-                lines.push(Line::from(vec![
+                let mut spans = vec![
                     Span::raw(marker),
                     Span::styled(format!("[{state}] "), Style::new().fg(color)),
                     Span::styled(
@@ -68,10 +118,26 @@ pub(super) fn render(frame: &mut Frame, dialog: &ModelsDialog) {
                         },
                     ),
                     Span::styled(note, Style::new().dark_gray()),
-                ]));
+                ];
+                if opencode {
+                    let status = match &dialog.opencode {
+                        OpencodeStatus::Ready(table) => table.get(&row.id),
+                        _ => None,
+                    };
+                    spans.extend(status_spans(status));
+                }
+                let mut line = Line::from(spans);
+                if !row.active {
+                    line = line.style(Style::new().add_modifier(Modifier::DIM));
+                }
+                lines.push(line);
             }
             if rows.is_empty() {
                 lines.push(Line::from("no models listed"));
+            }
+            if opencode {
+                lines.push(Line::default());
+                lines.push(opencode_summary(dialog, &rows));
             }
         }
     }
