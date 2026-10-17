@@ -47,6 +47,7 @@ already track the latest); changing `deny_models` in `goal.yaml`.
 ```mermaid
 flowchart TD
   subgraph M_1["M-1 · Models list and switches"]
+    TASK_001["TASK-001 Models dialog and shunt models command (PR #23)"]
   end
   subgraph M_2["M-2 · OpenCode status"]
   end
