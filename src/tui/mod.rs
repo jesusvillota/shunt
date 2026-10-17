@@ -404,10 +404,15 @@ fn perform(ctx: &Ctx, effect: Effect) {
                 let result = tokio::task::spawn_blocking(move || {
                     let path = crate::rerank::default_criteria_path()
                         .ok_or_else(|| "no home directory for the criteria file".to_string())?;
+                    let previous = crate::models_prefs::load()
+                        .opencode_rank
+                        .map(|r| r.order)
+                        .unwrap_or_default();
                     let rank = crate::rerank::run(
                         &path,
                         &ranker,
                         &ids,
+                        &previous,
                         &crate::rerank::ShellRunner,
                         SystemTime::now(),
                     )?;

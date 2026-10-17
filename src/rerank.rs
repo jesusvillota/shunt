@@ -12,13 +12,14 @@
 //! fake and never call a real model.
 
 use std::{
+    collections::BTreeMap,
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant, SystemTime},
 };
 
-use crate::models_prefs::{OpenCodeRank, Ranker};
+use crate::models_prefs::{rank_order, ModelScore, OpenCodeRank, Ranker};
 
 /// Default run limit; a stuck agent is killed after this.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
@@ -29,9 +30,25 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// `…-via-antigravity` id when this one retires.
 const AGY_MODEL: &str = "claude-gemini-3.8-flash-medium-via-antigravity";
 
-/// The default criteria, from DEC-001: the parameters and weights the agent
-/// applies. Written to the criteria file only when that file is absent.
+/// The owner-editable scoring rubric. Only an untouched legacy default migrates.
 pub const DEFAULT_CRITERIA: &str = "\
+# OpenCode ranking criteria
+
+Score each model from 0 to 10 on every parameter below.
+Shunt computes the weighted mean and orders the models best first.
+
+| parameter | weight |
+| --- | --- |
+| agentic coding | 50% |
+| general intelligence | 20% |
+| tool use | 20% |
+| instruction following | 10% |
+
+The free set changes often, so look up current benchmark data when you can.
+Edit this file to change the ranking; weights need not add to 100.
+";
+
+const LEGACY_CRITERIA: &str = "\
 # OpenCode ranking criteria
 
 Judge each model on these parameters and order the models best first.
@@ -112,10 +129,15 @@ pub fn default_criteria_path() -> Option<PathBuf> {
 }
 
 /// The criteria text: read the file, or write [`DEFAULT_CRITERIA`] and return it
-/// when the file is absent. An existing file is never overwritten.
+/// when absent. Migrate only the byte-identical TASK-004 default.
 pub fn criteria_text(path: &Path) -> Result<String, String> {
     match std::fs::read_to_string(path) {
-        Ok(text) => Ok(text),
+        Ok(text) if text != LEGACY_CRITERIA => Ok(text),
+        Ok(_) => {
+            std::fs::write(path, DEFAULT_CRITERIA)
+                .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+            Ok(DEFAULT_CRITERIA.to_string())
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir)
@@ -133,13 +155,14 @@ pub fn criteria_text(path: &Path) -> Result<String, String> {
 /// exact JSON shape to answer with.
 pub fn prompt(ids: &[String], criteria: &str) -> String {
     format!(
-        "Rank these OpenCode models for agentic coding work, best first.\n\
+        "Score these OpenCode models from 0 to 10 on each criteria parameter.\n\
          Apply the criteria below and look up current benchmarks if that helps.\n\n\
          # Criteria\n\n{criteria}\n\n\
          # Models\n\n{}\n\n\
          Answer with JSON only, no prose and no code fence, in exactly this shape:\n\
-         {{\"order\": [\"opencode/…\", …]}}\n\
-         Use only the model ids listed above, each at most once.",
+         {{\"scores\": {{\"opencode/<id>\": {{\"<parameter>\": 7.5}}}}}}\n\
+         Use the exact parameter names from the table and only the listed model ids.\n\
+         Include every parameter for every model. Return scores only; shunt computes the order.",
         ids.join("\n")
     )
 }
@@ -203,29 +226,99 @@ fn json_object(text: &str) -> Option<&str> {
     (start < end).then(|| &text[start..=end])
 }
 
-/// Validate the agent's `{"order": [id, …]}` answer against the live list: keep
-/// only live ids, drop duplicates, and append any live id the answer missed at
-/// the end. `Err` when the answer is not valid JSON or has no `order` array.
-pub fn validate(answer: &str, ids: &[String]) -> Result<Vec<String>, String> {
+/// Parse the parameter/weight Markdown table. Reject malformed weights rather
+/// than silently changing the owner's rubric. Zero weights are allowed if the
+/// sum is positive; negative and non-finite values are not meaningful weights.
+pub fn weights(criteria: &str) -> Result<BTreeMap<String, f64>, String> {
+    let mut found = false;
+    let mut out = BTreeMap::new();
+    for line in criteria.lines() {
+        let cells: Vec<_> = line
+            .trim()
+            .trim_matches('|')
+            .split('|')
+            .map(str::trim)
+            .collect();
+        if cells == ["parameter", "weight"] {
+            found = true;
+            continue;
+        }
+        if !found {
+            continue;
+        }
+        if cells.len() != 2 {
+            break;
+        }
+        if cells
+            .iter()
+            .all(|c| !c.is_empty() && c.chars().all(|ch| "-: ".contains(ch)))
+        {
+            continue;
+        }
+        let weight = cells[1]
+            .trim_end_matches('%')
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| format!("invalid weight for '{}': {}", cells[0], cells[1]))?;
+        if cells[0].is_empty() || !weight.is_finite() || weight < 0.0 {
+            return Err(format!("invalid parameter or weight: {line}"));
+        }
+        if out.insert(cells[0].to_string(), weight).is_some() {
+            return Err(format!("duplicate parameter: {}", cells[0]));
+        }
+    }
+    let sum: f64 = out.values().sum();
+    if out.is_empty() || !sum.is_finite() || sum <= 0.0 {
+        return Err("no usable weights (the sum must be positive)".into());
+    }
+    Ok(out)
+}
+
+/// Validate per-parameter scores, compute totals locally and sort. A stable
+/// sort preserves previous order, then live order, on ties and for unscored ids.
+pub fn validate(
+    answer: &str,
+    ids: &[String],
+    previous: &[String],
+    weights: &BTreeMap<String, f64>,
+) -> Result<(Vec<String>, BTreeMap<String, ModelScore>), String> {
     let json = json_object(answer).ok_or("the ranker answer holds no JSON object")?;
     let value: serde_json::Value = serde_json::from_str(json)
         .map_err(|e| format!("the ranker answer is not valid JSON: {e}"))?;
-    let order = value
-        .get("order")
-        .and_then(serde_json::Value::as_array)
-        .ok_or("the ranker answer has no \"order\" array")?;
-    let mut out: Vec<String> = Vec::with_capacity(ids.len());
-    for id in order.iter().filter_map(serde_json::Value::as_str) {
-        if ids.iter().any(|live| live == id) && !out.iter().any(|seen| seen == id) {
-            out.push(id.to_string());
-        }
-    }
+    let scores = value
+        .get("scores")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("the ranker answer has no \"scores\" object")?;
+    let mut out = BTreeMap::new();
+    let sum: f64 = weights.values().sum();
     for id in ids {
-        if !out.contains(id) {
-            out.push(id.clone());
+        let parameters: Option<BTreeMap<String, f64>> = weights
+            .keys()
+            .map(|parameter| {
+                let score = scores.get(id)?.get(parameter)?.as_f64()?;
+                (score.is_finite() && (0.0..=10.0).contains(&score))
+                    .then(|| (parameter.clone(), score))
+            })
+            .collect();
+        if let Some(parameters) = parameters {
+            let total = parameters.iter().map(|(p, s)| s * weights[p]).sum::<f64>() / sum;
+            // Keep very large but valid weights from overflowing the numerator.
+            let total = if total.is_finite() {
+                total
+            } else {
+                parameters.iter().map(|(p, s)| s * (weights[p] / sum)).sum()
+            };
+            out.insert(id.clone(), ModelScore { parameters, total });
         }
     }
-    Ok(out)
+    let mut order = rank_order(previous, ids);
+    order.sort_by(|a, b| match (out.get(a), out.get(b)) {
+        (Some(a), Some(b)) => b.total.total_cmp(&a.total),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    Ok((order, out))
 }
 
 /// One full rerank: read (or create) the criteria, ask the agent, validate the
@@ -234,16 +327,24 @@ pub fn run(
     criteria_path: &Path,
     ranker: &Ranker,
     ids: &[String],
+    previous: &[String],
     runner: &dyn Runner,
     now: SystemTime,
 ) -> Result<OpenCodeRank, String> {
     let criteria = criteria_text(criteria_path)?;
+    let weights = weights(&criteria).map_err(|e| {
+        format!(
+            "{}: {e}; expected a | parameter | weight | table with numeric weights",
+            criteria_path.display()
+        )
+    })?;
     let argv = command(ranker, &prompt(ids, &criteria))?;
     let answer = runner.run(&argv, DEFAULT_TIMEOUT)?;
-    let order = validate(&answer, ids)?;
+    let (order, scores) = validate(&answer, ids, previous, &weights)?;
     Ok(OpenCodeRank {
         ranked_at: crate::auth::shared::format_iso8601(now),
         order,
+        scores,
     })
 }
 

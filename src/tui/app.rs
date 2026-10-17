@@ -30,7 +30,7 @@ const NOTICE_TTL: Duration = Duration::from_secs(5);
 /// reports it after its hot reload.
 const OVERLAY_TTL: Duration = Duration::from_secs(6);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
     None,
     Quit,
