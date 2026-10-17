@@ -59,6 +59,7 @@ flowchart TD
     TASK_004["TASK-004 Rerank the OpenCode models with a headless agent"]
   end
   subgraph M_4["M-4 · Selectable ranker and weighted scoring"]
+    TASK_005["TASK-005 Select the ranker as platform, model and effort"]
   end
   TASK_001 --> TASK_003
   TASK_002 --> TASK_003
