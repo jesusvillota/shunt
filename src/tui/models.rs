@@ -6,7 +6,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
 use crate::{
     models_catalog::PLATFORMS,
-    models_prefs::{ModelPrefs, Resolved},
+    models_prefs::{ModelPrefs, OpenCodeRank, Resolved},
     opencode_status::Table,
 };
 
@@ -27,6 +27,14 @@ pub enum OpencodeStatus {
     Failed(String),
 }
 
+/// The OpenCode rerank run: idle, in flight, or failed (the old ranking stays).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ranking {
+    Idle,
+    Running,
+    Failed(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelsDialog {
     pub prefs: ModelPrefs,
@@ -36,6 +44,8 @@ pub struct ModelsDialog {
     pub at: usize,
     /// The OpenCode log status, refreshed while the dialog is open.
     pub opencode: OpencodeStatus,
+    /// The OpenCode rerank run, and its error when it failed.
+    pub ranking: Ranking,
 }
 
 /// What a key press asks the app to do.
@@ -45,6 +55,8 @@ pub enum Outcome {
     Close,
     /// The preferences changed: write them.
     Save(ModelPrefs),
+    /// Rerank the OpenCode models (only offered on the `opencode` tab).
+    Rerank,
 }
 
 impl ModelsDialog {
@@ -55,11 +67,37 @@ impl ModelsDialog {
             tab: 0,
             at: 0,
             opencode: OpencodeStatus::Pending,
+            ranking: Ranking::Idle,
         }
     }
 
     pub fn platform(&self) -> &'static str {
         PLATFORMS[self.tab]
+    }
+
+    /// The current tab's live model ids, once the catalog is loaded.
+    pub fn ready_ids(&self) -> Option<Vec<String>> {
+        match &self.catalogs[self.tab] {
+            Catalog::Ready(ids) => Some(ids.clone()),
+            _ => None,
+        }
+    }
+
+    /// The rerank left: show `ranking…` until the answer comes back.
+    pub fn start_ranking(&mut self) {
+        self.ranking = Ranking::Running;
+    }
+
+    /// A finished rerank: store the rank on success, show the error otherwise
+    /// (the old ranking is left in place).
+    pub fn on_ranked(&mut self, result: Result<OpenCodeRank, String>) {
+        match result {
+            Ok(rank) => {
+                self.prefs.opencode_rank = Some(rank);
+                self.ranking = Ranking::Idle;
+            }
+            Err(error) => self.ranking = Ranking::Failed(error),
+        }
     }
 
     /// The current tab's models with their resolved state.
@@ -97,6 +135,7 @@ impl ModelsDialog {
                 self.prefs.filter = !self.prefs.filter;
                 return Outcome::Save(self.prefs.clone());
             }
+            KeyCode::Char('r') if self.platform() == "opencode" => return Outcome::Rerank,
             KeyCode::Char(' ') | KeyCode::Enter => {
                 if let (Catalog::Ready(ids), Some(row)) =
                     (&self.catalogs[self.tab], self.rows().get(self.at))
@@ -171,5 +210,46 @@ mod tests {
         press(&mut dialog, KeyCode::BackTab);
         assert_eq!(dialog.platform(), "agy");
         assert_eq!(press(&mut dialog, KeyCode::Esc), Outcome::Close);
+    }
+
+    #[test]
+    fn r_only_reranks_on_the_opencode_tab_with_a_loaded_catalog() {
+        let mut dialog = ready();
+        assert_eq!(
+            press(&mut dialog, KeyCode::Char('r')),
+            Outcome::Stay,
+            "codex has no ranking"
+        );
+        dialog.loaded("opencode", Ok(vec!["opencode/a".into()]));
+        press(&mut dialog, KeyCode::Tab);
+        assert_eq!(press(&mut dialog, KeyCode::Char('r')), Outcome::Rerank);
+    }
+
+    #[test]
+    fn a_failed_rerank_keeps_the_old_ranking_and_shows_the_error() {
+        use crate::models_prefs::OpenCodeRank;
+        let mut dialog = ready();
+        dialog.prefs.opencode_rank = Some(OpenCodeRank {
+            ranked_at: "2026-10-17T14:15:37Z".into(),
+            order: vec!["opencode/a".into()],
+        });
+        dialog.start_ranking();
+        assert_eq!(dialog.ranking, Ranking::Running);
+        dialog.on_ranked(Err("claude timed out".into()));
+        assert_eq!(dialog.ranking, Ranking::Failed("claude timed out".into()));
+        assert!(dialog.prefs.opencode_rank.is_some(), "old ranking stays");
+    }
+
+    #[test]
+    fn a_successful_rerank_stores_the_new_rank() {
+        use crate::models_prefs::OpenCodeRank;
+        let mut dialog = ready();
+        dialog.on_ranked(Ok(OpenCodeRank {
+            ranked_at: "2026-10-17T15:00:00Z".into(),
+            order: vec!["opencode/b".into(), "opencode/a".into()],
+        }));
+        assert_eq!(dialog.ranking, Ranking::Idle);
+        let rank = dialog.prefs.opencode_rank.expect("stored");
+        assert_eq!(rank.order, ["opencode/b", "opencode/a"]);
     }
 }

@@ -371,8 +371,13 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         "y delete · n/Esc cancel".to_string()
     } else if app.unhide.is_some() {
         "↑↓ choose · Enter unhide · Esc cancel".to_string()
-    } else if app.models.is_some() {
-        "↑↓ choose · Space on/off · Tab platform · f filter · Esc close".to_string()
+    } else if let Some(models) = &app.models {
+        let rerank = if models.platform() == "opencode" {
+            " · r rerank"
+        } else {
+            ""
+        };
+        format!("↑↓ choose · Space on/off · Tab platform · f filter{rerank} · Esc close")
     } else if app.selected.is_none() {
         format!("↑↓ or click: select{unhide} · a: add account · M: models · ?: help · q: quit")
     } else if app.header_selected() {

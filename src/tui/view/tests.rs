@@ -825,3 +825,49 @@ fn opencode_section_with_no_log_renders_unknown_and_a_reason() {
     assert!(text.contains("unknown"), "{text}");
     assert!(text.contains("OpenCode log unreadable"), "{text}");
 }
+
+#[test]
+fn opencode_section_shows_rank_numbers_in_stored_order_and_ranked_at() {
+    use crate::models_prefs::OpenCodeRank;
+    let mut dialog = opencode_dialog(
+        vec!["opencode/a", "opencode/b", "opencode/c"],
+        &opencode_tail(&[]),
+    );
+    dialog.prefs.opencode_rank = Some(OpenCodeRank {
+        ranked_at: "2026-10-17T14:15:37Z".into(),
+        order: vec!["opencode/c".into(), "opencode/a".into()],
+    });
+    let mut app = app(vec![]);
+    app.models = Some(dialog);
+    let (text, _) = draw(&mut app, 120, 40);
+    assert!(text.contains("#1") && text.contains("#2"), "ranks: {text}");
+    assert!(
+        text.contains("ranked_at 2026-10-17T14:15:37Z"),
+        "timestamp: {text}"
+    );
+    let c = text.find("opencode/c").expect("c listed");
+    let a = text.find("opencode/a").expect("a listed");
+    assert!(c < a, "the stored order drives the rows:\n{text}");
+}
+
+#[test]
+fn a_failed_rerank_shows_the_error_and_keeps_the_ranking() {
+    use crate::models_prefs::OpenCodeRank;
+    let mut dialog = opencode_dialog(vec!["opencode/a"], &opencode_tail(&[]));
+    dialog.prefs.opencode_rank = Some(OpenCodeRank {
+        ranked_at: "2026-10-17T14:15:37Z".into(),
+        order: vec!["opencode/a".into()],
+    });
+    dialog.on_ranked(Err("claude timed out after 600s".into()));
+    let mut app = app(vec![]);
+    app.models = Some(dialog);
+    let (text, _) = draw(&mut app, 120, 40);
+    assert!(
+        text.contains("rerank failed, old ranking kept: claude timed out after 600s"),
+        "{text}"
+    );
+    assert!(
+        text.contains("#1") && text.contains("opencode/a"),
+        "the old ranking stays:\n{text}"
+    );
+}

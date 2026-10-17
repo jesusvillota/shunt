@@ -5,7 +5,7 @@ use crate::{
     models_catalog::PLATFORMS,
     models_prefs::Resolved,
     opencode_status::{self, State, Status},
-    tui::models::{Catalog, ModelsDialog, OpencodeStatus},
+    tui::models::{Catalog, ModelsDialog, OpencodeStatus, Ranking},
 };
 
 /// `reachable · 3h`, `rate limited · 12m`, or `unknown` for a model the log
@@ -52,6 +52,27 @@ fn opencode_summary(dialog: &ModelsDialog, rows: &[Resolved]) -> Line<'static> {
                 Style::new().dark_gray(),
             )
         }
+    }
+}
+
+/// The OpenCode ranking line: the run in progress, the last error (the old
+/// ranking is kept), or when the stored ranking was made.
+fn ranking_line(dialog: &ModelsDialog) -> Line<'static> {
+    match &dialog.ranking {
+        Ranking::Running => {
+            Line::styled("ranking… (one run at a time)", Style::new().fg(Color::Cyan))
+        }
+        Ranking::Failed(error) => Line::styled(
+            format!("rerank failed, old ranking kept: {error}"),
+            Style::new().fg(Color::Red),
+        ),
+        Ranking::Idle => match &dialog.prefs.opencode_rank {
+            Some(rank) => Line::styled(
+                format!("ranked_at {} — r to rerank", rank.ranked_at),
+                Style::new().dark_gray(),
+            ),
+            None => Line::styled("not ranked yet — r to rerank", Style::new().dark_gray()),
+        },
     }
 }
 
@@ -109,16 +130,22 @@ pub(super) fn render(frame: &mut Frame, dialog: &ModelsDialog) {
                 let mut spans = vec![
                     Span::raw(marker),
                     Span::styled(format!("[{state}] "), Style::new().fg(color)),
-                    Span::styled(
-                        row.id.clone(),
-                        if i == dialog.at {
-                            Style::new().bold()
-                        } else {
-                            Style::new()
-                        },
-                    ),
-                    Span::styled(note, Style::new().dark_gray()),
                 ];
+                if let Some(rank) = row.rank {
+                    spans.push(Span::styled(
+                        format!("#{rank:<3}"),
+                        Style::new().dark_gray(),
+                    ));
+                }
+                spans.push(Span::styled(
+                    row.id.clone(),
+                    if i == dialog.at {
+                        Style::new().bold()
+                    } else {
+                        Style::new()
+                    },
+                ));
+                spans.push(Span::styled(note, Style::new().dark_gray()));
                 if opencode {
                     let status = match &dialog.opencode {
                         OpencodeStatus::Ready(table) => table.get(&row.id),
@@ -138,6 +165,7 @@ pub(super) fn render(frame: &mut Frame, dialog: &ModelsDialog) {
             if opencode {
                 lines.push(Line::default());
                 lines.push(opencode_summary(dialog, &rows));
+                lines.push(ranking_line(dialog));
             }
         }
     }

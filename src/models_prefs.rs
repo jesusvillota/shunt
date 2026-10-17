@@ -15,21 +15,38 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+/// A stored ranking of the OpenCode free models: when the headless agent made
+/// it and the validated order it returned.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenCodeRank {
+    /// RFC 3339 UTC timestamp of the run.
+    pub ranked_at: String,
+    /// Live model ids, best first.
+    pub order: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ModelPrefs {
     /// When off, consumers see every model, as if this feature did not exist.
     pub filter: bool,
+    /// The headless-agent platform the OpenCode rerank runs: `claude` (default),
+    /// `codex`, `opencode` or `agy`.
+    pub ranker: String,
     /// `platform -> model id -> forced state`, only where it differs from
     /// the computed default.
     pub overrides: BTreeMap<String, BTreeMap<String, bool>>,
+    /// The last OpenCode ranking, or `None` before the first rerank.
+    pub opencode_rank: Option<OpenCodeRank>,
 }
 
 impl Default for ModelPrefs {
     fn default() -> Self {
         Self {
             filter: true,
+            ranker: "claude".to_string(),
             overrides: BTreeMap::new(),
+            opencode_rank: None,
         }
     }
 }
@@ -41,25 +58,55 @@ pub struct Resolved {
     pub active: bool,
     /// `"default"` or `"override"`.
     pub reason: &'static str,
+    /// 1-based position in the stored OpenCode ranking; `None` for the other
+    /// platforms, and before the first rerank.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rank: Option<u32>,
+}
+
+/// Live `ids` in a stored ranking's order: the ranked ids that are still live,
+/// deduplicated, then every live id the ranking does not name, in catalog order.
+pub fn rank_order(order: &[String], ids: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(ids.len());
+    for id in order {
+        if ids.contains(id) && !out.contains(id) {
+            out.push(id.clone());
+        }
+    }
+    for id in ids {
+        if !out.contains(id) {
+            out.push(id.clone());
+        }
+    }
+    out
 }
 
 impl ModelPrefs {
-    /// Resolve every id of one platform, keeping the catalog order.
+    /// Resolve every id of one platform. The OpenCode entries follow a stored
+    /// ranking, with `rank` set, when one exists; every other platform keeps
+    /// the catalog order.
     pub fn resolve(&self, platform: &str, ids: &[String]) -> Vec<Resolved> {
         let defaults = default_active(ids);
         let overrides = self.overrides.get(platform);
-        ids.iter()
-            .map(|id| match overrides.and_then(|o| o.get(id)) {
-                Some(&active) => Resolved {
-                    id: id.clone(),
-                    active,
-                    reason: "override",
+        let rank = (platform == "opencode")
+            .then_some(self.opencode_rank.as_ref())
+            .flatten();
+        let ordered = rank.map_or_else(|| ids.to_vec(), |rank| rank_order(&rank.order, ids));
+        ordered
+            .iter()
+            .enumerate()
+            .map(|(at, id)| Resolved {
+                id: id.clone(),
+                active: overrides
+                    .and_then(|o| o.get(id))
+                    .copied()
+                    .unwrap_or_else(|| defaults.contains(id)),
+                reason: if overrides.is_some_and(|o| o.contains_key(id)) {
+                    "override"
+                } else {
+                    "default"
                 },
-                None => Resolved {
-                    id: id.clone(),
-                    active: defaults.contains(id),
-                    reason: "default",
-                },
+                rank: rank.map(|_| at as u32 + 1),
             })
             .collect()
     }
@@ -340,6 +387,65 @@ mod tests {
         save_to(&path, &prefs).unwrap();
         assert_eq!(load_from(&path), prefs);
         std::fs::write(&path, "not json").unwrap();
+        assert_eq!(load_from(&path), ModelPrefs::default());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn rank_order_drops_unknown_ids_and_appends_missing_ones() {
+        let order = ids(&["b", "gone", "a", "b"]);
+        assert_eq!(
+            rank_order(&order, &ids(&["a", "b", "c"])),
+            ["b", "a", "c"],
+            "unknown ids go, duplicates collapse, missing ids append in catalog order"
+        );
+    }
+
+    #[test]
+    fn resolve_numbers_opencode_rows_in_stored_order() {
+        let all = ids(&["a", "b", "c"]);
+        let mut prefs = ModelPrefs::default();
+        assert_eq!(prefs.ranker, "claude");
+        prefs.opencode_rank = Some(OpenCodeRank {
+            ranked_at: "2026-10-17T14:15:37Z".into(),
+            order: ids(&["c", "a"]),
+        });
+        // `c` is unversioned and on; `a` and `b` are versionless too, so all on.
+        let rows = prefs.resolve("opencode", &all);
+        assert_eq!(
+            rows.iter()
+                .map(|r| (r.id.as_str(), r.rank))
+                .collect::<Vec<_>>(),
+            [("c", Some(1)), ("a", Some(2)), ("b", Some(3))]
+        );
+        // Another platform ignores the ranking and carries no rank.
+        assert_eq!(
+            prefs
+                .resolve("codex", &all)
+                .iter()
+                .map(|r| r.rank)
+                .collect::<Vec<_>>(),
+            [None, None, None]
+        );
+    }
+
+    #[test]
+    fn the_ranker_and_ranking_survive_a_file_round_trip() {
+        let dir = std::env::temp_dir().join(format!("shunt-rank-{}", std::process::id()));
+        let path = dir.join("models.json");
+        let prefs = ModelPrefs {
+            ranker: "codex".into(),
+            opencode_rank: Some(OpenCodeRank {
+                ranked_at: "2026-10-17T14:15:37Z".into(),
+                order: ids(&["opencode/big-pickle"]),
+            }),
+            ..ModelPrefs::default()
+        };
+        save_to(&path, &prefs).unwrap();
+        assert_eq!(load_from(&path), prefs);
+        // A file written before the ranking existed still loads: both fields
+        // fall back to their defaults.
+        std::fs::write(&path, r#"{"filter": true, "overrides": {}}"#).unwrap();
         assert_eq!(load_from(&path), ModelPrefs::default());
         std::fs::remove_dir_all(dir).unwrap();
     }
