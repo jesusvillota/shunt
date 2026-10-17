@@ -45,7 +45,7 @@ pub struct RankerPicker {
     pub model: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ModelsDialog {
     pub prefs: ModelPrefs,
     /// One per entry of [`PLATFORMS`].
@@ -61,7 +61,7 @@ pub struct ModelsDialog {
 }
 
 /// What a key press asks the app to do.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
     Stay,
     Close,
@@ -398,12 +398,20 @@ mod tests {
         dialog.prefs.opencode_rank = Some(OpenCodeRank {
             ranked_at: "2026-10-17T14:15:37Z".into(),
             order: vec!["opencode/a".into()],
+            scores: Default::default(),
         });
-        dialog.start_ranking();
-        assert_eq!(dialog.ranking, Ranking::Running);
-        dialog.on_ranked(Err("claude timed out".into()));
-        assert_eq!(dialog.ranking, Ranking::Failed("claude timed out".into()));
-        assert!(dialog.prefs.opencode_rank.is_some(), "old ranking stays");
+        let previous = dialog.prefs.clone();
+        for error in [
+            "claude timed out",
+            "the ranker answer is not valid JSON",
+            "criteria.md: expected a | parameter | weight | table",
+        ] {
+            dialog.start_ranking();
+            assert_eq!(dialog.ranking, Ranking::Running);
+            dialog.on_ranked(Err(error.into()));
+            assert_eq!(dialog.ranking, Ranking::Failed(error.into()));
+            assert_eq!(dialog.prefs, previous, "old ranking stays");
+        }
     }
 
     #[test]
@@ -413,6 +421,7 @@ mod tests {
         dialog.on_ranked(Ok(OpenCodeRank {
             ranked_at: "2026-10-17T15:00:00Z".into(),
             order: vec!["opencode/b".into(), "opencode/a".into()],
+            scores: Default::default(),
         }));
         assert_eq!(dialog.ranking, Ranking::Idle);
         let rank = dialog.prefs.opencode_rank.expect("stored");

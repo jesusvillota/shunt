@@ -57,17 +57,26 @@ impl Ranker {
     }
 }
 
-/// A stored ranking of the OpenCode free models: when the headless agent made
-/// it and the validated order it returned.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Validated parameter scores and their locally computed weighted mean.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModelScore {
+    pub parameters: BTreeMap<String, f64>,
+    pub total: f64,
+}
+
+/// Stored OpenCode ranking, including scores when available.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OpenCodeRank {
     /// RFC 3339 UTC timestamp of the run.
     pub ranked_at: String,
     /// Live model ids, best first.
     pub order: Vec<String>,
+    /// Missing in rankings saved before weighted scoring.
+    #[serde(default)]
+    pub scores: BTreeMap<String, ModelScore>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct ModelPrefs {
     /// When off, consumers see every model, as if this feature did not exist.
@@ -94,7 +103,7 @@ impl Default for ModelPrefs {
 }
 
 /// One catalog entry with its resolved state.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Resolved {
     pub id: String,
     pub active: bool,
@@ -104,6 +113,8 @@ pub struct Resolved {
     /// platforms, and before the first rerank.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rank: Option<u32>,
+    /// Weighted mean, or null when this model has no valid scores.
+    pub score: Option<f64>,
 }
 
 /// Live `ids` in a stored ranking's order: the ranked ids that are still live,
@@ -149,6 +160,7 @@ impl ModelPrefs {
                     "default"
                 },
                 rank: rank.map(|_| at as u32 + 1),
+                score: rank.and_then(|r| r.scores.get(id)).map(|s| s.total),
             })
             .collect()
     }

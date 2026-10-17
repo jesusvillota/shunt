@@ -836,6 +836,14 @@ fn opencode_section_shows_rank_numbers_in_stored_order_and_ranked_at() {
     dialog.prefs.opencode_rank = Some(OpenCodeRank {
         ranked_at: "2026-10-17T14:15:37Z".into(),
         order: vec!["opencode/c".into(), "opencode/a".into()],
+        scores: [(
+            "opencode/c".into(),
+            crate::models_prefs::ModelScore {
+                parameters: Default::default(),
+                total: 8.75,
+            },
+        )]
+        .into(),
     });
     let mut app = app(vec![]);
     app.models = Some(dialog);
@@ -845,6 +853,8 @@ fn opencode_section_shows_rank_numbers_in_stored_order_and_ranked_at() {
         text.contains("ranked_at 2026-10-17T14:15:37Z"),
         "timestamp: {text}"
     );
+    assert!(text.contains("8.75"), "score: {text}");
+    assert!(text.contains("2 unscored"), "count: {text}");
     let c = text.find("opencode/c").expect("c listed");
     let a = text.find("opencode/a").expect("a listed");
     assert!(c < a, "the stored order drives the rows:\n{text}");
@@ -857,6 +867,7 @@ fn a_failed_rerank_shows_the_error_and_keeps_the_ranking() {
     dialog.prefs.opencode_rank = Some(OpenCodeRank {
         ranked_at: "2026-10-17T14:15:37Z".into(),
         order: vec!["opencode/a".into()],
+        scores: Default::default(),
     });
     dialog.on_ranked(Err("claude timed out after 600s".into()));
     let mut app = app(vec![]);

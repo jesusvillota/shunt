@@ -168,6 +168,7 @@ fn resolve_numbers_opencode_rows_in_stored_order() {
     prefs.opencode_rank = Some(OpenCodeRank {
         ranked_at: "2026-10-17T14:15:37Z".into(),
         order: ids(&["c", "a"]),
+        scores: Default::default(),
     });
     // `c` is unversioned and on; `a` and `b` are versionless too, so all on.
     let rows = prefs.resolve("opencode", &all);
@@ -197,6 +198,7 @@ fn the_ranker_and_ranking_survive_a_file_round_trip() {
         opencode_rank: Some(OpenCodeRank {
             ranked_at: "2026-10-17T14:15:37Z".into(),
             order: ids(&["opencode/big-pickle"]),
+            scores: Default::default(),
         }),
         ..ModelPrefs::default()
     };
@@ -207,4 +209,18 @@ fn the_ranker_and_ranking_survive_a_file_round_trip() {
     std::fs::write(&path, r#"{"filter": true, "overrides": {}}"#).unwrap();
     assert_eq!(load_from(&path), ModelPrefs::default());
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn old_ranking_without_scores_still_loads() {
+    let prefs: ModelPrefs = serde_json::from_str(
+        r#"{"opencode_rank":{"ranked_at":"2026-10-17T14:15:37Z","order":["opencode/a"]}}"#,
+    )
+    .unwrap();
+    let rank = prefs.opencode_rank.as_ref().unwrap();
+    assert_eq!(rank.order, ["opencode/a"]);
+    assert!(rank.scores.is_empty());
+    let rows = prefs.resolve("opencode", &ids(&["opencode/a"]));
+    assert_eq!(rows[0].rank, Some(1));
+    assert_eq!(rows[0].score, None);
 }
