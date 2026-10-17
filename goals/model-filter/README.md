@@ -50,6 +50,7 @@ flowchart TD
     TASK_001["TASK-001 Models dialog and shunt models command (PR #23)"]
   end
   subgraph M_2["M-2 · OpenCode status"]
+    TASK_002["TASK-002 Discover the OpenCode log format for rate-limit status"]
   end
   subgraph M_3["M-3 · OpenCode rerank"]
   end
