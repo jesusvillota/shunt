@@ -51,9 +51,12 @@ flowchart TD
   end
   subgraph M_2["M-2 · OpenCode status"]
     TASK_002["TASK-002 Discover the OpenCode log format for rate-limit status"]
+    TASK_003["TASK-003 OpenCode section in shunt tui with reachable / rate-limited status"]
   end
   subgraph M_3["M-3 · OpenCode rerank"]
   end
+  TASK_001 --> TASK_003
+  TASK_002 --> TASK_003
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
