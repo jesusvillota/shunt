@@ -55,9 +55,12 @@ flowchart TD
   end
   subgraph M_3["M-3 · OpenCode rerank"]
     DEC_001{{"DEC-001 Choose the OpenCode ranking criteria"}}
+    TASK_004["TASK-004 Rerank the OpenCode models with a headless agent"]
   end
   TASK_001 --> TASK_003
   TASK_002 --> TASK_003
+  TASK_003 --> TASK_004
+  DEC_001 --> TASK_004
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
