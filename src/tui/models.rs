@@ -135,7 +135,11 @@ impl ModelsDialog {
                 self.prefs.filter = !self.prefs.filter;
                 return Outcome::Save(self.prefs.clone());
             }
-            KeyCode::Char('r') if self.platform() == "opencode" => return Outcome::Rerank,
+            KeyCode::Char('r')
+                if self.platform() == "opencode" && self.ranking != Ranking::Running =>
+            {
+                return Outcome::Rerank
+            }
             KeyCode::Char(' ') | KeyCode::Enter => {
                 if let (Catalog::Ready(ids), Some(row)) =
                     (&self.catalogs[self.tab], self.rows().get(self.at))
@@ -223,6 +227,12 @@ mod tests {
         dialog.loaded("opencode", Ok(vec!["opencode/a".into()]));
         press(&mut dialog, KeyCode::Tab);
         assert_eq!(press(&mut dialog, KeyCode::Char('r')), Outcome::Rerank);
+        dialog.start_ranking();
+        assert_eq!(
+            press(&mut dialog, KeyCode::Char('r')),
+            Outcome::Stay,
+            "one rerank runs at a time"
+        );
     }
 
     #[test]

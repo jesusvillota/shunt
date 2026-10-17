@@ -88,8 +88,9 @@ What
 - `src/models_prefs.rs`: `ModelPrefs` gains `ranker` (default `claude`) and
   `opencode_rank: Option<OpenCodeRank>`; `resolve` reorders `opencode` rows by the stored
   order and sets a 1-based `rank` (new field on `Resolved`, skipped in JSON when absent).
-- `src/tui/models.rs`: a `Ranking` state, the `r` key on the `opencode` tab, and
-  `start_ranking` / `on_ranked`.
+- `src/tui/models.rs`: a `Ranking` state, the `r` key on the `opencode` tab (ignored
+  while a run is in flight, so one rerank runs at a time), and `start_ranking` /
+  `on_ranked`.
 - `src/tui/app.rs` + `src/tui/mod.rs`: `Effect::RerankOpencode` runs `rerank::run` on a
   blocking task, saves `opencode_rank` to `models.json`, and reports `Msg::Ranked`; the
   dialog shows `ranking…` while it runs and the error when it fails.
