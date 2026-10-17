@@ -7,18 +7,50 @@ Let the operator switch codex, opencode and agy models on or off in shunt tui, f
 
 ## Context, scope and non-goals
 
-<what exists today, what is included, what is explicitly out of scope>
+Model names are hard-coded in the goal tool, the `delegate-cli` skill and the global rules, and they go
+stale. This goal makes `shunt tui` the one place that lists the models of the three CLI platforms
+(`codex`, `opencode`, `agy`) live, and lets the operator switch each model on or off. The approved plan is
+`~/.claude/plans/idempotent-snacking-puzzle.md`.
+
+**Included (this goal, shunt repo):** the Models dialog and `shunt models` (PR #23, in review), an OpenCode
+section with reachable / rate-limited status, and an on-demand rerank of the OpenCode models.
+
+**Other repo:** the goal tool and the `delegate-cli` skill live in the config repo. Their side is the goal
+`model-filter-consumer` in that repo. It needs `shunt models --json` from TASK-001 here.
+
+**Decisions already made by the owner:**
+- A global filter switch lives in the Models dialog. Default: on.
+- Off means hidden **and** blocked in the goal tool.
+- The switches affect only the goal tool and `/delegate-cli`. Gateway routing, `/v1/models` and Claude Code's `/model` picker do not change.
+- The goal tool fails open (shows all models) when shunt is missing or fails.
+- The rerank agent defaults to `claude -p` with web search. The owner can set any platform.
+
+**Non-goals:** automatic daily ranking; any change to gateway routing; the Claude platform (its aliases
+already track the latest); changing `deny_models` in `goal.yaml`.
 
 ## Risks and open questions
 
-<risks, assumptions, and unknowns; material unknowns become discovery tasks or DEC nodes>
+- **OpenCode has no quota API.** The free tier answers 403 to any non-opencode client, so status is read
+  passively from `~/.local/share/opencode/log/opencode.log`. The log format for successes is not known yet,
+  so TASK-002 is a discovery task before the section is built.
+- **The rank criteria are not chosen.** DEC-001 holds that choice. The rerank task waits for it.
+- **Rolling wave:** the plan details all three milestones because the owner approved the full design.
+  Later work can still add `Plan: decompose M-n` tasks if a spike changes the shape.
+- **Needs a live `opencode` and `claude` on `PATH`** for the live runs. The launchd daemon has a minimal `PATH`,
+  so all of this runs in the TUI or CLI process, never in the daemon.
+- **Docs:** each PR that changes shunt behaviour updates README (+ko/ja/zh-CN), `docs/` and the site pages
+  with their ko/ja/zh-cn copies, per `AGENTS.md`.
 
 ## Plan structure
 
 <!-- goal:graph:start -->
 ```mermaid
 flowchart TD
-  subgraph M_1["M-1 · <first observable outcome>"]
+  subgraph M_1["M-1 · Models list and switches"]
+  end
+  subgraph M_2["M-2 · OpenCode status"]
+  end
+  subgraph M_3["M-3 · OpenCode rerank"]
   end
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
