@@ -10,6 +10,7 @@ mod app;
 pub mod client;
 mod config_edit;
 pub mod model;
+mod models;
 mod prefs;
 mod view;
 
@@ -58,6 +59,8 @@ enum Msg {
     Notice(Notice),
     WeeklyResetSet(String, bool),
     RanksCleared(String),
+    ModelsOpened(crate::models_prefs::ModelPrefs),
+    ModelsLoaded(String, Result<Vec<String>, String>),
     AddStarted(Result<String, String>),
     /// `Err`: the gateway refused the code (the dialog stays open to retry).
     /// `Ok`: the account is stored; the notice says whether the config edit worked too.
@@ -362,6 +365,32 @@ fn perform(ctx: &Ctx, effect: Effect) {
                 ctx.refresh_soon(true);
             });
         }
+        Effect::OpenModels => {
+            let config = ctx.config.clone();
+            tokio::spawn(async move {
+                let prefs = crate::models_prefs::load();
+                let _ = ctx.tx.send(Msg::ModelsOpened(prefs));
+                // One blocking fetch per platform, so a slow CLI never holds up the others.
+                for platform in crate::models_catalog::PLATFORMS {
+                    let (tx, config) = (ctx.tx.clone(), config.clone());
+                    tokio::task::spawn_blocking(move || {
+                        let result = crate::models_catalog::fetch(platform, config.as_deref());
+                        let _ = tx.send(Msg::ModelsLoaded(platform.into(), result));
+                    });
+                }
+            });
+        }
+        Effect::SaveModels(prefs) => {
+            // Queue here, in key order; the blocking task writes the newest snapshot.
+            crate::models_prefs::queue(prefs);
+            tokio::spawn(async move {
+                match tokio::task::spawn_blocking(crate::models_prefs::flush).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => ctx.say(Notice::Error(format!("model list not saved: {e:#}"))),
+                    Err(e) => ctx.say(Notice::Error(format!("model list not saved: {e}"))),
+                }
+            });
+        }
         Effect::SaveDisplayPrefs { hidden, order } => {
             // Best effort: losing display prefs must never interrupt monitoring.
             tokio::spawn(async move {
@@ -485,6 +514,14 @@ async fn event_loop(
             }
             Msg::WeeklyResetSet(provider, value) => {
                 app.on_weekly_reset_set(&provider, value);
+                Effect::None
+            }
+            Msg::ModelsOpened(prefs) => {
+                app.on_models_opened(prefs);
+                Effect::None
+            }
+            Msg::ModelsLoaded(platform, result) => {
+                app.on_models_loaded(&platform, result);
                 Effect::None
             }
             Msg::RanksCleared(provider) => {

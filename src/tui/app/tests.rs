@@ -699,3 +699,12 @@ fn space_folds_a_header_and_pauses_an_account() {
         Effect::SetPaused { paused: true, .. }
     ));
 }
+
+#[test]
+fn a_second_models_open_keeps_the_dialog_that_is_already_showing() {
+    let mut app = App::new("http://x".into());
+    app.on_models_opened(crate::models_prefs::ModelPrefs::default());
+    app.models.as_mut().unwrap().tab = 2;
+    app.on_models_opened(crate::models_prefs::ModelPrefs::default());
+    assert_eq!(app.models.as_ref().unwrap().tab, 2);
+}

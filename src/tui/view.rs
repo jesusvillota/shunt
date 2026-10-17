@@ -21,6 +21,7 @@ use super::{
 };
 
 mod family;
+mod models;
 
 const BAR_WIDTH: usize = 8;
 const NAME_W: usize = 20;
@@ -238,6 +239,8 @@ pub fn render(frame: &mut Frame, app: &mut App, now: u64) {
         render_delete_confirm(frame, confirm);
     } else if let Some(picker) = &app.unhide {
         render_unhide(frame, app, picker.at);
+    } else if let Some(dialog) = &app.models {
+        models::render(frame, dialog);
     } else if app.show_help {
         render_help(frame, frame.area());
     }
@@ -368,8 +371,10 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         "y delete · n/Esc cancel".to_string()
     } else if app.unhide.is_some() {
         "↑↓ choose · Enter unhide · Esc cancel".to_string()
+    } else if app.models.is_some() {
+        "↑↓ choose · Space on/off · Tab platform · f filter · Esc close".to_string()
     } else if app.selected.is_none() {
-        format!("↑↓ or click: select{unhide} · a: add account · ?: help · q: quit")
+        format!("↑↓ or click: select{unhide} · a: add account · M: models · ?: help · q: quit")
     } else if app.header_selected() {
         format!(
             "p pause/resume all · Space fold · m cycle ranking · h hide{unhide} · a add · Esc deselect · ? help · q quit"
@@ -580,6 +585,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         "                  on a provider header: move the whole section",
         "  a               add an account (it is added to the pool in shunt.toml)",
         "  d               delete the selected account (asks y/n before deleting)",
+        "  M               models: switch codex, opencode and agy models on or off for goal and /delegate-cli",
         "  q               quit",
         "",
         "Pause/switch-off last until the gateway restarts. Hiding and section order",
@@ -592,7 +598,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         "Press any key to close.",
     ]
     .join("\n");
-    let rect = popup(area, 88, 29);
+    let rect = popup(area, 100, 30);
     frame.render_widget(Clear, rect);
     frame.render_widget(
         Paragraph::new(text).block(Block::bordered().title(" Help ")),

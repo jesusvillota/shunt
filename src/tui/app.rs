@@ -14,10 +14,13 @@ use ratatui::{
     layout::Rect,
 };
 
+use crate::models_prefs::ModelPrefs;
+
 use super::{
     add::{self, AddFlow, Target},
     config_edit::DEFAULT_PRIORITY,
     model::{ProviderView, RankMode, Row, Snapshot},
+    models::{ModelsDialog, Outcome},
     prefs::DisplayPrefs,
 };
 
@@ -63,6 +66,10 @@ pub enum Effect {
         kind: &'static str,
         name: String,
     },
+    /// Read `~/.shunt/models.json` and the live model lists, then show the Models dialog.
+    OpenModels,
+    /// Persist the model on/off list (`~/.shunt/models.json`).
+    SaveModels(ModelPrefs),
     /// Persist the TUI-local display preferences (`~/.shunt/top.json`).
     SaveDisplayPrefs {
         hidden: Vec<String>,
@@ -149,6 +156,7 @@ pub struct App {
     pub collapsed: HashSet<String>,
     pub provider_order: Vec<String>,
     pub unhide: Option<UnhidePicker>,
+    pub models: Option<ModelsDialog>,
     /// First visible list line.
     pub scroll: usize,
     /// Scroll the selection into view on the next draw (keyboard moves only).
@@ -179,6 +187,7 @@ impl App {
             collapsed: HashSet::new(),
             provider_order: Vec::new(),
             unhide: None,
+            models: None,
             scroll: 0,
             reveal: false,
             list_area: Rect::default(),
@@ -437,6 +446,7 @@ impl App {
         if self.dialog.is_some()
             || self.delete_confirm.is_some()
             || self.unhide.is_some()
+            || self.models.is_some()
             || self.show_help
         {
             return Effect::None;
@@ -487,6 +497,16 @@ impl App {
         if self.unhide.is_some() {
             return self.unhide_key(key);
         }
+        if let Some(dialog) = &mut self.models {
+            return match dialog.key(key) {
+                Outcome::Stay => Effect::None,
+                Outcome::Close => {
+                    self.models = None;
+                    Effect::None
+                }
+                Outcome::Save(prefs) => Effect::SaveModels(prefs),
+            };
+        }
         if self.show_help {
             // Any key dismisses the overlay; it must not also act.
             self.show_help = false;
@@ -535,8 +555,26 @@ impl App {
             KeyCode::Char('u') | KeyCode::Char('U') => self.open_unhide(),
             KeyCode::Char('m') => self.toggle_mode(),
             KeyCode::Char('a') => self.open_dialog(),
+            KeyCode::Char('M') => Effect::OpenModels,
             KeyCode::Char('d') => self.open_delete_confirm(),
             _ => Effect::None,
+        }
+    }
+
+    pub fn on_models_opened(&mut self, prefs: ModelPrefs) {
+        // `M` pressed twice, or another dialog opened meanwhile: keep what is on screen.
+        if self.models.is_none()
+            && self.dialog.is_none()
+            && self.delete_confirm.is_none()
+            && self.unhide.is_none()
+        {
+            self.models = Some(ModelsDialog::new(prefs));
+        }
+    }
+
+    pub fn on_models_loaded(&mut self, platform: &str, result: Result<Vec<String>, String>) {
+        if let Some(dialog) = &mut self.models {
+            dialog.loaded(platform, result);
         }
     }
 

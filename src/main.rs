@@ -64,6 +64,16 @@ enum Command {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// List the models of codex, opencode and agy with their on/off state (the list `goal` and `/delegate-cli` use).
+    Models {
+        /// One platform: codex, opencode or agy. Default: all three.
+        platform: Option<String>,
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
     /// Print the managed account pool from a running gateway (read-tier admin token is enough).
     Pool {
         /// Gateway URL. Default: configured `[server].bind`.
@@ -234,6 +244,25 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Command::Run { config }) => run(config.or(cli.config)),
         Some(Command::Check { config }) => check(config.or(cli.config)),
+        Some(Command::Models {
+            platform,
+            json,
+            config,
+        }) => {
+            let config = config.or(cli.config);
+            match shunt::models_catalog::report(platform.as_deref(), config.as_deref(), json) {
+                Ok(body) => {
+                    std::io::stdout()
+                        .write_all(body.as_bytes())
+                        .context("writing models output")?;
+                    Ok(())
+                }
+                Err(error) => {
+                    eprintln!("Error: {}", error.replace(['\n', '\r'], " "));
+                    std::process::exit(1);
+                }
+            }
+        }
         Some(Command::Pool {
             url,
             token,

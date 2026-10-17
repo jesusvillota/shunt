@@ -122,3 +122,9 @@ TUI は `GET /admin/api/pool` の `quota_buckets` を読みます。値がない
 週間リセットの切り替えは **選択したプロバイダーだけ** に影響します。カスタム優先順位が優先されるため、そのプロバイダーは引き続き `custom order` と表示されます。Balanced に戻すとそのプロバイダーの週間リセットを無効にし、`sort_by_reset` は変更しません。ランタイムの上書きは解除またはゲートウェイの再起動で終了しますが、カスタム優先順位は再起動後も残ります。TUI は `[server.pool]` を書き換えません。設定の編集が成功して API 呼び出しが失敗した場合は、部分的な変更を報告し、実際の状態を再取得します。
 
 週間リセットには `[server.pool]` と `sort_by_weekly_reset` をサポートするゲートウェイが必要です。有効な値が false のままの場合、TUI は設定が無効であることを報告します。
+
+## `goal` と `/delegate-cli` が使うモデルを選ぶ
+
+`shunt tui` で `M` を押すと Models ダイアログが開きます。`codex`、`opencode`、`agy` のタブがあり、各 CLI が現在提供しているモデルを一覧表示します。`Space` で選択中のモデルを ON/OFF、`Tab` でプラットフォームを切り替え、`f` でフィルターを ON/OFF します。
+
+フィルターが ON の間、`goal` ツールと `/delegate-cli` は ON のモデルだけを見ます。`goal` は OFF のモデルを指定したルートを拒否します。既定では各モデルファミリーの最新バージョンが ON になります。たとえば `gpt-6.1-sol` は ON、`gpt-6-sol` は OFF です。選択は `~/.shunt/models.json` に保存され、ゲートウェイのルーティング、`/v1/models`、Claude Code の `/model` ピッカーには影響しません。シェルでは `shunt models` で同じ一覧を表示できます。
