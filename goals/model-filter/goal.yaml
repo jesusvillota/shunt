@@ -13,7 +13,7 @@ milestones:
   - {id: M-3, title: OpenCode rerank, success: [SC-3], exit: "Rerank merged; fake-ranker tests pass and one live rerank works"}
 policy:
   decide: human         # human | experts (a committee answers worker decision requests)
-  orchestrator: {platform: opencode, model: opencode/glm-5.3-flash-free}
+  orchestrator: {platform: claude, model: sonnet, effort: medium}
   max_parallel: 7
   default_route: null   # {platform: codex, model: MODEL, effort: LEVEL}
   agent: claude         # claude | codex | opencode | agy
