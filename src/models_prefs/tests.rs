@@ -168,7 +168,6 @@ fn resolve_numbers_opencode_rows_in_stored_order() {
     prefs.opencode_rank = Some(OpenCodeRank {
         ranked_at: "2026-10-17T14:15:37Z".into(),
         order: ids(&["c", "a"]),
-        scores: Default::default(),
     });
     // `c` is unversioned and on; `a` and `b` are versionless too, so all on.
     let rows = prefs.resolve("opencode", &all);
@@ -198,7 +197,6 @@ fn the_ranker_and_ranking_survive_a_file_round_trip() {
         opencode_rank: Some(OpenCodeRank {
             ranked_at: "2026-10-17T14:15:37Z".into(),
             order: ids(&["opencode/big-pickle"]),
-            scores: Default::default(),
         }),
         ..ModelPrefs::default()
     };
@@ -219,8 +217,27 @@ fn old_ranking_without_scores_still_loads() {
     .unwrap();
     let rank = prefs.opencode_rank.as_ref().unwrap();
     assert_eq!(rank.order, ["opencode/a"]);
-    assert!(rank.scores.is_empty());
     let rows = prefs.resolve("opencode", &ids(&["opencode/a"]));
     assert_eq!(rows[0].rank, Some(1));
-    assert_eq!(rows[0].score, None);
+    assert!(serde_json::to_value(&rows).unwrap()[0]
+        .get("score")
+        .is_none());
+}
+
+#[test]
+fn old_ranking_with_scores_loads_and_drops_them_on_save() {
+    let dir = std::env::temp_dir().join(format!("shunt-legacy-rank-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("models.json");
+    std::fs::write(&path, r#"{"opencode_rank":{"ranked_at":"2026-10-17T14:15:37Z","order":["opencode/a"],"scores":{"opencode/a":{"parameters":{"coding":8},"total":8}}}}"#).unwrap();
+    let prefs = load_from(&path);
+    let rank = prefs.opencode_rank.as_ref().unwrap();
+    assert_eq!(rank.order, ["opencode/a"]);
+    assert_eq!(rank.ranked_at, "2026-10-17T14:15:37Z");
+    save_to(&path, &prefs).unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert!(saved["opencode_rank"].get("scores").is_none());
+    assert_eq!(saved["opencode_rank"].as_object().unwrap().len(), 2);
+    std::fs::remove_dir_all(dir).unwrap();
 }

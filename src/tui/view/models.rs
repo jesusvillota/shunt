@@ -68,11 +68,7 @@ fn ranking_line(dialog: &ModelsDialog) -> Line<'static> {
         ),
         Ranking::Idle => match &dialog.prefs.opencode_rank {
             Some(rank) => Line::styled(
-                format!(
-                    "ranked_at {} — {} unscored — r to rerank",
-                    rank.ranked_at,
-                    dialog.rows().iter().filter(|r| r.score.is_none()).count()
-                ),
+                format!("ranked_at {} — r to rerank", rank.ranked_at),
                 Style::new().dark_gray(),
             ),
             None => Line::styled("not ranked yet — r to rerank", Style::new().dark_gray()),
@@ -186,13 +182,6 @@ pub(super) fn render(frame: &mut Frame, dialog: &ModelsDialog) {
                 if let Some(rank) = row.rank {
                     spans.push(Span::styled(
                         format!("#{rank:<3}"),
-                        Style::new().dark_gray(),
-                    ));
-                }
-                if opencode {
-                    spans.push(Span::styled(
-                        row.score
-                            .map_or_else(|| "   —  ".into(), |s| format!("{s:5.2} ")),
                         Style::new().dark_gray(),
                     ));
                 }

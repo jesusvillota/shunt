@@ -398,20 +398,35 @@ mod tests {
         dialog.prefs.opencode_rank = Some(OpenCodeRank {
             ranked_at: "2026-10-17T14:15:37Z".into(),
             order: vec!["opencode/a".into()],
-            scores: Default::default(),
         });
         let previous = dialog.prefs.clone();
-        for error in [
-            "claude timed out",
-            "the ranker answer is not valid JSON",
-            "criteria.md: expected a | parameter | weight | table",
+        struct Fake(Result<String, String>);
+        impl crate::rerank::Runner for Fake {
+            fn run(&self, _: &[String], _: std::time::Duration) -> Result<String, String> {
+                self.0.clone()
+            }
+        }
+        let dir = std::env::temp_dir().join(format!("shunt-dialog-rerank-{}", std::process::id()));
+        for answer in [
+            Err("claude timed out".to_string()),
+            Ok("{not json}".to_string()),
+            Ok("{}".to_string()),
         ] {
+            let error = crate::rerank::run(
+                &dir.join("criteria.md"),
+                &dialog.prefs.ranker,
+                &["opencode/a".into()],
+                &Fake(answer),
+                std::time::SystemTime::now(),
+            )
+            .unwrap_err();
             dialog.start_ranking();
             assert_eq!(dialog.ranking, Ranking::Running);
-            dialog.on_ranked(Err(error.into()));
-            assert_eq!(dialog.ranking, Ranking::Failed(error.into()));
+            dialog.on_ranked(Err(error.clone()));
+            assert_eq!(dialog.ranking, Ranking::Failed(error));
             assert_eq!(dialog.prefs, previous, "old ranking stays");
         }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -421,7 +436,6 @@ mod tests {
         dialog.on_ranked(Ok(OpenCodeRank {
             ranked_at: "2026-10-17T15:00:00Z".into(),
             order: vec!["opencode/b".into(), "opencode/a".into()],
-            scores: Default::default(),
         }));
         assert_eq!(dialog.ranking, Ranking::Idle);
         let rank = dialog.prefs.opencode_rank.expect("stored");
