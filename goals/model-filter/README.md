@@ -61,12 +61,14 @@ flowchart TD
   subgraph M_4["M-4 · Selectable ranker and weighted scoring"]
     TASK_005["TASK-005 Select the ranker as platform, model and effort"]
     TASK_006["TASK-006 Score the OpenCode models per parameter and compute the order from weights"]
+    TASK_007["TASK-007 Rank the OpenCode models with one plain order, no weights"]
   end
   TASK_001 --> TASK_003
   TASK_002 --> TASK_003
   TASK_003 --> TASK_004
   DEC_001 --> TASK_004
   TASK_005 --> TASK_006
+  TASK_006 --> TASK_007
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
