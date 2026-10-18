@@ -225,7 +225,7 @@ working. The line shapes and the state rule are in `docs/notes/opencode-log-form
 
 On the `opencode` tab, `r` starts a rerank in the background: the dialog shows `ranking…`, the list
 stays usable, and only one rerank runs at a time (a run that does not finish in 10 minutes is killed).
-The OpenCode rerank asks the agent for a 0–10 score per parameter. Shunt computes `sum(score × weight) / sum(weights)` from the `| parameter | weight |` table in `~/.shunt/opencode-rank-criteria.md`. Defaults: agentic coding 50%, general intelligence 20%, tool use 20%, instruction following 10%. Weights need not total 100. Edit a weight and press `r` to recompute on the next run. Ties keep the previous order, then the live list order. Missing, nonnumeric or out-of-range scores put that model last; the dialog counts these as `unscored`. The tab shows each total beside its rank. `shunt models opencode --json` includes `rank` and `score` (`null` when unscored). `opencode_rank` stores `ranked_at`, `order` and `scores`; each scored model has `parameters` and `total`. Older rankings without scores still load. Invalid JSON, timeout or invalid weights keep the old ranking and show the error. Missing criteria files get the new rubric. Only a file byte-identical to the old default is rewritten once; edited files stay unchanged. A file without usable weights fails with its path and the expected table.
+The OpenCode rerank asks the agent for one best-first order: `{"order": ["opencode/<id>", ...]}`. The prompt includes the live model ids and the exact text from `~/.shunt/opencode-rank-criteria.md`. This file accepts any plain text. The default asks for agentic coding in real repositories: reading code, editing files, running tools and tests, and following instructions. It also asks for current benchmarks, especially agentic-coding benchmarks. Shunt drops unknown ids, removes duplicates, and appends missing live ids in catalog order. The dialog shows rank numbers and `ranked_at`. `shunt models opencode --json` includes `rank`; `opencode_rank` stores only `ranked_at` and `order`. Old `scores` data is ignored on load and dropped on the next save. Invalid JSON, a timeout, or a missing `order` array keeps the old ranking and shows the error. A missing criteria file gets the default text. Files byte-identical to the TASK-004 or TASK-006 defaults are rewritten once; edited files stay unchanged.
 
 Press `s` in the Models dialog to choose the ranker platform, model, then effort. Use the arrow
 keys and Enter at each step; Esc cancels without saving. The models come from the existing catalog.
@@ -254,10 +254,10 @@ selection writes the object form. The default remains `claude` with its CLI defa
 These arguments were checked against the installed CLIs' help. No `--variant` flag is invented for
 OpenCode. AGY keeps `claude-gemini-3.8-flash-medium-via-antigravity` when no model is selected;
 a selected model overrides it. The criteria come from
-`~/.shunt/opencode-rank-criteria.md`, written with the current default rubric when absent, so
-the parameters and weights can change without a code change. `chatgptweb` is refused: it needs a
+`~/.shunt/opencode-rank-criteria.md`, written with the current default text when absent, so
+the criteria can change without a code change. `chatgptweb` is refused: it needs a
 browser session that shunt cannot start. `shunt models opencode` prints the same order, and
-`shunt models opencode --json` carries a `rank` number and weighted `score` on each model.
+`shunt models opencode --json` carries a `rank` number on each model.
 
 ## Adding an account
 
