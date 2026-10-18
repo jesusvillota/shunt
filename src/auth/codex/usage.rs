@@ -24,11 +24,13 @@
 //! tracking; it must never take a proxied request down with it.
 //!
 //! The parser buckets windows by their reported duration, never by a key's
-//! position. An unrecognized duration is skipped. The upstream policy
-//! currently observed in real accounts can return only a weekly window in
-//! primary_window with secondary_window: null, but that is an observed state
-//! rather than an API contract. If a 5-hour window returns in either key, the
-//! duration-based parser handles it without a code change.
+//! position. An unrecognized duration is skipped. Codex accounts do have a
+//! 5-hour window: a live Plus account on 2026-10-18 reported
+//! primary_window = 18000 s (5h) and secondary_window = 604800 s (weekly), the
+//! same 300/10080 minutes its `x-codex-*-window-minutes` headers carry. Some
+//! responses have carried only a weekly primary_window with
+//! secondary_window: null; that is why position is never trusted, not
+//! evidence that the 5-hour window is gone.
 //!
 //! The endpoint authenticates with the same ChatGPT OAuth bearer and CLI
 //! identity headers as the Responses API's ChatGPT backend, plus the
@@ -118,10 +120,9 @@ pub(crate) struct WhamUsageReport {
 /// considered independently. A window is bucketed only from its reported
 /// duration, using limit_window_seconds first, then window_minutes, then
 /// limit_window_minutes; an unknown or malformed duration skips that window
-/// without a positional fallback. A returned 5-hour window therefore works in
-/// either key without code changes, while the currently observed upstream
-/// policy may return only a weekly primary window with a null secondary value.
-/// The latter is an observation, not an API contract. A structurally
+/// without a positional fallback, so the 5-hour and weekly windows are found
+/// in either key, and a response that carries only a weekly primary window
+/// with a null secondary value still parses. A structurally
 /// recognizable response with no usable window still returns an empty snapshot;
 /// a response with no recognized window keys at all returns Err so an
 /// unrelated payload is not trusted.
