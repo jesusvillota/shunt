@@ -191,6 +191,11 @@ fn command_removes_ambient_credentials_and_closes_stdin() {
         std::ffi::OsStr::new("HOME"),
         Some(std::ffi::OsStr::new("/explicit/account"))
     )));
+    // Forces agy's file token storage; the keychain path pops a macOS dialog.
+    assert!(env.contains(&(
+        std::ffi::OsStr::new("SSH_CONNECTION"),
+        Some(std::ffi::OsStr::new("127.0.0.1 0 127.0.0.1 0"))
+    )));
     for key in [
         "GEMINI_API_KEY",
         "GOOGLE_API_KEY",

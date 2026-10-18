@@ -100,6 +100,12 @@ impl UsageProbe {
             .args(args)
             .env("HOME", profile)
             .env("USERPROFILE", profile)
+            // A profile HOME has no ~/Library/Keychains, so agy's keychain write
+            // makes macOS show a "Keychain Not Found" dialog on every token
+            // refresh. agy skips the keychain for the token file when it sees an
+            // SSH session ("Using file-based token storage because SSH session
+            // detected"), which is the storage a profile already uses.
+            .env("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 0")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
