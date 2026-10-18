@@ -39,7 +39,10 @@ used for that account's agy sign-in; `~` expands and relative paths resolve from
 directory.
 
 The probe sets child `HOME`/`USERPROFILE`, strips ambient Google/Gemini credentials, and never uses
-an ambient login for an account without a profile. It never passes `--disable-slash-commands`.
+an ambient login for an account without a profile. It also sets `SSH_CONNECTION` so agy keeps the
+token in the profile's file instead of the macOS Keychain: a profile `HOME` has no
+`Library/Keychains`, and without this every token refresh raised a "Keychain Not Found" dialog
+(agy logs `Using file-based token storage because SSH session detected`). It never passes `--disable-slash-commands`.
 Missing, unsupported, or failed CLI profiles use the same account's existing HTTP
 `retrieveUserQuotaSummary` path when its credentials are refreshable. A reply with `num_turns > 0`
 disables all CLI quota probes until gateway restart; HTTP fallback continues. The child has a
