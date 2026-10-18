@@ -82,6 +82,7 @@ pub fn spawn_usage_poller(state: AppState) {
     );
     tokio::spawn(async move {
         let mut agy_probe = antigravity::usage_cli::UsageProbe::default();
+        let mut primer = crate::window_primer::WindowPrimer::default();
         let mut ticker = tokio::time::interval(Duration::from_secs(interval));
         // A poll that runs long (or a suspend/resume) must not make the ticker
         // fire a burst of catch-up ticks — that would hammer the usage API. Skip
@@ -92,6 +93,8 @@ pub fn spawn_usage_poller(state: AppState) {
         loop {
             ticker.tick().await;
             poll_all_with_probe(&state, &mut agy_probe).await;
+            // After the poll, so the pool's reset times are fresh.
+            primer.run(&state).await;
         }
     });
 }

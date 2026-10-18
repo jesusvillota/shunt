@@ -54,6 +54,7 @@ pub mod upstream_status;
 pub(crate) mod upstream_timeout;
 pub mod usage;
 pub mod usage_poll;
+pub(crate) mod window_primer;
 
 #[cfg(test)]
 mod testutil;

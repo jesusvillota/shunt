@@ -143,6 +143,11 @@ Setting `[server.pool] usage_refresh_seconds` to a positive value spawns one bac
 - **Floor:** a configured value below 60 is clamped up to a 60-second floor to avoid hammering the endpoint.
 - **Fixed at boot:** the interval is read once at startup; a config reload does not start, stop, or re-tune the poller.
 
+
+## Window primer (opt-in)
+
+A 5-hour window starts only on an account's first request, so an unused backup account starts its 5 hours only when the pool fails over to it. With `[server.pool] prime_windows = true` (and `usage_refresh_seconds` set, because it runs on the poller's tick), each tick sends one tiny request — `claude-haiku-5-5`, `max_tokens: 1`, low effort, Claude Code identity headers — to every `claude_oauth` account whose pool snapshot has no future `reset_5h`, signed with that account's own credential. The response's `anthropic-ratelimit-unified-*` headers are fed to `note_quota`, so the next tick sees the window running. Hard limit: one attempt per physical account per 5 hours, counted from the attempt whether it succeeded or not. Paused and relogin-pending accounts are skipped, and failures only log. ChatGPT-backend Codex accounts are primed the same way (`gpt-6-luna`, low effort, response fed to `note_codex_quota`). Source: `src/window_primer.rs`.
+
 ## Quota-state persistence (opt-in)
 
 The pool's quota state lives in memory, so a restart begins cold: every account looks unseen until its first post-restart response. Until that response lands, burn-rate avoidance has nothing to project from and `GET /usage` reports empty windows.

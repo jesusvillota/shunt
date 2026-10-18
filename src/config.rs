@@ -253,6 +253,13 @@ pub struct PoolConfig {
     /// clamped to 60 seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_refresh_seconds: Option<u64>,
+    /// Start each idle 5-hour window early: on every usage-poller tick, a
+    /// `claude_oauth` or ChatGPT-backend `chatgpt_oauth` account with no known
+    /// future 5-hour reset gets one tiny request (at most one per account per
+    /// 5 hours). Needs `usage_refresh_seconds`. Off by default. See
+    /// [`crate::window_primer`].
+    #[serde(default)]
+    pub prime_windows: bool,
     /// Persist the pool's per-account quota state to this file so a restart
     /// warm-starts from the last observed utilization instead of an empty pool.
     /// Unset disables persistence (the default). The file is a best-effort
@@ -303,6 +310,7 @@ impl Default for PoolConfig {
             sort_by_reset: false,
             sort_by_weekly_reset: false,
             usage_refresh_seconds: None,
+            prime_windows: false,
             state_path: None,
             ramp_initial_concurrency: None,
             reprobe_seconds: None,

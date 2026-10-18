@@ -103,6 +103,10 @@ default_provider = "anthropic" # provider for any model with no route -> pass-th
 #                                    APIs for refreshable Claude, Codex, and
 #                                    Antigravity accounts;
 #                                    values below 60 clamp to 60, fixed at boot
+# prime_windows = false          # needs usage_refresh_seconds: send each idle
+#                                    Claude/Codex account one tiny request
+#                                    (at most 1 per 5h) so its 5-hour window
+#                                    starts early and resets sooner
 # state_path = "shunt-state.json"  # (disabled by default) persist per-account
 #                                    quota to this file so a restart warm-starts
 #                                    from the last observed utilization; a
