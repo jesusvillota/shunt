@@ -6,24 +6,27 @@
 //! the pool fails over to it, and its reset lands later than it would have if
 //! the window had already been running. The primer starts every idle window
 //! as soon as it is seen: when the pool knows no future 5-hour reset for a
-//! `claude_oauth` or ChatGPT-backend `chatgpt_oauth` account, it sends that
-//! one account the smallest real request (Haiku / GPT-6 Luna, low effort, a
-//! one-word prompt) signed with that account's own credential, so it cannot
-//! land on any other account. The response's quota headers are fed to the
-//! pool, which then knows the new reset and stops treating the window as idle.
+//! `claude_oauth` or ChatGPT-backend `chatgpt_oauth` account, the primer asks
+//! that account's usage API, and only when it confirms the window is idle does
+//! it send that one account the smallest real request (Haiku / GPT-6 Luna, low
+//! effort, a one-word prompt) signed with that account's own credential, so it
+//! cannot land on any other account. The usage check matters because the pool
+//! can lack a reset for a running window: after a restart, or for Codex, whose
+//! usage poll does not adopt reset times. A failed check sends nothing. The
+//! response's quota headers are fed to the pool.
 //!
 //! Hard limit: at most one primer request per physical account per 5 hours,
 //! counted from the attempt, whether it succeeded or not.
 
 use std::{
     collections::HashMap,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::json;
 
 use crate::{
-    accounts::{account_key, AccountKey, StoreFamily},
+    accounts::{account_key, AccountKey, StoreFamily, UsageWindow},
     adapters::responses::request::{CODEX_CLIENT_VERSION, CODEX_USER_AGENT},
     auth::{
         self, claude, claude::auth::CLAUDE_CLI_USER_AGENT, codex, resolve_chatgpt_account,
@@ -33,7 +36,10 @@ use crate::{
     server::AppState,
 };
 
-const WINDOW: Duration = Duration::from_secs(5 * 60 * 60);
+const WINDOW: u64 = 5 * 60 * 60;
+/// A reported reset at least this close to a full window away reads as idle;
+/// see [`running_reset`].
+const FRESH_WINDOW_SLACK: u64 = 120;
 const CLAUDE_MODEL: &str = "claude-haiku-5-5";
 const CODEX_MODEL: &str = "gpt-6-luna";
 /// Claude subscription OAuth answers a bare 429 to a request that does not
@@ -41,11 +47,23 @@ const CODEX_MODEL: &str = "gpt-6-luna";
 /// same identity system block and headers Claude Code does.
 const CLAUDE_CODE_IDENTITY: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
 
-/// Last primer attempt per physical account. The key carries the store family
-/// and identity, so two provider aliases of one account share one entry.
+/// Unix time before which an account is not checked again: 5 hours after a
+/// primer attempt, or the reset of a window the usage API showed running. The
+/// key carries the store family and identity, so two provider aliases of one
+/// account share one entry.
 #[derive(Default)]
 pub(crate) struct WindowPrimer {
-    attempted: HashMap<AccountKey, Instant>,
+    next_check: HashMap<AccountKey, u64>,
+}
+
+/// What one account's check did.
+enum Outcome {
+    /// A primer request was sent (whatever its result).
+    Sent,
+    /// The usage API showed the window running until this reset.
+    Running(u64),
+    /// No credential or no usage answer; nothing sent, check again next tick.
+    Unknown,
 }
 
 impl WindowPrimer {
@@ -104,41 +122,72 @@ impl WindowPrimer {
                 {
                     continue;
                 }
-                if !self.claim(account_key(name, account), Instant::now()) {
+                let key = account_key(name, account);
+                if self.next_check.get(&key).is_some_and(|at| now < *at) {
                     continue;
                 }
                 let base_url = provider.base_url.trim_end_matches('/');
-                match family {
+                let outcome = match family {
                     StoreFamily::Claude => prime_claude(&state, name, base_url, account).await,
                     _ => prime_codex(&state, name, base_url, account).await,
-                }
+                };
+                self.record(key, outcome, now);
             }
         }
     }
 
-    /// Record an attempt for `key` unless one happened within the last window.
-    fn claim(&mut self, key: AccountKey, now: Instant) -> bool {
-        if self
-            .attempted
-            .get(&key)
-            .is_some_and(|last| now.duration_since(*last) < WINDOW)
-        {
-            return false;
-        }
-        self.attempted.insert(key, now);
-        true
+    fn record(&mut self, key: AccountKey, outcome: Outcome, now: u64) {
+        match outcome {
+            Outcome::Sent => self.next_check.insert(key, now + WINDOW),
+            Outcome::Running(reset) => self.next_check.insert(key, reset),
+            Outcome::Unknown => None,
+        };
     }
 }
 
-async fn prime_claude(state: &AppState, provider: &str, base_url: &str, account: &AccountConfig) {
+/// The reset of a running 5-hour window, or `None` when the usage API shows it
+/// idle. A reset a full window away also reads as idle: a never-used window
+/// may report a reset that moves with the clock, and a window that really
+/// started in the last two minutes costs at most one extra tiny request.
+fn running_reset(five_hour: Option<&UsageWindow>, now: u64) -> Option<u64> {
+    five_hour
+        .and_then(|window| window.resets_at)
+        .filter(|reset| *reset > now && *reset < now + WINDOW - FRESH_WINDOW_SLACK)
+}
+
+/// Turn a usage-API answer into "send" (`None`) or a non-sending outcome.
+fn idle_check(
+    provider: &str,
+    account: &AccountConfig,
+    usage: anyhow::Result<crate::accounts::UsageSnapshot>,
+) -> Option<Outcome> {
+    match usage {
+        Ok(usage) => running_reset(usage.five_hour.as_ref(), unix_now()).map(Outcome::Running),
+        Err(error) => {
+            tracing::debug!(provider, account = %account.name, %error, "window primer: usage check failed; not priming");
+            Some(Outcome::Unknown)
+        }
+    }
+}
+
+async fn prime_claude(
+    state: &AppState,
+    provider: &str,
+    base_url: &str,
+    account: &AccountConfig,
+) -> Outcome {
     let access_token = match resolve_claude_account(account, &state.http_client).await {
         Ok(Credential::ClaudeOauth { access_token, .. }) => access_token,
-        Ok(_) => return,
+        Ok(_) => return Outcome::Unknown,
         Err(error) => {
             tracing::debug!(provider, account = %account.name, error = %error.message, "window primer: failed to resolve credential");
-            return;
+            return Outcome::Unknown;
         }
     };
+    let usage = claude::usage::fetch_usage(&state.http_client, base_url, &access_token).await;
+    if let Some(outcome) = idle_check(provider, account, usage) {
+        return outcome;
+    }
     let response = state
         .http_client
         .post(format!("{base_url}/v1/messages"))
@@ -168,9 +217,15 @@ async fn prime_claude(state: &AppState, provider: &str, base_url: &str, account:
             tracing::warn!(provider, account = %account.name, %error, "window primer: request failed")
         }
     }
+    Outcome::Sent
 }
 
-async fn prime_codex(state: &AppState, provider: &str, base_url: &str, account: &AccountConfig) {
+async fn prime_codex(
+    state: &AppState,
+    provider: &str,
+    base_url: &str,
+    account: &AccountConfig,
+) -> Outcome {
     let (access_token, account_id) = match resolve_chatgpt_account(account, &state.http_client)
         .await
     {
@@ -178,12 +233,17 @@ async fn prime_codex(state: &AppState, provider: &str, base_url: &str, account: 
             access_token,
             account_id,
         }) => (access_token, account_id),
-        Ok(_) => return,
+        Ok(_) => return Outcome::Unknown,
         Err(error) => {
             tracing::debug!(provider, account = %account.name, error = %error.detail, "window primer: failed to resolve credential");
-            return;
+            return Outcome::Unknown;
         }
     };
+    let usage =
+        codex::usage::fetch_usage(&state.http_client, base_url, &access_token, &account_id).await;
+    if let Some(outcome) = idle_check(provider, account, usage) {
+        return outcome;
+    }
     // The ChatGPT backend serves only streamed, unstored turns.
     let response = state
         .http_client
@@ -216,6 +276,7 @@ async fn prime_codex(state: &AppState, provider: &str, base_url: &str, account: 
             tracing::warn!(provider, account = %account.name, %error, "window primer: request failed")
         }
     }
+    Outcome::Sent
 }
 
 /// Read the body to the end (so the turn is not cancelled mid-stream) and log
@@ -311,12 +372,39 @@ mod tests {
         AppState::new(config, reqwest::Client::new()).unwrap()
     }
 
-    /// Accounts A and B already have a running window; C has none. Only C is
-    /// primed, with its own token, and a second run sends nothing more.
+    async fn mount_usage(server: &MockServer, token: &str, response: ResponseTemplate, times: u64) {
+        Mock::given(method("GET"))
+            .and(path("/api/oauth/usage"))
+            .and(header("authorization", format!("Bearer {token}").as_str()))
+            .respond_with(response)
+            .expect(times)
+            .mount(server)
+            .await;
+    }
+
+    /// Fails the test on any POST no earlier mock matched.
+    async fn forbid_other_posts(server: &MockServer) {
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .with_priority(10)
+            .expect(0)
+            .mount(server)
+            .await;
+    }
+
+    fn idle_usage() -> ResponseTemplate {
+        ResponseTemplate::new(200)
+            .set_body_json(json!({"five_hour": {"utilization": 0.0, "resets_at": null}}))
+    }
+
+    /// Accounts A and B already have a running window in the pool; C has
+    /// none, and its usage API confirms it idle. Only C is primed, with its
+    /// own token, and a second run sends nothing more.
     #[tokio::test]
     async fn primes_only_the_idle_account_once() {
         let reset = unix_now() + 3_600;
         let server = MockServer::start().await;
+        mount_usage(&server, "token-c", idle_usage(), 1).await;
         Mock::given(method("POST"))
             .and(path("/v1/messages"))
             .and(header("authorization", "Bearer token-c"))
@@ -332,13 +420,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        // Any other request (e.g. to A or B) fails the test.
-        Mock::given(method("POST"))
-            .respond_with(ResponseTemplate::new(500))
-            .with_priority(10)
-            .expect(0)
-            .mount(&server)
-            .await;
+        forbid_other_posts(&server).await;
 
         let files: Vec<_> = ["a", "b", "c"]
             .iter()
@@ -377,7 +459,43 @@ mod tests {
         for file in files {
             let _ = std::fs::remove_file(file);
         }
-        // Dropping `server` verifies `.expect(1)`: exactly one request, to C.
+        // Dropping `server` verifies every `.expect`: one request, to C.
+    }
+
+    /// The pool knows no reset (as after a restart), but the usage API shows
+    /// the window running: nothing is sent, and the usage API is not asked
+    /// again before that reset.
+    #[tokio::test]
+    async fn skips_a_window_the_usage_api_shows_running() {
+        let reset = unix_now() + 3_600;
+        let server = MockServer::start().await;
+        let running = ResponseTemplate::new(200).set_body_json(json!({
+            "five_hour": {"utilization": 12.0, "resets_at": crate::auth::shared::format_iso8601(UNIX_EPOCH + Duration::from_secs(reset))}
+        }));
+        mount_usage(&server, "token-r", running, 1).await;
+        forbid_other_posts(&server).await;
+        let file = credential_file("r", "token-r");
+        let state = state(server.uri(), vec![account("r", &file)], true);
+
+        let mut primer = WindowPrimer::default();
+        primer.run(&state).await;
+        primer.run(&state).await;
+        let _ = std::fs::remove_file(file);
+    }
+
+    /// A failed usage check sends nothing and is retried on the next run.
+    #[tokio::test]
+    async fn sends_nothing_when_the_usage_check_fails() {
+        let server = MockServer::start().await;
+        mount_usage(&server, "token-f", ResponseTemplate::new(429), 2).await;
+        forbid_other_posts(&server).await;
+        let file = credential_file("f", "token-f");
+        let state = state(server.uri(), vec![account("f", &file)], true);
+
+        let mut primer = WindowPrimer::default();
+        primer.run(&state).await;
+        primer.run(&state).await;
+        let _ = std::fs::remove_file(file);
     }
 
     #[tokio::test]
@@ -396,12 +514,37 @@ mod tests {
     }
 
     #[test]
-    fn claim_allows_one_attempt_per_window() {
+    fn running_reset_reads_idle_and_running_windows() {
+        let now = 1_000_000;
+        let window = |resets_at| UsageWindow {
+            utilization: 0.0,
+            resets_at,
+        };
+        assert_eq!(running_reset(None, now), None, "no window reported");
+        assert_eq!(running_reset(Some(&window(None)), now), None, "no reset");
+        assert_eq!(
+            running_reset(Some(&window(Some(now))), now),
+            None,
+            "reset passed"
+        );
+        assert_eq!(
+            running_reset(Some(&window(Some(now + WINDOW))), now),
+            None,
+            "a reset a full window away moves with the clock"
+        );
+        assert_eq!(
+            running_reset(Some(&window(Some(now + 3_600))), now),
+            Some(now + 3_600)
+        );
+    }
+
+    #[test]
+    fn a_sent_primer_blocks_the_account_for_one_window() {
         let mut primer = WindowPrimer::default();
         let key = account_key("p", &AccountConfig::default());
-        let start = Instant::now();
-        assert!(primer.claim(key.clone(), start));
-        assert!(!primer.claim(key.clone(), start + WINDOW - Duration::from_secs(1)));
-        assert!(primer.claim(key, start + WINDOW));
+        primer.record(key.clone(), Outcome::Sent, 100);
+        assert_eq!(primer.next_check.get(&key), Some(&(100 + WINDOW)));
+        primer.record(key.clone(), Outcome::Unknown, 200);
+        assert_eq!(primer.next_check.get(&key), Some(&(100 + WINDOW)));
     }
 }

@@ -271,7 +271,7 @@ headers = { "x-api-key" = "..." }
 | `sort_by_reset` | `false` | 按配额重置时间最早排序(升序;未知重置排最后)可用账户,而不是按燃烧速率余量排序。可在不编辑 `shunt.toml` 的情况下,通过管理仪表盘或 `PATCH /admin/api/pool` 在运行时切换 —— 参见[账户池控制](/zh-cn/guides/pool-account-controls/) |
 | `sort_by_weekly_reset` | `false` | 按管理性周(`7d`,Fable 模型为 `7d_oi`)重置时间最早排序(升序;未知周重置排最后)可用账户,而不是按燃烧速率余量排序。与 `sort_by_reset` 同时设置时按周顺序优先。可在不编辑 `shunt.toml` 的情况下,通过 `PATCH /admin/api/pool` 在运行时切换 —— 参见[账户池控制](/zh-cn/guides/pool-account-controls/) |
 | `usage_refresh_seconds` | 禁用(`0`/未设置) | Claude `GET /api/oauth/usage`、Codex `GET /wham/usage` 和 Antigravity agy `/usage` / HTTP `POST :retrieveUserQuotaSummary` 的轮询间隔(秒);低于 60 的正值会向上取到 60 秒下限 |
-| `prime_windows` | `false` | 提前启动空闲的 5 小时窗口:每次用量轮询时,对未知未来 5 小时重置时间的 `claude_oauth` 或 ChatGPT 后端 `chatgpt_oauth` 账号,用该账号自己的凭据发送一个极小的请求(`claude-haiku-5-5` 或 `gpt-6-luna`,低 effort,一词提示)——每个账号每 5 小时最多一次。需要 `usage_refresh_seconds`;每次轮询都会读取,因此重新加载即可开关。已暂停或需要重新登录的账号会被跳过 |
+| `prime_windows` | `false` | 提前启动空闲的 5 小时窗口:每次用量轮询时,对未知未来 5 小时重置时间的 `claude_oauth` 或 ChatGPT 后端 `chatgpt_oauth` 账号,仅在其用量 API 确认窗口空闲时,用该账号自己的凭据发送一个极小的请求(`claude-haiku-5-5` 或 `gpt-6-luna`,低 effort,一词提示)——每个账号每 5 小时最多一次。需要 `usage_refresh_seconds`;每次轮询都会读取,因此重新加载即可开关。已暂停或需要重新登录的账号会被跳过 |
 | `state_path` | 未设置 | 用于持久化池中按账户配额状态的文件;重启时从最后观测到的使用率热启动,而非从空池开始。未设置则禁用持久化(默认) |
 | `ramp_initial_concurrency` | 禁用(`0`/未设置) | 风暴控制:对刚开始承接流量的账户身份的初始并发准入额度。`0` 或未设置则禁用准入门控 |
 | `reprobe_seconds` | 只要该表存在就是 `900`;`0` 则禁用 | 对陈旧的近配额 Codex/ChatGPT 账户进行机会性重新探测的间隔(秒);低于 60 的正值会向上取到 60 秒下限。`0` 禁用重新探测;若 `[server.pool]` 本身不存在,无论该值为何都禁用重新探测(#135 之前的行为)。非 WebSocket 的 outbound Responses 选择和可选的 inbound Codex HTTP 端点会保留重新探测;WebSocket 启用时的 outbound 选择会禁用重新探测 |

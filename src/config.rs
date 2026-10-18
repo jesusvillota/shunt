@@ -255,7 +255,8 @@ pub struct PoolConfig {
     pub usage_refresh_seconds: Option<u64>,
     /// Start each idle 5-hour window early: on every usage-poller tick, a
     /// `claude_oauth` or ChatGPT-backend `chatgpt_oauth` account with no known
-    /// future 5-hour reset gets one tiny request (at most one per account per
+    /// future 5-hour reset, once its usage API confirms the window idle, gets
+    /// one tiny request (at most one per account per
     /// 5 hours). Needs `usage_refresh_seconds`. Off by default. See
     /// [`crate::window_primer`].
     #[serde(default)]
