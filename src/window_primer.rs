@@ -114,9 +114,13 @@ impl WindowPrimer {
             let snapshots = state.accounts.snapshot(name, &accounts, None, Some(pool));
             let now = unix_now();
             for (account, snapshot) in accounts.iter().zip(snapshots) {
-                // A future reset means the window is already running. Paused or
-                // relogin-pending accounts are left alone.
-                if snapshot.reset_5h.is_some_and(|reset| reset > now)
+                // A reset inside the window means it is already running (a
+                // reset a full window away reads as idle, as in
+                // [`running_reset`]). Paused or relogin-pending accounts are
+                // left alone.
+                if snapshot
+                    .reset_5h
+                    .is_some_and(|reset| is_running(reset, now))
                     || snapshot.paused
                     || snapshot.needs_relogin
                 {
@@ -152,7 +156,11 @@ impl WindowPrimer {
 fn running_reset(five_hour: Option<&UsageWindow>, now: u64) -> Option<u64> {
     five_hour
         .and_then(|window| window.resets_at)
-        .filter(|reset| *reset > now && *reset < now + WINDOW - FRESH_WINDOW_SLACK)
+        .filter(|reset| is_running(*reset, now))
+}
+
+fn is_running(reset: u64, now: u64) -> bool {
+    reset > now && reset < now + WINDOW - FRESH_WINDOW_SLACK
 }
 
 /// Turn a usage-API answer into "send" (`None`) or a non-sending outcome.
@@ -460,6 +468,35 @@ mod tests {
             let _ = std::fs::remove_file(file);
         }
         // Dropping `server` verifies every `.expect`: one request, to C.
+    }
+
+    /// A reset a full window away is not a running window (see
+    /// [`running_reset`]): the pool check must not skip such an account.
+    #[tokio::test]
+    async fn primes_an_account_whose_pool_reset_is_a_full_window_away() {
+        let server = MockServer::start().await;
+        mount_usage(&server, "token-m", idle_usage(), 1).await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .and(header("authorization", "Bearer token-m"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"content": []})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let file = credential_file("m", "token-m");
+        let accounts = vec![account("m", &file)];
+        let state = state(server.uri(), accounts.clone(), true);
+        let mut moving = HeaderMap::new();
+        moving.insert(
+            "anthropic-ratelimit-unified-5h-reset",
+            (unix_now() + WINDOW).to_string().parse().unwrap(),
+        );
+        state
+            .accounts
+            .note_quota("claude-pool", &accounts[0], &moving);
+
+        WindowPrimer::default().run(&state).await;
+        let _ = std::fs::remove_file(file);
     }
 
     /// The pool knows no reset (as after a restart), but the usage API shows
