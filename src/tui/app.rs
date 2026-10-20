@@ -387,6 +387,19 @@ impl App {
         self.on_weekly_reset_set(provider, false);
     }
 
+    /// The ranking write failed: the gateway never applied the optimistic
+    /// order, so stop showing it. The refresh that follows restores the
+    /// authoritative priorities.
+    pub fn on_ranks_failed(&mut self, provider: &str) {
+        if self
+            .overlay
+            .as_ref()
+            .is_some_and(|o| o.provider == provider)
+        {
+            self.overlay = None;
+        }
+    }
+
     pub fn current_notice(&self) -> Option<&Notice> {
         self.notice
             .as_ref()
