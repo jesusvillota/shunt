@@ -256,6 +256,7 @@ fn test_config_with_pool_state(
 }
 
 async fn start_gateway_with(mut config: Config) -> TestGateway {
+    common::warm_token_encoder();
     config.server.bind = "127.0.0.1:0".to_string();
     let listener = tokio::net::TcpListener::bind(config.server.bind_addr().unwrap())
         .await
