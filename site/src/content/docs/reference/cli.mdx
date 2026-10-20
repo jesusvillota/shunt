@@ -18,7 +18,7 @@ Text output has one section per provider and one line per account: name, availab
 
 ## `shunt models`
 
-List the models of three CLI platforms, each marked on or off: `codex` (from `codex debug models`), `opencode` (from `opencode models`) and `agy` (the `…-via-antigravity` entries of `[[models]]`). The lists are read live on every call. The command is in the default build, needs no running gateway, and needs `codex` and `opencode` on `PATH`.
+List the models of three CLI platforms, each marked on or off: `codex` (from `codex debug models`), `opencode` (from `opencode models`) and `agy` (the `…-via-antigravity` entries of `[[models]]`, minus those whose route `upstream_model` is missing from `agy models`; when `agy models` fails, all of them). The lists are read live on every call. The command is in the default build, needs no running gateway, and needs `codex` and `opencode` on `PATH`.
 
 ```bash
 shunt models
