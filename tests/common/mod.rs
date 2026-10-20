@@ -154,3 +154,11 @@ impl wiremock::Match for BodyModelIs {
         body.get("model").and_then(serde_json::Value::as_str) == Some(self.0)
     }
 }
+
+/// Builds the bundled o200k_base encoder now, so the first streaming turn of a
+/// test does not pay for it inside the estimate's one-second production bound
+/// (issues #36, #38). Under concurrent compilation a cold build can outlast
+/// that bound and seed `input_tokens = 0`; the bound itself stays unchanged.
+pub fn warm_token_encoder() {
+    shunt::count_tokens::count_input_tokens(br#"{"messages":[{"role":"user","content":"warm"}]}"#);
+}
