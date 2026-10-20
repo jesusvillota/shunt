@@ -268,6 +268,27 @@ fn weekly_reset_to_custom_starts_from_the_live_order() {
 }
 
 #[test]
+fn a_failed_ranking_write_drops_the_optimistic_overlay() {
+    let mut app = custom_app();
+    let authoritative = app.snapshot.clone();
+    app.on_key(key('j'));
+    app.on_key(key('j'));
+    app.on_key(key('j')); // account b (rank 2)
+    assert!(matches!(app.on_key(key('K')), Effect::SetRanks { .. }));
+    assert!(app.overlay.is_some());
+
+    app.on_ranks_failed("claude");
+    app.on_poll(Ok(authoritative));
+    assert!(app.overlay.is_none());
+    let priorities: Vec<_> = app.snapshot.providers[0]
+        .rows
+        .iter()
+        .map(|r| r.account.priority)
+        .collect();
+    assert_eq!(priorities, [Some(1), Some(2), Some(3)]);
+}
+
+#[test]
 fn balanced_to_weekly_reset_uses_the_pool_api_without_writing_priorities() {
     let mut app = claude(vec![acct("a", None), acct("b", None)]);
     app.on_key(key('j'));

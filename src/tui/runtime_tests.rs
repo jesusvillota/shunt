@@ -190,3 +190,22 @@ async fn failed_config_edit_does_not_change_the_global_pool_setting() {
     server.verify().await;
     std::fs::remove_dir_all(config.parent().unwrap()).unwrap();
 }
+
+#[tokio::test]
+async fn failed_ranking_write_tells_the_app_to_drop_its_overlay() {
+    let server = MockServer::start().await;
+    let config = temp_config();
+    std::fs::write(&config, "invalid TOML [").unwrap();
+    let (ctx, mut rx) = context(&server, Some(config.clone()));
+    perform(
+        &ctx,
+        Effect::SetRanks {
+            provider: "claude".into(),
+            ranks: vec![("a".into(), 1)],
+            pool_names: vec!["a".into()],
+        },
+    );
+    assert!(matches!(next(&mut rx).await, Msg::RanksFailed(name) if name == "claude"));
+    assert!(matches!(next(&mut rx).await, Msg::Notice(Notice::Error(_))));
+    std::fs::remove_dir_all(config.parent().unwrap()).unwrap();
+}

@@ -61,6 +61,8 @@ enum Msg {
     Notice(Notice),
     WeeklyResetSet(String, bool),
     RanksCleared(String),
+    /// A ranking write failed; drop the optimistic order.
+    RanksFailed(String),
     ModelsOpened(crate::models_prefs::ModelPrefs),
     ModelsLoaded(
         String,
@@ -261,7 +263,10 @@ fn perform(ctx: &Ctx, effect: Effect) {
                     Ok(path) => {
                         Notice::Info(format!("{provider}: ranking saved to {}", file_name(&path)))
                     }
-                    Err(e) => Notice::Error(format!("{e:#}")),
+                    Err(e) => {
+                        let _ = ctx.tx.send(Msg::RanksFailed(provider));
+                        Notice::Error(format!("{e:#}"))
+                    }
                 });
                 ctx.refresh_soon(true);
             });
@@ -583,6 +588,10 @@ async fn event_loop(
             }
             Msg::RanksCleared(provider) => {
                 app.on_ranks_cleared(&provider);
+                Effect::None
+            }
+            Msg::RanksFailed(provider) => {
+                app.on_ranks_failed(&provider);
                 Effect::None
             }
             Msg::AddStarted(result) => {
