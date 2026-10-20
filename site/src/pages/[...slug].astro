@@ -1,5 +1,5 @@
 ---
-import { render, type CollectionEntry } from "astro:content";
+import { getCollection, render, type CollectionEntry } from "astro:content";
 import DocsLayout from "../layouts/DocsLayout.astro";
 import {
   getBreadcrumbs,
@@ -86,8 +86,15 @@ const prevNext = await getPrevNext(currentSlug, {
   sidebarTree: sidebar === false ? [] : sidebar,
   overrides: { prev: entry.data.prev, next: entry.data.next },
 });
+// A section segment (`/guides`) only links when a page lives there; the docs
+// have no section landing pages, so those crumbs render as plain text.
+const docRoutes = new Set(
+  (await getCollection("docs")).map(({ id }) => `/${id.replace(/(^|\/)index$/, "")}`.replace(/\/$/, "") || "/"),
+);
 const breadcrumbs = locale === "" && !fallback
-  ? await getBreadcrumbs(currentSlug, { collection: entry.collection })
+  ? (await getBreadcrumbs(currentSlug, { collection: entry.collection })).map((crumb) =>
+      crumb.href && !docRoutes.has(crumb.href.replace(/\/$/, "") || "/") ? { label: crumb.label } : crumb,
+    )
   : [
       { label: locale === "" ? "Home" : LOCALES[locale].label, href: localizedPath(locale, "") },
       { label: entry.data.title },
@@ -98,7 +105,7 @@ const tocConfig = entry.data.tableOfContents;
 const toc = tocOn && tocConfig !== false ? getTOC(headings, tocConfig) : false;
 const englishSlug = stripLocalePrefix(entry.id) === "index" ? "" : stripLocalePrefix(entry.id);
 const markdownEntryId = fallback ? englishSlug : entry.id;
-const markdownPath = markdownEntryId ? `/${markdownEntryId}/index.md` : "/index.md";
+const markdownPath = markdownEntryId && markdownEntryId !== "index" ? `/${markdownEntryId}/index.md` : "/index.md";
 const markdownUrl = Astro.site ? new URL(markdownPath, Astro.site).href : markdownPath;
 const socialImage = locale === "" && !fallback
   ? entry.data.socialImage ?? `/og/${entry.id}.png`
