@@ -2,9 +2,9 @@
 //!
 //! Queried fresh on every call, never compiled in: `codex debug models`,
 //! `opencode models`, and for `agy` the `[[models]]` the gateway serves as
-//! `…-via-antigravity`. These shell out, so call them from `shunt tui` or
-//! `shunt models` (a normal login shell), not from the launchd daemon whose
-//! `PATH` is minimal.
+//! `…-via-antigravity` whose upstream model `agy models` still lists. These
+//! shell out, so call them from `shunt tui` or `shunt models` (a normal login
+//! shell), not from the launchd daemon whose `PATH` is minimal.
 
 use std::{
     io::Read,
@@ -160,7 +160,14 @@ pub fn fetch(platform: &str, config: Option<&Path>) -> Result<Vec<String>, Strin
                 || crate::config::Config::load(config),
             )
             .map_err(|e| e.to_string())?;
-            Ok(agy_ids(config.models.iter().map(|m| m.id.as_str())))
+            let ids = agy_ids(config.models.iter().map(|m| m.id.as_str()));
+            // ponytail: checks the default `agy` login only; a pooled account
+            // with a different catalog is not consulted.
+            match run(&["agy", "models"]) {
+                Ok(catalog) => Ok(served_agy_ids(ids, &config.routes, &catalog)),
+                // An unreachable catalog must not hide every configured model.
+                Err(_) => Ok(ids),
+            }
         }
         other => Err(format!("unknown platform '{other}'")),
     }
@@ -191,6 +198,38 @@ pub fn parse_opencode(text: &str) -> Vec<String> {
 pub fn agy_ids<'a>(ids: impl Iterator<Item = &'a str>) -> Vec<String> {
     ids.filter(|id| id.ends_with(AGY_SUFFIX))
         .map(String::from)
+        .collect()
+}
+
+/// Drop configured ids whose routed upstream model the live `agy models`
+/// catalog no longer lists: the backend answers those with `404 Requested
+/// entity was not found`. Ids without an exact route, and an empty catalog,
+/// are kept, since neither proves the model is gone.
+pub fn served_agy_ids(
+    ids: Vec<String>,
+    routes: &[crate::config::RouteConfig],
+    catalog: &str,
+) -> Vec<String> {
+    let models = crate::adapters::antigravity::models::parse_models(catalog);
+    if models.is_empty() {
+        return ids;
+    }
+    // A route may name a catalog row (`gemini-3.8-flash-high`) or a bare
+    // model shunt fills the effort in for (`gemini-3.8-flash`).
+    let served = |upstream: &str| {
+        models.contains_key(upstream)
+            || catalog
+                .lines()
+                .any(|line| line.split_whitespace().next() == Some(upstream))
+    };
+    ids.into_iter()
+        .filter(|id| {
+            routes
+                .iter()
+                .find(|route| &route.model == id)
+                .and_then(|route| route.upstream_model.as_deref())
+                .is_none_or(served)
+        })
         .collect()
 }
 
@@ -266,6 +305,53 @@ mod tests {
             parse_opencode(text),
             ["opencode/big-pickle", "opencode/beam-free"]
         );
+    }
+
+    #[test]
+    fn agy_drops_ids_the_live_catalog_no_longer_serves() {
+        let route = |model: &str, upstream: Option<&str>| crate::config::RouteConfig {
+            model: model.into(),
+            provider: "antigravity".into(),
+            upstream_model: upstream.map(String::from),
+            effort: None,
+            service_tier: None,
+        };
+        let routes = [
+            route(
+                "claude-gemini-3.8-flash-low-via-antigravity",
+                Some("gemini-3.8-flash-low"),
+            ),
+            route(
+                "claude-gemini-3.8-flash-via-antigravity",
+                Some("gemini-3.8-flash"),
+            ),
+            route(
+                "claude-sonnet-4-6-via-antigravity",
+                Some("claude-sonnet-4-6"),
+            ),
+            route(
+                "claude-gemini-3.1-pro-high-via-antigravity",
+                Some("gemini-3.1-pro-high"),
+            ),
+        ];
+        let ids: Vec<String> = routes
+            .iter()
+            .map(|r| r.model.clone())
+            .chain(["claude-unrouted-via-antigravity".to_string()])
+            .collect();
+        let catalog = "gemini-3.8-flash-high\tGemini 3.8 Flash (High)\n\
+                       gemini-3.8-flash-low\tGemini 3.8 Flash (Low)\n\
+                       claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n";
+        assert_eq!(
+            served_agy_ids(ids.clone(), &routes, catalog),
+            [
+                "claude-gemini-3.8-flash-low-via-antigravity",
+                "claude-gemini-3.8-flash-via-antigravity",
+                "claude-sonnet-4-6-via-antigravity",
+                "claude-unrouted-via-antigravity",
+            ]
+        );
+        assert_eq!(served_agy_ids(ids.clone(), &routes, ""), ids);
     }
 
     #[test]

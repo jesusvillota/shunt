@@ -18,7 +18,7 @@ shunt pool --url http://127.0.0.1:3001 --json
 
 ## `shunt models`
 
-3 つの CLI プラットフォームのモデルを ON/OFF 付きで一覧表示します。`codex`（`codex debug models`）、`opencode`（`opencode models`）、`agy`（`[[models]]` のうち `…-via-antigravity` のもの）です。一覧は呼び出しのたびにリアルタイムで読み取ります。既定のビルドに含まれ、実行中のゲートウェイは不要で、`codex` と `opencode` が `PATH` 上に必要です。
+3 つの CLI プラットフォームのモデルを ON/OFF 付きで一覧表示します。`codex`（`codex debug models`）、`opencode`（`opencode models`）、`agy`（`[[models]]` のうち `…-via-antigravity` のもの。ルートの `upstream_model` が `agy models` にないものは除きます。`agy models` が失敗したときはすべて表示します）です。一覧は呼び出しのたびにリアルタイムで読み取ります。既定のビルドに含まれ、実行中のゲートウェイは不要で、`codex` と `opencode` が `PATH` 上に必要です。
 
 ```bash
 shunt models

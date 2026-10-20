@@ -18,7 +18,7 @@ shunt pool --url http://127.0.0.1:3001 --json
 
 ## `shunt models`
 
-세 CLI 플랫폼의 모델을 켜짐/꺼짐 표시와 함께 나열합니다. `codex`(`codex debug models`), `opencode`(`opencode models`), `agy`(`[[models]]` 중 `…-via-antigravity` 항목)입니다. 목록은 호출할 때마다 실시간으로 읽습니다. 기본 빌드에 포함되고, 실행 중인 게이트웨이는 필요 없으며, `codex`와 `opencode`가 `PATH`에 있어야 합니다.
+세 CLI 플랫폼의 모델을 켜짐/꺼짐 표시와 함께 나열합니다. `codex`(`codex debug models`), `opencode`(`opencode models`), `agy`(`[[models]]` 중 `…-via-antigravity` 항목. 라우트의 `upstream_model`이 `agy models`에 없는 항목은 제외하며, `agy models`가 실패하면 모두 표시합니다)입니다. 목록은 호출할 때마다 실시간으로 읽습니다. 기본 빌드에 포함되고, 실행 중인 게이트웨이는 필요 없으며, `codex`와 `opencode`가 `PATH`에 있어야 합니다.
 
 ```bash
 shunt models

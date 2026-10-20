@@ -18,7 +18,7 @@ shunt pool --url http://127.0.0.1:3001 --json
 
 ## `shunt models`
 
-列出三个 CLI 平台的模型，并标明开或关：`codex`（来自 `codex debug models`）、`opencode`（来自 `opencode models`）和 `agy`（`[[models]]` 中以 `…-via-antigravity` 结尾的条目）。每次调用都会实时读取列表。该命令包含在默认构建中，不需要正在运行的网关，但需要 `codex` 和 `opencode` 在 `PATH` 中。
+列出三个 CLI 平台的模型，并标明开或关：`codex`（来自 `codex debug models`）、`opencode`（来自 `opencode models`）和 `agy`（`[[models]]` 中以 `…-via-antigravity` 结尾的条目，但不包括路由 `upstream_model` 不在 `agy models` 中的条目；`agy models` 失败时全部列出）。每次调用都会实时读取列表。该命令包含在默认构建中，不需要正在运行的网关，但需要 `codex` 和 `opencode` 在 `PATH` 中。
 
 ```bash
 shunt models
