@@ -82,7 +82,7 @@ pub fn cursor_selected_images(req: &Value) -> Vec<CursorSelectedImage> {
 /// Whether a system-prompt line is an `x-anthropic-billing-header:` directive.
 /// Matched case-insensitively so a mixed-case header (e.g.
 /// `X-Anthropic-Billing-Header:`) can't slip through to the upstream prompt.
-fn is_billing_header_line(line: &str) -> bool {
+pub(crate) fn is_billing_header_line(line: &str) -> bool {
     const PREFIX: &str = "x-anthropic-billing-header:";
     line.get(..PREFIX.len())
         .is_some_and(|head| head.eq_ignore_ascii_case(PREFIX))

@@ -172,7 +172,9 @@ Antigravity 也提供 Claude 模型,但 shunt 尚未实现它们所需的请求�
 适配器以 Anthropic SSE 流式传输助手的**文本**和**thinking**,并原生桥接你客户端的
 **工具**:`tool_use` 变成 Gemini 的 `functionCall`,你的 `tool_result` 变成
 `functionResponse`,工具声明和工具选择也随之转换。**系统提示**
-变成 `systemInstruction`。Token 用量取自 Google 报告的计数 —— `promptTokenCount` 和
+变成 `systemInstruction`,但会去掉两行 Claude Code 内容,因为后端会对它们返回伪造的
+`429 RESOURCE_EXHAUSTED`:`x-anthropic-billing-header:` 行和
+`You are a Claude agent, built on Anthropic's Claude Agent SDK.` 身份行。Token 用量取自 Google 报告的计数 —— `promptTokenCount` 和
 `candidatesTokenCount` 映射到 `input_tokens` 和 `output_tokens`。
 
 **Thinking** 跟随请求:`thinking.type = "enabled"` 会用 `budget_tokens` 设置

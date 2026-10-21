@@ -193,7 +193,9 @@ it reaches the backend as written — so route only the Gemini-family slugs for 
 The adapter streams assistant **text** and **thinking** as Anthropic SSE, and bridges your client's
 **tools** natively: `tool_use` becomes a Gemini `functionCall`, your `tool_result` becomes a
 `functionResponse`, and tool declarations and tool choice are translated with it. **System prompts**
-become `systemInstruction`. Token usage is Google's reported count — `promptTokenCount` and
+become `systemInstruction`, minus two Claude Code lines the backend answers with a fake
+`429 RESOURCE_EXHAUSTED`: the `x-anthropic-billing-header:` line and the
+`You are a Claude agent, built on Anthropic's Claude Agent SDK.` identity line. Token usage is Google's reported count — `promptTokenCount` and
 `candidatesTokenCount` map to `input_tokens` and `output_tokens`.
 
 **Thinking** follows the request: `thinking.type = "enabled"` sets `thinkingConfig.thinkingBudget`

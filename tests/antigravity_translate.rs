@@ -43,6 +43,39 @@ fn test_antigravity_prompt_extraction() {
     assert!(prompt.contains("user: Now add tests."));
 }
 
+/// Issue #43: Antigravity answers a fake 429 to Claude Code's billing header
+/// and Agent SDK identity line, so both are dropped from the system prompt.
+#[test]
+fn test_antigravity_prompt_drops_claude_code_fingerprint() {
+    let req = json!({
+        "system": [
+            { "type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.304.cb0; cc_entrypoint=sdk-cli;" },
+            { "type": "text", "text": "You are a Claude agent, built on Anthropic's Claude Agent SDK." },
+            { "type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude.\nX-Anthropic-Billing-Header: mid-block\nKeep this." }
+        ],
+        "messages": [{ "role": "user", "content": "hi" }]
+    });
+
+    let prompt = extract_antigravity_prompt(&req);
+    assert!(!prompt
+        .to_ascii_lowercase()
+        .contains("x-anthropic-billing-header"));
+    assert!(!prompt.contains("Claude Agent SDK"));
+    assert!(
+        prompt.starts_with("You are Claude Code, Anthropic's official CLI for Claude.\nKeep this.")
+    );
+    assert!(prompt.ends_with("user: hi"));
+
+    let req = json!({
+        "system": "x-anthropic-billing-header: cc_version=1;\nYou are a helpful assistant.",
+        "messages": []
+    });
+    assert_eq!(
+        extract_antigravity_prompt(&req),
+        "You are a helpful assistant."
+    );
+}
+
 #[test]
 fn test_find_agy_binary_honors_env_override() {
     let fake_bin = std::env::temp_dir().join(format!("shunt-test-agy-{}", std::process::id()));

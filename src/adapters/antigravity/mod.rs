@@ -1069,19 +1069,22 @@ pub fn extract_antigravity_prompt(request: &Value) -> String {
     let mut parts = Vec::new();
 
     if let Some(sys) = request.get("system") {
-        if let Some(s) = sys.as_str() {
-            if !s.is_empty() {
-                parts.push(s.to_string());
-            }
-        } else if let Some(arr) = sys.as_array() {
-            for b in arr {
-                if b.get("type").and_then(Value::as_str) == Some("text") {
-                    if let Some(t) = b.get("text").and_then(Value::as_str) {
-                        parts.push(t.to_string());
-                    }
-                }
-            }
-        }
+        let texts: Vec<&str> = match sys.as_str() {
+            Some(s) => vec![s],
+            None => sys
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|b| b.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|b| b.get("text").and_then(Value::as_str))
+                .collect(),
+        };
+        parts.extend(
+            texts
+                .into_iter()
+                .map(crate::model::antigravity_request::strip_claude_code_fingerprint)
+                .filter(|t| !t.is_empty()),
+        );
     }
 
     if let Some(msgs) = request.get("messages").and_then(Value::as_array) {

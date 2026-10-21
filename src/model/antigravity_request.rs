@@ -8,7 +8,7 @@
 
 use std::collections::BTreeSet;
 
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 /// Client identity the Antigravity client sends on every request.
 const ANTIGRAVITY_USER_AGENT: &str = "antigravity";
@@ -58,6 +58,7 @@ pub fn wrap_antigravity_envelope(
 ) -> Value {
     let mut request = request;
     if let Some(object) = request.as_object_mut() {
+        strip_system_fingerprint(object);
         object.insert("sessionId".to_string(), json!(session_id));
     }
     json!({
@@ -68,6 +69,48 @@ pub fn wrap_antigravity_envelope(
         "requestId": request_id,
         "request": request
     })
+}
+
+/// Start of Claude Code's Agent SDK identity line; see
+/// [`strip_claude_code_fingerprint`].
+const AGENT_SDK_IDENTITY: &str = "You are a Claude agent, built on Anthropic's Claude Agent SDK";
+
+/// Drop the system-prompt lines Antigravity answers with a fake
+/// `429 RESOURCE_EXHAUSTED` ("check quota") instead of a reply: Claude Code's
+/// `x-anthropic-billing-header:` line and its Agent SDK identity sentence
+/// (issue #43). Each one alone reproduces the 429; other Claude and Anthropic
+/// identity lines (`You are Claude Code, Anthropic's official CLI for Claude.`)
+/// were accepted, so they stay.
+pub fn strip_claude_code_fingerprint(text: &str) -> String {
+    text.lines()
+        .filter(|line| {
+            let line = line.trim_start();
+            !crate::adapters::cursor::request::is_billing_header_line(line)
+                && !line.starts_with(AGENT_SDK_IDENTITY)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Apply [`strip_claude_code_fingerprint`] to every `systemInstruction` part,
+/// dropping parts it empties and the instruction itself when none remain.
+fn strip_system_fingerprint(request: &mut Map<String, Value>) {
+    let Some(parts) = request
+        .get_mut("systemInstruction")
+        .and_then(|system| system.get_mut("parts"))
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for part in parts.iter_mut() {
+        if let Some(text) = part.get("text").and_then(Value::as_str) {
+            part["text"] = json!(strip_claude_code_fingerprint(text));
+        }
+    }
+    parts.retain(|part| part.get("text").and_then(Value::as_str) != Some(""));
+    if parts.is_empty() {
+        request.remove("systemInstruction");
+    }
 }
 
 /// A fresh `requestId` for one Antigravity request, in the `agent-<uuid v4>`
@@ -612,6 +655,34 @@ mod tests {
         // The session id rides *inside* the inner request, not beside it.
         assert_eq!(wrapped["request"]["sessionId"], "-1234567890123456789");
         assert!(wrapped["request"].get("contents").is_some());
+    }
+
+    /// Issue #43: a Claude Code system prompt reached Antigravity with its
+    /// billing header and Agent SDK identity line, and got a fake 429.
+    #[test]
+    fn the_antigravity_envelope_drops_the_claude_code_fingerprint() {
+        let inner = crate::model::gemini_request::translate_request(&json!({
+            "model": "gemini-3.8-flash-low",
+            "system": [
+                { "type": "text", "text": "x-anthropic-billing-header: cc_version=2.1.304.cb0; cc_entrypoint=sdk-cli;" },
+                { "type": "text", "text": "You are a Claude agent, built on Anthropic's Claude Agent SDK." },
+                { "type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude.\nX-Anthropic-Billing-Header: mid-block\nKeep this." }
+            ],
+            "messages": [{ "role": "user", "content": "hi" }]
+        }))
+        .unwrap();
+        let wrapped = wrap_antigravity_envelope("m", "p", inner, "r", "s");
+        assert_eq!(
+            wrapped["request"]["systemInstruction"],
+            json!({ "parts": [{ "text": "You are Claude Code, Anthropic's official CLI for Claude.\nKeep this." }] })
+        );
+
+        let inner = json!({
+            "systemInstruction": { "parts": [{ "text": "x-anthropic-billing-header: cc_version=1;" }] },
+            "contents": []
+        });
+        let wrapped = wrap_antigravity_envelope("m", "p", inner, "r", "s");
+        assert!(wrapped["request"].get("systemInstruction").is_none());
     }
 
     #[test]
