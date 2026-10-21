@@ -253,6 +253,7 @@ async fn prime_codex(
         return outcome;
     }
     // The ChatGPT backend serves only streamed, unstored turns.
+    let sent_at = unix_now();
     let response = state
         .http_client
         .post(format!("{base_url}/codex/responses"))
@@ -278,7 +279,12 @@ async fn prime_codex(
             state
                 .accounts
                 .note_codex_quota(provider, account, response.headers());
-            log_outcome(provider, account, response).await;
+            if log_outcome(provider, account, response).await {
+                // The window starts with this request.
+                state
+                    .accounts
+                    .note_started_window(provider, account, sent_at + WINDOW);
+            }
         }
         Err(error) => {
             tracing::warn!(provider, account = %account.name, %error, "window primer: request failed")
@@ -290,7 +296,8 @@ async fn prime_codex(
 /// Read the body to the end (so the turn is not cancelled mid-stream) and log
 /// the result. The primer never marks an account unhealthy: a failure only
 /// means this window stays idle until the next attempt 5 hours later.
-async fn log_outcome(provider: &str, account: &AccountConfig, response: reqwest::Response) {
+/// Returns whether the request succeeded.
+async fn log_outcome(provider: &str, account: &AccountConfig, response: reqwest::Response) -> bool {
     let status = response.status();
     let body = response.bytes().await.unwrap_or_default();
     if status.is_success() {
@@ -299,6 +306,7 @@ async fn log_outcome(provider: &str, account: &AccountConfig, response: reqwest:
         let detail: String = String::from_utf8_lossy(&body).chars().take(200).collect();
         tracing::warn!(provider, account = %account.name, %status, %detail, "window primer: request rejected");
     }
+    status.is_success()
 }
 
 fn unix_now() -> u64 {
@@ -548,6 +556,73 @@ mod tests {
 
         WindowPrimer::default().run(&state).await;
         let _ = std::fs::remove_file(file);
+    }
+
+    /// The reply that starts a Codex window carries no reset header, so the
+    /// pool learns the reset from the time the primer request was sent.
+    #[tokio::test]
+    async fn a_primed_codex_window_gets_a_reset_without_reset_headers() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(codex::usage::USAGE_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "rate_limit": {"primary_window": {
+                    "used_percent": 0, "limit_window_seconds": 18000, "reset_at": null
+                }}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/codex/responses"))
+            .and(body_partial_json(json!({"model": CODEX_MODEL})))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-codex-primary-window-minutes", "300")
+                    .insert_header("x-codex-primary-used-percent", "0"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        forbid_other_posts(&server).await;
+
+        let payload = json!({
+            "exp": unix_now() + 3_600,
+            "https://api.openai.com/auth": {"chatgpt_account_id": "acct-x"}
+        });
+        let token = format!("x.{}.y", URL_SAFE_NO_PAD.encode(payload.to_string()));
+        let file =
+            std::env::temp_dir().join(format!("shunt-window-primer-codex-{}", std::process::id()));
+        std::fs::write(
+            &file,
+            json!({"auth_mode": "ChatGPT", "tokens": {"access_token": token, "account_id": "acct-x"}})
+                .to_string(),
+        )
+        .unwrap();
+        // The id the primer resolves from the token keys the pool entry.
+        let account = AccountConfig {
+            uuid: Some("acct-x".to_string()),
+            ..account("x", &file)
+        };
+        let mut config = Config::default();
+        config.server.pool = Some(PoolConfig {
+            prime_windows: true,
+            ..Default::default()
+        });
+        let codex = config.providers.get_mut("codex").unwrap();
+        codex.base_url = server.uri();
+        codex.accounts = vec![account.clone()];
+        let state = AppState::new(config, reqwest::Client::new()).unwrap();
+
+        let before = unix_now();
+        WindowPrimer::default().run(&state).await;
+        let reset = state.accounts.snapshot("codex", &[account], None, None)[0].reset_5h;
+        let _ = std::fs::remove_file(file);
+        assert!(
+            reset.is_some_and(|reset| (before + WINDOW..=unix_now() + WINDOW).contains(&reset)),
+            "reset {reset:?} is 5 hours after the primer request"
+        );
     }
 
     #[test]
