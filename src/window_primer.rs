@@ -358,6 +358,9 @@ mod tests {
 
     fn state(base_url: String, accounts: Vec<AccountConfig>, prime_windows: bool) -> AppState {
         let mut config = Config::default();
+        // The built-in `codex` provider would scan the real account store and
+        // call chatgpt.com; prime only the mock provider below.
+        config.providers.remove("codex");
         config.server.pool = Some(PoolConfig {
             prime_windows,
             ..Default::default()
