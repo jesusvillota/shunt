@@ -1446,6 +1446,25 @@ impl AccountPool {
         self.mark_dirty();
     }
 
+    /// Record the reset of a 5-hour window the window primer just started,
+    /// unless a future reset is already known. The reply to a Codex request
+    /// that starts an idle window carries no usable reset (seen 2026-10-21: a
+    /// primed account kept no reset while wham/usage showed its window
+    /// running), and the wham poll does not adopt resets.
+    pub(crate) fn note_started_window(&self, provider: &str, account: &AccountConfig, reset: u64) {
+        {
+            let mut entries = self.entries.lock().expect("account health lock poisoned");
+            let quota = &mut self
+                .health_entry(&mut entries, account_key(provider, account))
+                .quota;
+            if quota.reset_5h.is_some_and(|known| known > unix_now()) {
+                return;
+            }
+            quota.reset_5h = Some(reset);
+        }
+        self.mark_dirty();
+    }
+
     /// Record the Codex backend's in-stream `codex.rate_limits` event. The
     /// websocket transport only sees quota headers on a fresh handshake, so a
     /// reused connection depends on this event for a per-turn observation. As
