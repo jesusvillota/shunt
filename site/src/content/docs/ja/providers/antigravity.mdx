@@ -193,7 +193,9 @@ Antigravity は Claude モデルも提供していますが、shunt はそれら
 アダプターはアシスタントの**テキスト**と**thinking** を Anthropic SSE としてストリーミングし、クライアントの
 **ツール**をネイティブにブリッジします: `tool_use` は Gemini の `functionCall` になり、あなたの `tool_result` は
 `functionResponse` になり、ツール宣言とツール選択もあわせて変換されます。**システムプロンプト**は
-`systemInstruction` になります。トークン使用量は Google が報告する値です — `promptTokenCount` と
+`systemInstruction` になります。ただし、バックエンドが偽の `429 RESOURCE_EXHAUSTED` を返す
+Claude Code の 2 行(`x-anthropic-billing-header:` 行と
+`You are a Claude agent, built on Anthropic's Claude Agent SDK.` の識別行)は取り除きます。トークン使用量は Google が報告する値です — `promptTokenCount` と
 `candidatesTokenCount` が `input_tokens` と `output_tokens` に対応します。
 
 **Thinking** はリクエストに従います: `thinking.type = "enabled"` は `budget_tokens`（デフォルト `1024`）から
