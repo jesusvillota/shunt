@@ -358,7 +358,7 @@ async fn chatgptweb_example_has_one_account_and_disabled_accounts_do_not_send() 
     let _vars = common::env_lock().await;
     let example = include_str!("../shunt.toml.example");
     let start = example.find("# [server.codex_endpoint]\n").unwrap();
-    let end = start + example[start..].find("\n[providers.codex]").unwrap();
+    let end = start + example[start..].find("\n\n").unwrap();
     let example: String = example[start..end]
         .lines()
         .filter_map(|line| line.strip_prefix("# "))
