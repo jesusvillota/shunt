@@ -141,6 +141,7 @@ flowchart TD
     TASK_004["TASK-004 Add the chatgptweb provider adapter (text only)"]
     TASK_005["TASK-005 Log in the ChatGPT account profiles"]
     TASK_006["TASK-006 Live smoke: Chat-mode turn with Codex quota unchanged"]
+    TASK_011["TASK-011 Fix unused stage-store re-export clippy error (issue #52)"]
   end
   subgraph M_2["M-2 · Tool calls for Codex"]
     TASK_007["TASK-007 Plan: decompose M-2"]
