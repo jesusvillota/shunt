@@ -19,7 +19,8 @@ if (values['fixture-url'] && (target.protocol !== 'http:' || target.hostname !==
 const context = await chromium.launchPersistentContext(profile, {
   headless: values.headless, permissions: ['clipboard-read', 'clipboard-write'],
 });
-const shutdown = async () => { await context.close(); };
+let closing;
+const shutdown = () => closing ??= context.close();
 process.once('SIGTERM', () => { void shutdown().finally(() => process.exit(0)); });
 process.once('SIGINT', () => { void shutdown().finally(() => process.exit(0)); });
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });

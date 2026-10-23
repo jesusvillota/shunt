@@ -45,7 +45,7 @@ test('clipboard preserves prompt; streams before completion; fresh chat per turn
 });
 
 for (const [state, code] of [
-  ['work', 'not_chat_mode'], ['logged_out', 'logged_out'], ['drift', 'ui_drift'],
+  ['work', 'not_chat_mode'], ['logged_out', 'logged_out'], ['drift', 'ui_drift'], ['composer_drift', 'ui_drift'],
   ['missing', 'not_chat_mode'], ['unknown', 'not_chat_mode'], ['conflicting', 'not_chat_mode'],
   ['switch_on_paste', 'not_chat_mode'],
 ]) test(`${state}: fails closed and sends nothing`, async () => {
@@ -111,6 +111,26 @@ test('CLI uses JSONL, keeps stdout clean and exits on malformed input', { timeou
     child.stdin.write('malformed\n');
     assert.equal(await exit, 1);
     assert.equal(stderr, 'Browser driver transport failed\n');
+  } finally {
+    child.kill(); fixture.server.closeAllConnections(); fixture.server.close();
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+for (const stop of ['eof', 'SIGTERM']) test(`CLI ${stop} cancels an active generation`, { timeout: 15000 }, async () => {
+  const profile = await mkdtemp(join(tmpdir(), 'shunt-web-cancel-'));
+  const fixture = await serve();
+  const child = spawn(process.execPath, [new URL('cli.mjs', root).pathname, '--account', 'fixture',
+    '--profile-dir', profile, '--headless', '--fixture-url', `${fixture.url}?state=timeout`]);
+  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  const exit = new Promise(resolve => child.once('exit', resolve));
+  try {
+    child.stdin.write(`${JSON.stringify({ version: 1, id: 'cancel', type: 'generate', prompt,
+      model: 'fixture-model', account: 'fixture', profile_dir: profile, timeout_ms: 60000 })}\n`);
+    assert.equal(JSON.parse((await lines.next()).value).type, 'text_delta');
+    if (stop === 'eof') child.stdin.end(); else child.kill(stop);
+    assert.equal(await exit, 0);
+    assert.equal(fixture.stats.sends, 1);
   } finally {
     child.kill(); fixture.server.closeAllConnections(); fixture.server.close();
     await rm(profile, { recursive: true, force: true });

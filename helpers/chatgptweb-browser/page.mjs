@@ -4,7 +4,7 @@ export class PageError extends Error {
 }
 
 // This function also runs inside the page immediately before the physical click.
-export function inspect() {
+export function inspect(action) {
   const visible = (selector) => [...document.querySelectorAll(selector)]
     .filter(el => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden');
   if (visible('[data-testid="login-button"], iframe[src*="challenges.cloudflare.com"]').length)
@@ -21,7 +21,13 @@ export function inspect() {
   const model = one('[data-testid="model-switcher-dropdown-button"]');
   const account = one('[data-testid="accounts-profile-button"]');
   if (!editor || !send || !model || !account) return { error: 'ui_drift' };
-  return { model: model.textContent.trim(), prompt: editor.innerText, disabled: send.disabled };
+  const state = { model: model.textContent.trim(), prompt: editor.innerText, disabled: send.disabled };
+  if (action) {
+    if (state.model !== action.model || state.prompt !== action.prompt || state.disabled)
+      return { error: 'ui_drift' };
+    send.click();
+  }
+  return state;
 }
 
 export class ChatPage {
@@ -29,8 +35,13 @@ export class ChatPage {
   async open(timeout) {
     await this.page.goto(this.url, { waitUntil: 'domcontentloaded', timeout });
     // The composer or a login/challenge indicator must have rendered. No network-idle heuristic.
-    await this.page.locator('#prompt-textarea, [data-testid="login-button"], iframe[src*="challenges.cloudflare.com"]')
-      .first().waitFor({ state: 'visible', timeout });
+    try {
+      await this.page.locator('#prompt-textarea, [data-testid="login-button"], iframe[src*="challenges.cloudflare.com"]')
+        .first().waitFor({ state: 'visible', timeout: Math.min(timeout, 3000) });
+    } catch (error) {
+      if (error.name === 'TimeoutError') throw new PageError('ui_drift');
+      throw error;
+    }
   }
   async check() {
     const state = await this.page.evaluate(inspect);
@@ -49,14 +60,8 @@ export class ChatPage {
       throw new PageError('ui_drift');
     // Evaluate guard and click in one JS task: no mode change can interleave them.
     attempted();
-    const failure = await this.page.evaluate(({ guard, prompt, model }) => {
-      const state = (0, eval)(`(${guard})`)();
-      if (state.error) return state.error;
-      if (state.prompt !== prompt || state.model !== model || state.disabled) return 'ui_drift';
-      document.querySelector('[data-testid="send-button"]').click();
-      return null;
-    }, { guard: inspect.toString(), prompt, model });
-    if (failure) throw new PageError(failure);
+    const result = await this.page.evaluate(inspect, { prompt, model });
+    if (result.error) throw new PageError(result.error);
   }
   async answer() {
     return this.page.evaluate(() => {

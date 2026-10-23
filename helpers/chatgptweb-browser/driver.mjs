@@ -63,6 +63,7 @@ export class BrowserDriver {
         error instanceof PageError ? error.code : 'internal_error';
       // Guard rejection proves no click, despite entering the evaluate call.
       if (code === 'not_chat_mode' || code === 'invalid_request') submission = 'not_sent';
+      await page?.close().catch(() => {});
       fail(code);
     } finally {
       clearTimeout(timer);

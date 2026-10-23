@@ -26,7 +26,7 @@ export async function serve() {
       </div>
       <button data-testid="accounts-profile-button">Account</button>
       <button data-testid="model-switcher-dropdown-button">fixture-model</button>
-      <div id="prompt-textarea" contenteditable="true" style="white-space:pre-wrap"></div>
+      <div id="${scenario === 'composer_drift' ? 'changed-composer' : 'prompt-textarea'}" contenteditable="true" style="white-space:pre-wrap"></div>
       <button data-testid="${scenario === 'drift' ? 'changed-send' : 'send-button'}">Envoyer</button>
       <main></main>
       <script>
@@ -34,7 +34,7 @@ export async function serve() {
         const editor = document.querySelector('#prompt-textarea');
         if (scenario === 'missing') document.querySelector('[role=tablist]').remove();
         if (scenario === 'unknown') document.querySelector('[role=tab]').textContent = 'Discussion';
-        editor.addEventListener('input', () => {
+        editor?.addEventListener('input', () => {
           if (scenario === 'switch_on_paste') {
             const tabs = document.querySelectorAll('[role=tab]');
             tabs[0].setAttribute('aria-selected', 'false'); tabs[1].setAttribute('aria-selected', 'true');
