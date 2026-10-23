@@ -10,16 +10,17 @@ kind: plan
 
 ## Why
 
-<the success criterion or milestone this serves>
+Rolling wave: M-2 (tool calls for Codex) is detailed only after DEC-001 is accepted and the live smoke passed. Serves SC-3.
 
 ## Scope
 
-<included work, touched areas and interfaces, explicitly out of scope>
+Write a plan proposal that decomposes M-2 into tasks and decisions, using the accepted DEC-001 approach (B text protocol, or A). Follow the Plan proposals format in goal-setup `references/format.md`. Do not change the real plan.
 
 ## Acceptance
 
-- <observable criterion, provable by command output>
+- `proposals/TASK-007.yaml` passes `goal proposal check`.
+- The proposal gives each task a Verify made of commands, and includes a demo/fake mode and a live smoke.
 
 ## Verify
 
-<commands that prove the acceptance criteria>
+`goal proposal check goals/chatgptweb-provider/proposals/TASK-007.yaml` exits 0.

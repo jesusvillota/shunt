@@ -9,16 +9,17 @@ delivery: manual
 
 ## Why
 
-<the success criterion or milestone this serves>
+An outside blocker: the driver needs logged-in ChatGPT profiles, and only the owner can sign in. Serves SC-1.
 
 ## Scope
 
-<included work, touched areas and interfaces, explicitly out of scope>
+The owner signs in to ChatGPT in the driver's browser profile for each account that will be used (start with one: `personal`; add `cemfi` for the pool later). Follow the profile path and steps from TASK-003's README section. No agent signs in or handles passwords. Out of scope: any code.
 
 ## Acceptance
 
-- <observable criterion, provable by command output>
+- The `personal` profile is signed in and the driver health call reports `ok` (the owner confirms in a comment or with `goal done`).
+- The owner confirms the ChatGPT page shows **Chat** mode and the model they want.
 
 ## Verify
 
-<commands that prove the acceptance criteria>
+Owner step. Optional: run the driver health command from TASK-003's README and paste the result.

@@ -10,16 +10,16 @@ kind: plan
 
 ## Why
 
-<the success criterion or milestone this serves>
+Rolling wave: M-4 (Claude Code path) is detailed after M-2 is planned and the feasibility report exists. Serves SC-5.
 
 ## Scope
 
-<included work, touched areas and interfaces, explicitly out of scope>
+If TASK-009's verdict is feasible, write a plan proposal for M-4. If not feasible, the proposal contains one task that writes the final report and closes SC-5 as documented-infeasible. Use the Plan proposals format.
 
 ## Acceptance
 
-- <observable criterion, provable by command output>
+- `proposals/TASK-010.yaml` passes `goal proposal check`.
 
 ## Verify
 
-<commands that prove the acceptance criteria>
+`goal proposal check goals/chatgptweb-provider/proposals/TASK-010.yaml` exits 0.
