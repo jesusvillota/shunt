@@ -134,6 +134,7 @@ flowchart TD
   subgraph M_1["M-1 · Chat-mode spike with one account"]
     DEC_001{{"DEC-001 Choose the tool-call approach (A MCP+tunnel, B text protocol)"}}
     DEC_002{{"DEC-002 Choose driver implementation and provider name"}}
+    DEC_003{{"DEC-003 May TASK-002 fix the existing stage-store clippy error, or must issue #52 be fixed separately?"}}
     TASK_001["TASK-001 Survey the web driver approach and shunt adapter seams"]
     TASK_002["TASK-002 Define the driver protocol and a fake driver"]
     TASK_003["TASK-003 Build the real Chat-mode driver"]
@@ -154,6 +155,7 @@ flowchart TD
   TASK_001 --> DEC_001
   TASK_001 --> DEC_002
   DEC_002 --> TASK_002
+  DEC_003 --> TASK_002
   TASK_002 --> TASK_003
   TASK_002 --> TASK_004
   TASK_003 --> TASK_006
@@ -170,6 +172,7 @@ flowchart TD
   classDef decision fill:#f3e8ff,stroke:#7c3aed
   class DEC_001 decision
   class DEC_002 decision
+  class DEC_003 decision
 ```
 <!-- goal:graph:end -->
 
