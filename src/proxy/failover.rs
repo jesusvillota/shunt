@@ -731,6 +731,10 @@ async fn dispatch(
                 .forward(state, route, uri, headers, body, bounds)
                 .await
         }
+        AdapterKind::ChatgptwebBrowser => Err(crate::adapters::chatgptweb::error(
+            StatusCode::BAD_REQUEST,
+            "chatgptweb_browser supports only the inbound Codex Responses endpoint",
+        )),
         AdapterKind::Noop => {
             crate::adapters::noop::NoopAdapter
                 .forward(state, route, uri, headers, body, bounds)

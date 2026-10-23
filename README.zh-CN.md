@@ -1,5 +1,7 @@
 # shunt
 
+实验性的纯文本 ChatGPT Web 功能可通过 Codex Responses 端点使用，类型为 `kind = "chatgptweb_browser"`。它使用一个已登录的浏览器配置文件和独立的 Node 辅助程序。工具请求会被拒绝。参见[配置与限制](docs/chatgptweb-provider.md)。
+
 离线凭据导入：`shunt import opencodex --dry-run` 可预览兼容 API 密钥和 Cursor/Command Code 访问令牌。导出会创建新的私有快照，不修改现有设置，也不复制刷新令牌。参见[导入指南（英文）](docs/credential-import.md)。
 
 [![CI](https://github.com/pleaseai/shunt/actions/workflows/ci.yml/badge.svg)](https://github.com/pleaseai/shunt/actions/workflows/ci.yml)

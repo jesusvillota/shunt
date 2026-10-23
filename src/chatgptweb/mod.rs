@@ -1,6 +1,6 @@
-//! Browser-helper contract for the future `chatgptweb_browser` provider.
+//! Browser-helper contract for the `chatgptweb_browser` provider.
 //!
-//! See `docs/chatgptweb-driver-protocol.md`. No browser or provider is registered here.
+//! See `docs/chatgptweb-driver-protocol.md` and `crate::adapters::chatgptweb`.
 
 pub mod fake;
 

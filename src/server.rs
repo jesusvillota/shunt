@@ -31,6 +31,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub http_client: reqwest::Client,
     pub accounts: Arc<AccountPool>,
+    pub chatgptweb_drivers: Arc<crate::adapters::chatgptweb::Drivers>,
     /// Observation-only store of the most recently polled upstream provider
     /// status (`[server.status]`). Process-lifetime like `accounts`, and
     /// likewise never consulted by routing, failover, or pool/cooldown
@@ -133,6 +134,7 @@ impl AppState {
             driven_routers: current.driven_routers.clone(),
             http_client,
             accounts,
+            chatgptweb_drivers: Arc::default(),
             status,
             admin_stores,
             gateway_stores,
@@ -147,7 +149,7 @@ impl AppState {
     /// entry picks up the latest reloaded config while holding one stable
     /// snapshot for the whole request. Cheap: clones `Arc`s and the client.
     pub(crate) fn refreshed(&self) -> Self {
-        Self::from_shared(
+        let mut state = Self::from_shared(
             self.shared.clone(),
             self.http_client.clone(),
             self.accounts.clone(),
@@ -157,7 +159,9 @@ impl AppState {
             self.stage_router.clone(),
             self.inbound_jwks.clone(),
             self.boot_is_loopback,
-        )
+        );
+        state.chatgptweb_drivers = self.chatgptweb_drivers.clone();
+        state
     }
 }
 

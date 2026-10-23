@@ -87,6 +87,7 @@ async fn shutdown_signal_inner(
         "shutdown signal received; draining in-flight requests"
     );
     shunt::adapters::antigravity::terminate_all_agy_groups();
+    shunt::adapters::chatgptweb::terminate_all();
     arm_force_exit(
         async move { select_shutdown_trigger(sigterm.recv(), ctrl_c.recv()).await },
         |signal| force_exit(signal),
@@ -123,6 +124,7 @@ fn force_exit(signal: &'static str) -> ! {
         "second shutdown signal received; exiting immediately without draining"
     );
     shunt::adapters::antigravity::terminate_all_agy_groups();
+    shunt::adapters::chatgptweb::terminate_all();
     let code = if signal == "SIGTERM" { 143 } else { 130 };
     std::process::exit(code);
 }

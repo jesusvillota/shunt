@@ -195,6 +195,24 @@ api_key_env = "OPENAI_API_KEY" # env var shunt reads the key from
 # multiplier = 2.0             # exponential growth factor per attempt (>= 1.0)
 
 # ChatGPT / Codex subscription (reuses ~/.codex/auth.json — run `codex login`).
+# Optional text-only ChatGPT Web provider. Install the TASK-003 Node helper.
+# See docs/chatgptweb-provider.md. Set SHUNT_CHATGPTWEB_HELPER to cli.mjs.
+# Keep the existing codex pool as the default; add this model route:
+# [server.codex_endpoint]
+# provider = "codex"
+# [[server.codex_endpoint.routes]]
+# model = "chatgptweb-chat"
+# provider = "chatgptweb"
+# upstream_model = "GPT-5.6" # exact selected model label in the browser
+#
+# [providers.chatgptweb]
+# kind = "chatgptweb_browser"
+# base_url = "http://localhost" # required legacy field; unused, no HTTP listener
+# auth = "none"               # login stays inside this browser profile
+# [[providers.chatgptweb.accounts]]
+# name = "personal"
+# profile_dir = "~/Library/Application Support/shunt/chatgptweb/personal"
+
 [providers.codex]
 kind = "responses"
 base_url = "https://chatgpt.com/backend-api"

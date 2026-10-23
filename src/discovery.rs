@@ -268,7 +268,7 @@ pub async fn get_negotiated(
         return response;
     }
     if is_codex {
-        return codex_models_response();
+        return codex_models_response(&state.config);
     }
     anthropic_models(state, headers).await
 }
@@ -280,7 +280,7 @@ pub async fn get_codex(State(state): State<AppState>, headers: HeaderMap) -> Res
     if let Some(response) = authentication_error(&state, &headers, true).await {
         return response;
     }
-    codex_models_response()
+    codex_models_response(&state.config)
 }
 
 /// Whether an URL-form query contains the Codex catalog negotiation key.
@@ -292,8 +292,26 @@ pub(crate) fn has_client_version_query(raw_query: Option<&str>) -> bool {
     })
 }
 
-fn codex_models_response() -> Response {
-    Json(serde_json::json!({ "models": [] })).into_response()
+fn codex_models_response(config: &crate::config::Config) -> Response {
+    let models: Vec<_> = config.server.codex_endpoint.as_ref().into_iter()
+        .flat_map(|endpoint| &endpoint.routes)
+        .filter(|route| config.provider(&route.provider).is_some_and(|provider| provider.kind == crate::config::ProviderKind::ChatgptwebBrowser))
+        .enumerate().map(|(priority, route)| serde_json::json!({
+            "slug": route.model, "display_name": format!("{} (ChatGPT Web)", route.model),
+            "description": "ChatGPT Web Chat mode. Text only; tools are unsupported.",
+            "default_reasoning_level": "none", "supported_reasoning_levels": [],
+            "shell_type": "disabled", "visibility": "list", "supported_in_api": true,
+            "priority": priority, "availability_nux": null, "upgrade": null,
+            "model_messages": {"instructions_template": "Answer the user with text only.", "instructions_variables": null},
+            "support_verbosity": false, "default_verbosity": null,
+            "default_reasoning_summary": "none", "apply_patch_tool_type": null,
+            "web_search_tool_type": "text", "truncation_policy": {"mode":"tokens", "limit":10000},
+            "input_modalities": ["text"], "supports_search_tool": false,
+            "experimental_supported_tools": [], "context_window": null,
+            "effective_context_window_percent": 95, "supports_parallel_tool_calls": false,
+            "include_skills_usage_instructions": false
+        })).collect();
+    Json(serde_json::json!({ "models": models })).into_response()
 }
 
 #[cfg(test)]
