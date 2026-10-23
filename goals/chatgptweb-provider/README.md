@@ -132,6 +132,7 @@ failover, model catalog entries, docs, and a Claude Code path if feasible.
 ```mermaid
 flowchart TD
   subgraph M_1["M-1 · Chat-mode spike with one account"]
+    TASK_001["TASK-001 Survey the web driver approach and shunt adapter seams"]
   end
   subgraph M_2["M-2 · Tool calls for Codex"]
   end
