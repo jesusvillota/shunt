@@ -145,6 +145,7 @@ flowchart TD
     TASK_007["TASK-007 Plan: decompose M-2"]
   end
   subgraph M_3["M-3 · Two-account pool"]
+    TASK_008["TASK-008 Plan: decompose M-3"]
   end
   subgraph M_4["M-4 · Claude Code path"]
   end
@@ -158,6 +159,7 @@ flowchart TD
   TASK_005 --> TASK_006
   TASK_006 --> TASK_007
   DEC_001 --> TASK_007
+  TASK_007 --> TASK_008
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
