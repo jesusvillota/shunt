@@ -7,18 +7,137 @@ Add a chatgptweb provider to shunt so Codex (and Claude Code if feasible) can us
 
 ## Context, scope and non-goals
 
-<what exists today, what is included, what is explicitly out of scope>
+### Why this goal exists
+
+The owner wants to spend ChatGPT Web usage instead of Codex quota. In ChatGPT Web there are
+two modes. **Chat** mode does not consume Codex rate limits. **Work** mode does. So every
+part of this goal uses **Chat mode only**, and the driver must check the mode before every
+send and fail closed (never fall back to Work mode). This is not a ban on changes: in Chat
+mode ChatGPT can still change the owner's repos through its GitHub connector, and that is fine.
+
+An existing skill, `delegate-chatgptweb` (config repo, `shared/skills/delegate-chatgptweb`),
+already sends small research questions to ChatGPT Web from Claude Code through GUI
+automation. It stays as it is. This goal is about something else: letting **Codex** itself
+run on a ChatGPT Web model.
+
+### What we looked at: miuuyy/codex-chatgpt-web
+
+Repo: https://github.com/miuuyy/codex-chatgpt-web (MIT, about 14.9k stars, active, v6.1.x).
+It adds ChatGPT Web models ("(Web)") to Codex's model picker.
+
+- An Electron launcher keeps a logged-in ChatGPT browser (up to five task-bound tabs).
+- A local daemon on `127.0.0.1` accepts Codex's Responses API turns and replays them in the
+  browser, then streams the answer back as Responses events.
+- **Browser-only mode:** sends the whole Codex context, no local tools.
+- **Full harness mode:** ChatGPT gets a custom MCP connector ("Codex Native2") through
+  OpenAI's `tunnel-client` (outbound only). ChatGPT calls tools, and the tool calls run in
+  the real Codex task (files, terminal, approvals). Each turn has a random turn token.
+- **Zero Risk mode:** the user pastes and sends manually.
+- Two accounts can run together only as "normal" plus a separate DEV profile. There is no
+  account rotation.
+- Docs worth reading: `docs/architecture.md`, `docs/security-model.md`, `TROUBLESHOOTING.md`.
+
+### Why we cannot just install it
+
+Codex here uses `model_provider = "shunt"` (custom provider at `http://127.0.0.1:3001/v1`).
+The repo's installer instead keeps the built-in `openai` provider and takes over
+`openai_base_url`. Their docs say only one program can own that route. Composition with an
+external router (their issue #205) was closed as "not planned". If installed as is, the
+(Web) models would not appear (the picker reads shunt's model list) and no turn would reach
+the daemon. The owner also refuses to give up shunt's account rotation (two Codex accounts,
+`personal` and `cemfi`, in `[providers.codex]`).
+
+Other cons: unofficial browser automation, so UI changes break it; unsigned builds;
+a loopback port with no password; prompt-injection risk when tools are on.
+
+### The idea
+
+Build the same concept **inside shunt** as a new provider/adapter (working name
+`chatgptweb`). Shunt already has what is needed: per-provider adapters (`src/adapters/`:
+anthropic, antigravity, cursor, gemini, responses), account pools with `profile_dir` (used by
+antigravity), rotation and failover (`src/proxy/failover.rs`, `src/pool/`), an inbound Codex
+Responses endpoint (`[server.codex_endpoint]`), the model catalog it serves to Codex, and
+child-process lifecycle handling (`src/shutdown.rs`). Each ChatGPT account becomes one pool
+account with its own logged-in browser profile.
+
+Pieces the adapter needs:
+
+1. **Driver:** controls one logged-in ChatGPT tab per account. Checks Chat mode before every
+   send. Sends the prompt, reads the streamed answer, detects completion.
+2. **Translation:** Responses request in, prompt text out. Web answer in, Responses events out.
+3. **Tool calls:** see the two approaches below.
+4. **Model list:** list the ChatGPT Web models in shunt's catalog so Codex shows them.
+
+### Tool calls: approach A and approach B (open for discussion in DEC-001)
+
+| | A. Copy the repo: MCP connector and tunnel | B. Text protocol (proposed) |
+|---|---|---|
+| How | ChatGPT calls tools itself through a custom MCP connector and an OpenAI tunnel. Shunt would run the MCP server and relay each call into Codex's tool surface | Shunt tells ChatGPT to write tool calls in a fixed format. Shunt parses them and returns normal `function_call` items. Codex runs the tool and sends the result next turn |
+| Setup per account | Developer Mode, a connector, a tunnel, an API key, each per account | Only a logged-in profile |
+| Cost per turn | Low. The whole loop stays in one web answer | Higher. Each turn sends the transcript again to a fresh chat |
+| Fit with rotation | Hard. Every account has its own connector and tunnel, and a turn is bound to one | Easy. Every turn is self-contained, so any account can serve it |
+| Tool quality | Native web tool use | Depends on the model following the format |
+| Extra risk | Tunnel credentials, connector admin policy, a long-lived MCP listener | Malformed or missing tool blocks; need strict parsing |
+
+The proposal is **B first**, and A only if B proves too weak. B keeps shunt simple and keeps
+rotation. The final choice is DEC-001 and is for the owner.
+
+### Driver implementation (open: DEC-002)
+
+Option 1: a driver written in Rust inside shunt. Option 2: a small helper process (Node or
+Bun) per account behind a stable JSON protocol, started and stopped by shunt like agy.
+The owner said "whatever is better long term". The planner's lean is option 2 behind a
+stable protocol that shunt owns: the web page changes often, a helper can be fixed and
+replaced without rebuilding shunt, and MIT code from the repo can be reused. The cost is a
+runtime dependency. DEC-002 decides this after TASK-001's report.
+
+### Owner answers (recorded from the discussion)
+
+1. Ban risk on the pooled accounts: **accepted**. (The same accounts serve Codex. A ban could affect both.)
+2. Driver in Rust or helper process: **no preference, choose what is better long term** (DEC-002).
+3. Claude Code through shunt: **do it if it is really feasible, otherwise keep it Codex-only** (M-4, gated by a feasibility discovery).
+
+### Scope
+
+Included: the `chatgptweb` provider and adapter in shunt, the driver and its protocol, Chat
+mode checks, text-only turns, tool calls for Codex, a two-account pool with rotation and
+failover, model catalog entries, docs, and a Claude Code path if feasible.
+
+### Non-goals
+
+- Installing or running the repo's launcher, or changing Codex's `config.toml`
+  (`openai_base_url`, `model_provider`).
+- Work mode. Any path that could use Codex quota.
+- Changing the existing `codex` pool behavior.
+- Replacing the `delegate-chatgptweb` skill (it stays for small research questions).
+- Note: the `goal` tool already has a worker platform named `chatgptweb`. That one
+  dispatches a task to ChatGPT Web that opens a PR through the GitHub connector. It is
+  unrelated to this provider. Pick a provider name that avoids confusion (open question).
 
 ## Risks and open questions
 
-<risks, assumptions, and unknowns; material unknowns become discovery tasks or DEC nodes>
+- **Ban or rate-limit risk** on the pooled accounts (accepted). The driver should be slow and human-like enough to avoid abuse flags (see TASK-001).
+- **UI drift:** ChatGPT changes its page. The driver must fail with a clear error, never guess.
+- **Context limits:** web models have about 90k tokens (Plus) to 240k (Pro) of context in the repo's measurements. Long Codex tasks compact more often.
+- **Speed:** every turn goes through a real page.
+- **Chat vs Work detection:** TASK-001 must find a reliable way to read the mode, and TASK-006 must prove that Codex quota does not move.
+- **Concurrency:** one tab per account, serialized. Parallel Codex agents will queue.
+- **Provider name** collides with the goal tool's `chatgptweb` worker platform. Decide in TASK-001/DEC-002.
+- **Claude Code path** needs tool calls in Anthropic format. Feasibility is checked in M-4, after the Codex tool path exists.
+- **Outside blockers:** the owner must log in to both ChatGPT accounts in the driver profiles (TASK-005).
 
 ## Plan structure
 
 <!-- goal:graph:start -->
 ```mermaid
 flowchart TD
-  subgraph M_1["M-1 · <first observable outcome>"]
+  subgraph M_1["M-1 · Chat-mode spike with one account"]
+  end
+  subgraph M_2["M-2 · Tool calls for Codex"]
+  end
+  subgraph M_3["M-3 · Two-account pool"]
+  end
+  subgraph M_4["M-4 · Claude Code path"]
   end
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45

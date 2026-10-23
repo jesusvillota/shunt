@@ -4,9 +4,16 @@ title: ChatGPT Web provider for shunt
 objective: Add a chatgptweb provider to shunt so Codex (and Claude Code if feasible) can use ChatGPT Web models in Chat mode through browser automation, keeping shunt's multi-account rotation.
 base: main
 success:
-  SC-1: <observable result and how it is verified>
+  SC-1: "With one account, Codex through shunt completes a text-only turn on a ChatGPT Web model in Chat mode, and the account's Codex quota in `goal pool` is unchanged (before/after output pasted in the PR)."
+  SC-2: "The driver fails closed: it refuses to send when the page is in Work mode, logged out, or the UI does not match, and it never falls back to another mode or account silently (tests plus a live check)."
+  SC-3: "A Codex agent task that needs tool calls (run a shell command, edit a file) completes end to end through the adapter (integration test plus live smoke)."
+  SC-4: "Two ChatGPT Web accounts rotate and fail over like the existing codex pool (integration test plus live smoke), without changing the existing codex pool behavior."
+  SC-5: "Claude Code can use the provider through shunt's Anthropic side, or a report shows why it cannot (live smoke or a written report with evidence)."
 milestones:
-  - {id: M-1, title: <first observable outcome>, success: [SC-1], exit: <verifiable evidence>}
+  - {id: M-1, title: Chat-mode spike with one account, success: [SC-1, SC-2], exit: "Driver contract, fake driver, real driver and text-only adapter merged; live smoke shows a Chat-mode turn with Codex quota unchanged"}
+  - {id: M-2, title: Tool calls for Codex, success: [SC-3], exit: "Detailed by the M-2 plan task after DEC-001 is accepted and the M-1 live smoke passed"}
+  - {id: M-3, title: Two-account pool, success: [SC-4], exit: "Detailed by the M-3 plan task"}
+  - {id: M-4, title: Claude Code path, success: [SC-5], exit: "Detailed by the M-4 plan task"}
 policy:
   decide: human         # human | experts (a committee answers worker decision requests)
   orchestrator: {platform: claude, model: sonnet, effort: medium}
