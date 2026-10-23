@@ -149,6 +149,7 @@ flowchart TD
   end
   subgraph M_4["M-4 · Claude Code path"]
     TASK_009["TASK-009 Check Claude Code feasibility through shunt"]
+    TASK_010["TASK-010 Plan: decompose M-4"]
   end
   TASK_001 --> DEC_001
   TASK_001 --> DEC_002
@@ -162,6 +163,8 @@ flowchart TD
   DEC_001 --> TASK_007
   TASK_007 --> TASK_008
   TASK_001 --> TASK_009
+  TASK_007 --> TASK_010
+  TASK_009 --> TASK_010
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
