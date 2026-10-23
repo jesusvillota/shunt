@@ -137,6 +137,7 @@ flowchart TD
     TASK_001["TASK-001 Survey the web driver approach and shunt adapter seams"]
     TASK_002["TASK-002 Define the driver protocol and a fake driver"]
     TASK_003["TASK-003 Build the real Chat-mode driver"]
+    TASK_004["TASK-004 Add the chatgptweb provider adapter (text only)"]
   end
   subgraph M_2["M-2 · Tool calls for Codex"]
   end
@@ -148,6 +149,7 @@ flowchart TD
   TASK_001 --> DEC_002
   DEC_002 --> TASK_002
   TASK_002 --> TASK_003
+  TASK_002 --> TASK_004
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
