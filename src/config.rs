@@ -4220,6 +4220,7 @@ impl Config {
             if provider.kind == ProviderKind::ChatgptwebBrowser {
                 let account = provider.accounts.first();
                 let valid = provider.auth == AuthMode::None
+                    && provider.account_scope.is_empty()
                     && provider.api_key_env.is_none()
                     && provider.profile_dir.is_none()
                     && provider.accounts.len() == 1

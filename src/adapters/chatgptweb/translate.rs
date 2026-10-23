@@ -1,5 +1,11 @@
 use serde_json::{json, Value};
 
+#[derive(serde::Serialize)]
+struct Message {
+    role: String,
+    content: String,
+}
+
 pub(super) fn prompt(request: &Value) -> Result<String, &'static str> {
     if request
         .get("tools")
@@ -17,10 +23,19 @@ pub(super) fn prompt(request: &Value) -> Result<String, &'static str> {
     }
     let mut transcript = Vec::new();
     if let Some(instructions) = request.get("instructions").filter(|v| !v.is_null()) {
-        transcript.push(json!({"role":"system", "content": instructions.as_str().ok_or("instructions must be text")?}));
+        transcript.push(Message {
+            role: "system".into(),
+            content: instructions
+                .as_str()
+                .ok_or("instructions must be text")?
+                .into(),
+        });
     }
     match &request["input"] {
-        Value::String(text) => transcript.push(json!({"role":"user", "content":text})),
+        Value::String(text) => transcript.push(Message {
+            role: "user".into(),
+            content: text.clone(),
+        }),
         Value::Array(messages) => {
             for message in messages {
                 if message.get("type").is_some_and(|v| v != "message") {
@@ -49,7 +64,10 @@ pub(super) fn prompt(request: &Value) -> Result<String, &'static str> {
                     }
                     _ => return Err("message content must be text"),
                 };
-                transcript.push(json!({"role":role, "content":text}));
+                transcript.push(Message {
+                    role: role.into(),
+                    content: text,
+                });
             }
         }
         _ => return Err("input must be text or a message array"),

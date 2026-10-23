@@ -18,7 +18,8 @@ use tower::ServiceExt;
 mod common;
 
 const PROFILE: &str = "/profiles/task004";
-const PROMPT: &str = "Continue this conversation. Return only the assistant's next text answer.\n[{\"content\":\"Be brief\",\"role\":\"system\"},{\"content\":\"First question\",\"role\":\"user\"},{\"content\":\"First answer\",\"role\":\"assistant\"},{\"content\":\"Second question 🌍\",\"role\":\"user\"}]";
+const PROMPT: &str = r#"Continue this conversation. Return only the assistant's next text answer.
+[{"role":"system","content":"Be brief"},{"role":"user","content":"First question"},{"role":"assistant","content":"First answer"},{"role":"user","content":"Second question 🌍"}]"#;
 fn config(routed: bool) -> Config {
     let mut config = Config::default();
     let mut provider = config.providers["openai"].clone();
@@ -49,7 +50,17 @@ fn request() -> Value {
         {"role":"user","content":[{"type":"input_text","text":"Second question 🌍"}]}]})
 }
 async fn gateway(failure: Option<DriverError>, routed: bool) -> axum::Router {
-    let (router, _, state) = server::build_router(config(routed)).unwrap();
+    let mut config = config(routed);
+    if !routed {
+        config
+            .server
+            .codex_endpoint
+            .as_mut()
+            .unwrap()
+            .routes
+            .clear();
+    }
+    let (router, _, state) = server::build_router(config).unwrap();
     state
         .chatgptweb_drivers
         .insert(
@@ -186,7 +197,8 @@ async fn chatgptweb_nonstreaming_and_default_provider_work() {
     let _vars = common::env_lock().await;
     let mut request = request();
     request["stream"] = json!(false);
-    let response = post(gateway(None, false).await, request, false).await;
+    request["model"] = json!("Chat Model");
+    let response = post(gateway(None, false).await, request, true).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
@@ -238,4 +250,135 @@ async fn chatgptweb_config_requires_one_profile_without_credentials() {
         }
         assert!(server::build_router(config).is_err());
     }
+}
+
+#[tokio::test]
+async fn chatgptweb_process_client_streams_and_rejects_premature_eof() {
+    let mut vars = common::env_lock().await;
+    let dir = std::env::temp_dir().join(format!("shunt-task004-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&dir).unwrap();
+    let helper = dir.join("helper.mjs");
+    vars.set("SHUNT_CHATGPTWEB_HELPER", &helper);
+    for complete in [true, false] {
+        std::fs::write(&helper, format!(r#"
+import {{ createInterface }} from 'node:readline';
+const input = createInterface({{input:process.stdin}});
+for await (const line of input) {{
+  const r = JSON.parse(line);
+  const args = process.argv.slice(2);
+  if (args[0] !== '--account' || args[1] !== r.account || args[2] !== '--profile-dir' || args[3] !== r.profile_dir) process.exit(2);
+  console.log(JSON.stringify({{version:1,id:r.id,type:'text_delta',text:'pipe answer'}}));
+  if ({complete}) console.log(JSON.stringify({{version:1,id:r.id,type:'done'}}));
+  process.exit(0);
+}}
+"#)).unwrap();
+        let (router, _, _) = server::build_router(config(true)).unwrap();
+        let events = events(post(router, request(), false).await).await;
+        assert_eq!(events[4]["delta"], "pipe answer");
+        assert_eq!(
+            events.last().unwrap()["type"],
+            if complete {
+                "response.completed"
+            } else {
+                "response.failed"
+            }
+        );
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn chatgptweb_stream_delivers_delta_before_completion_and_holds_profile() {
+    use futures_util::{stream, StreamExt};
+    use shunt::chatgptweb::{
+        Driver, DriverEvent, DriverRequest, DriverStream, DriverTransportError, Event,
+    };
+    struct PausedDriver(Option<tokio::sync::oneshot::Receiver<()>>);
+    #[async_trait::async_trait]
+    impl Driver for PausedDriver {
+        async fn request(
+            &mut self,
+            request: DriverRequest,
+        ) -> Result<DriverStream, DriverTransportError> {
+            let release = self.0.take().unwrap();
+            let id = request.id;
+            let delta = DriverEvent {
+                version: 1,
+                id: id.clone(),
+                event: Event::TextDelta {
+                    text: "early".into(),
+                },
+            };
+            Ok(Box::pin(stream::once(async { Ok(delta) }).chain(
+                stream::once(async move {
+                    let _ = release.await;
+                    Ok(DriverEvent {
+                        version: 1,
+                        id,
+                        event: Event::Done,
+                    })
+                }),
+            )))
+        }
+    }
+    let _vars = common::env_lock().await;
+    let (router, _, state) = server::build_router(config(true)).unwrap();
+    let (release, wait) = tokio::sync::oneshot::channel();
+    state
+        .chatgptweb_drivers
+        .insert(PROFILE.into(), Box::new(PausedDriver(Some(wait))))
+        .await;
+    let response = post(router.clone(), request(), false).await;
+    let mut body = response.into_body().into_data_stream();
+    assert!(body
+        .next()
+        .await
+        .unwrap()
+        .unwrap()
+        .starts_with(b"event: response.created"));
+    assert!(std::str::from_utf8(&body.next().await.unwrap().unwrap())
+        .unwrap()
+        .contains("early"));
+    // A second turn cannot enter this single-use driver while the first owns it.
+    assert!(tokio::time::timeout(
+        std::time::Duration::from_millis(30),
+        post(router, request(), false)
+    )
+    .await
+    .is_err());
+    release.send(()).unwrap();
+    assert!(std::str::from_utf8(&body.next().await.unwrap().unwrap())
+        .unwrap()
+        .contains("response.completed"));
+    assert!(body.next().await.is_none());
+}
+
+#[tokio::test]
+async fn chatgptweb_example_has_one_account_and_disabled_accounts_do_not_send() {
+    let _vars = common::env_lock().await;
+    let example = include_str!("../shunt.toml.example");
+    let start = example.find("# [server.codex_endpoint]\n").unwrap();
+    let end = start + example[start..].find("\n[providers.codex]").unwrap();
+    let example: String = example[start..end]
+        .lines()
+        .filter_map(|line| line.strip_prefix("# "))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    let example: toml::Value = toml::from_str(&example).unwrap();
+    assert_eq!(
+        example["providers"]["chatgptweb"]["kind"].as_str(),
+        Some("chatgptweb_browser")
+    );
+    assert_eq!(
+        example["providers"]["chatgptweb"]["accounts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let mut config = config(true);
+    config.providers.get_mut("chatgptweb").unwrap().accounts[0].disabled = true;
+    let (router, _, _) = server::build_router(config).unwrap();
+    let response = post(router, request(), false).await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }

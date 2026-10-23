@@ -76,6 +76,12 @@ pub(crate) async fn forward(state: AppState, route: Route, body: Bytes) -> Adapt
         .provider(&route.provider)
         .expect("validated provider")
         .accounts[0];
+    if account.disabled {
+        return Err(error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "ChatGPT browser account is disabled",
+        ));
+    }
     let profile = account.profile_dir.as_ref().expect("validated profile");
     let driver = state.chatgptweb_drivers.get(profile).await;
     let guard = driver.lock_owned().await;
