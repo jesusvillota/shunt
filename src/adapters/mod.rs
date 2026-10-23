@@ -9,6 +9,7 @@ use crate::{request::RequestBody, routing::Route, server::AppState};
 
 pub mod anthropic;
 pub mod antigravity;
+pub mod chatgptweb;
 pub mod cursor;
 pub mod gemini;
 pub mod noop;

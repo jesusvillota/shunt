@@ -348,7 +348,6 @@ pub(crate) async fn forward_turn(
             .await?
         }
         None => {
-            drop(decoded);
             let route = Route {
                 provider: default_provider.clone(),
                 adapter: AdapterKind::Responses,
@@ -357,8 +356,22 @@ pub(crate) async fn forward_turn(
                 effort: None,
                 service_tier: None,
             };
-            let result =
-                responses::forward_codex_inbound(state, route, pool_key, headers, body).await;
+            let result = if state
+                .config
+                .provider(&default_provider)
+                .is_some_and(|provider| {
+                    provider.kind == crate::config::ProviderKind::ChatgptwebBrowser
+                }) {
+                let body =
+                    match identity_body(&headers, &body, decoded, None, max_request_bytes).await {
+                        Ok(body) => body,
+                        Err(error) => return Err(routed_body_error(error, &default_provider).await),
+                    };
+                crate::adapters::chatgptweb::forward(state, route, body).await
+            } else {
+                drop(decoded);
+                responses::forward_codex_inbound(state, route, pool_key, headers, body).await
+            };
             (default_provider, result)
         }
     };
@@ -447,7 +460,13 @@ async fn dispatch_routed(
         prepared
     };
 
-    let result = if chatgpt_backend {
+    let result = if state
+        .config
+        .provider(&route.provider)
+        .is_some_and(|provider| provider.kind == crate::config::ProviderKind::ChatgptwebBrowser)
+    {
+        crate::adapters::chatgptweb::forward(state, route, body).await
+    } else if chatgpt_backend {
         responses::forward_codex_inbound(state, route, pool_key, headers, body).await
     } else {
         responses::forward_codex_routed(state, route, headers, body, session_id).await
