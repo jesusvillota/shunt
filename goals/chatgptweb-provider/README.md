@@ -142,6 +142,7 @@ flowchart TD
     TASK_006["TASK-006 Live smoke: Chat-mode turn with Codex quota unchanged"]
   end
   subgraph M_2["M-2 · Tool calls for Codex"]
+    TASK_007["TASK-007 Plan: decompose M-2"]
   end
   subgraph M_3["M-3 · Two-account pool"]
   end
@@ -155,6 +156,8 @@ flowchart TD
   TASK_003 --> TASK_006
   TASK_004 --> TASK_006
   TASK_005 --> TASK_006
+  TASK_006 --> TASK_007
+  DEC_001 --> TASK_007
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
