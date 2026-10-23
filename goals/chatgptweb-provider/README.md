@@ -133,6 +133,7 @@ failover, model catalog entries, docs, and a Claude Code path if feasible.
 flowchart TD
   subgraph M_1["M-1 · Chat-mode spike with one account"]
     DEC_001{{"DEC-001 Choose the tool-call approach (A MCP+tunnel, B text protocol)"}}
+    DEC_002{{"DEC-002 Choose driver implementation and provider name"}}
     TASK_001["TASK-001 Survey the web driver approach and shunt adapter seams"]
   end
   subgraph M_2["M-2 · Tool calls for Codex"]
@@ -142,10 +143,12 @@ flowchart TD
   subgraph M_4["M-4 · Claude Code path"]
   end
   TASK_001 --> DEC_001
+  TASK_001 --> DEC_002
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
   class DEC_001 decision
+  class DEC_002 decision
 ```
 <!-- goal:graph:end -->
 
