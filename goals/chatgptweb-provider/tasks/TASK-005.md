@@ -2,9 +2,10 @@
 id: TASK-005
 title: Log in the ChatGPT account profiles
 milestone: M-1
-state: approved
+state: done
 depends_on: []
 delivery: manual
+reason: Owner signed in to the cemfi account (not personal) in profile ~/.local/share/shunt/chatgptweb-browser/cemfi; Chat mode confirmed on page. Health call not run; personal profile still to do.
 ---
 
 ## Why
