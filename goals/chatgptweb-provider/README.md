@@ -139,6 +139,7 @@ flowchart TD
     TASK_003["TASK-003 Build the real Chat-mode driver"]
     TASK_004["TASK-004 Add the chatgptweb provider adapter (text only)"]
     TASK_005["TASK-005 Log in the ChatGPT account profiles"]
+    TASK_006["TASK-006 Live smoke: Chat-mode turn with Codex quota unchanged"]
   end
   subgraph M_2["M-2 · Tool calls for Codex"]
   end
@@ -151,6 +152,9 @@ flowchart TD
   DEC_002 --> TASK_002
   TASK_002 --> TASK_003
   TASK_002 --> TASK_004
+  TASK_003 --> TASK_006
+  TASK_004 --> TASK_006
+  TASK_005 --> TASK_006
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
