@@ -138,6 +138,7 @@ flowchart TD
     TASK_002["TASK-002 Define the driver protocol and a fake driver"]
     TASK_003["TASK-003 Build the real Chat-mode driver"]
     TASK_004["TASK-004 Add the chatgptweb provider adapter (text only)"]
+    TASK_005["TASK-005 Log in the ChatGPT account profiles"]
   end
   subgraph M_2["M-2 · Tool calls for Codex"]
   end
