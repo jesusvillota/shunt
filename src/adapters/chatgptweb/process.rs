@@ -30,8 +30,41 @@ pub fn terminate_all() {
 }
 fn kill_group(pid: u32) {
     #[cfg(unix)]
-    unsafe {
-        libc::kill(-(pid as i32), libc::SIGKILL);
+    {
+        // Playwright can detach Chromium into another process group. Capture
+        // descendants while the helper is still their parent, then stop them
+        // before killing the helper. `ps -axo` is supported by BSD and GNU ps.
+        if let Ok(snapshot) = std::process::Command::new("ps")
+            .args(["-axo", "pid=,ppid="])
+            .output()
+        {
+            let pairs: Vec<(u32, u32)> = String::from_utf8_lossy(&snapshot.stdout)
+                .lines()
+                .filter_map(|line| {
+                    let mut fields = line.split_whitespace();
+                    Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
+                })
+                .collect();
+            let mut descendants = vec![pid];
+            let mut next = 0;
+            while next < descendants.len() {
+                let parent = descendants[next];
+                for &(child, owner) in &pairs {
+                    if owner == parent && !descendants.contains(&child) {
+                        descendants.push(child);
+                    }
+                }
+                next += 1;
+            }
+            for child in descendants.into_iter().skip(1).rev() {
+                unsafe {
+                    libc::kill(child as i32, libc::SIGKILL);
+                }
+            }
+        }
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
     }
     #[cfg(not(unix))]
     let _ = pid;

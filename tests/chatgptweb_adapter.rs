@@ -382,3 +382,45 @@ async fn chatgptweb_example_has_one_account_and_disabled_accounts_do_not_send() 
     let response = post(router, request(), false).await;
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn chatgptweb_disconnect_kills_a_detached_browser_descendant() {
+    use futures_util::StreamExt;
+    let mut vars = common::env_lock().await;
+    let dir = std::env::temp_dir().join(format!("shunt-task004-cancel-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&dir).unwrap();
+    let helper = dir.join("helper.mjs");
+    let pid_file = dir.join("browser.pid");
+    let pid_path = serde_json::to_string(pid_file.to_str().unwrap()).unwrap();
+    std::fs::write(&helper, format!(r#"
+import {{createInterface}} from 'node:readline';
+import {{spawn}} from 'node:child_process';
+import {{writeFileSync}} from 'node:fs';
+for await (const line of createInterface({{input:process.stdin}})) {{
+  const r=JSON.parse(line);
+  const browser=spawn(process.execPath,['-e','setInterval(()=>{{}},1000)'],{{detached:true,stdio:'ignore'}});
+  writeFileSync({pid_path},String(browser.pid));
+  console.log(JSON.stringify({{version:1,id:r.id,type:'text_delta',text:'waiting'}}));
+  await new Promise(()=>{{}});
+}}
+"#)).unwrap();
+    vars.set("SHUNT_CHATGPTWEB_HELPER", &helper);
+    let (router, _, _) = server::build_router(config(true)).unwrap();
+    let response = post(router, request(), false).await;
+    let mut body = response.into_body().into_data_stream();
+    let _ = body.next().await;
+    assert!(std::str::from_utf8(&body.next().await.unwrap().unwrap())
+        .unwrap()
+        .contains("waiting"));
+    let pid: i32 = std::fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+    drop(body);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while unsafe { libc::kill(pid, 0) } == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("detached browser process must exit on disconnect");
+    std::fs::remove_dir_all(dir).unwrap();
+}
