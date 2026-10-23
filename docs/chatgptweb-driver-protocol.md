@@ -2,7 +2,9 @@
 
 TASK-002 implements this contract and an offline fake. DEC-002 selects a
 Node/Bun helper per account and the provider name `chatgptweb_browser`.
-The real browser helper belongs to TASK-003. Provider registration and
+The real browser helper is in `helpers/chatgptweb-browser` (TASK-003).
+See its README for installation, per-account profile paths, and fixture tests.
+Provider registration and
 Responses translation belong to TASK-004. This document adds no config keys.
 
 ## Transport and ownership
@@ -17,7 +19,9 @@ Use private stdin/stdout pipes, with UTF-8 JSON objects separated by LF
 (JSON Lines). Escape newlines inside strings. Flush each event immediately.
 Reserve stdout for protocol objects; stderr is for redacted diagnostics.
 There is no HTTP listener, bearer token, or unsolicited startup event.
-Process launch arguments and packaging belong to TASK-003.
+Launch with `node helpers/chatgptweb-browser/cli.mjs --account ACCOUNT
+--profile-dir ABSOLUTE_PATH`. The Node helper uses Playwright Chromium and
+keeps the browser's persistent profile at that exact path. See the helper README.
 
 Shunt serializes requests per helper. Only one request can be active, including
 health checks. Every request has a nonblank `id`, unique within that helper's
@@ -250,5 +254,7 @@ tests cover success, health, all error codes, Unicode and newline preservation,
 empty answers, partial failures, uncertain sends, repeated requests, and account
 isolation. A separate test parses every JSON example in this document.
 
-Run `cargo test chatgptweb`. These tests exercise the contract and fixture
-replay; actual selected-mode checks and browser cancellation remain TASK-003.
+Run `cargo test chatgptweb` for the browser-free contract tests. Run `npm test`
+in `helpers/chatgptweb-browser` for the local browser fixtures and the same
+conformance runner against the real helper process. Actual live-page mode and
+quota validation remain TASK-006.
