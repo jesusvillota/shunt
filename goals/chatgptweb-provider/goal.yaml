@@ -1,0 +1,18 @@
+format: goal/v2
+id: chatgptweb-provider
+title: ChatGPT Web provider for shunt
+objective: Add a chatgptweb provider to shunt so Codex (and Claude Code if feasible) can use ChatGPT Web models in Chat mode through browser automation, keeping shunt's multi-account rotation.
+base: main
+success:
+  SC-1: <observable result and how it is verified>
+milestones:
+  - {id: M-1, title: <first observable outcome>, success: [SC-1], exit: <verifiable evidence>}
+policy:
+  decide: human         # human | experts (a committee answers worker decision requests)
+  orchestrator: {platform: claude, model: sonnet, effort: medium}
+  max_parallel: 7
+  default_route: null   # {platform: codex, model: MODEL, effort: LEVEL}
+  agent: claude         # claude | codex | opencode | agy
+  turn_budget: 40
+  plan_commits: push    # push | commit | off
+  worktree_setup: null  # shell run in each new task worktree, e.g. "uv sync"
