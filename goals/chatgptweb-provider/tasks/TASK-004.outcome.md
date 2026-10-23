@@ -155,3 +155,89 @@ inbound_codex_routes: test result: ok. 11 passed; 0 failed; 0 ignored; 0 measure
 inbound_codex_websocket: test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
 passthrough: test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
 ```
+
+## Resume tidy-up — 2026-10-23
+
+The Codex subscription comment now sits directly above `[providers.codex]`.
+The ChatGPT Web example now says to install the Node helper in
+`helpers/chatgptweb-browser`. Its parsing test ends at the block's blank line,
+so the moved Codex comment cannot become parsed TOML. All assertions remain.
+
+Verified revision: `031298b355172c5943201e28e9b2d98d57350635`. Only this outcome record is added
+after these checks. No implementation, config semantics, or existing Codex test changed.
+README, engineering docs, and translated site pages were considered; this comment-only
+correction needs no further updates. Generated wiki files remain untouched.
+
+### Acceptance in this session
+
+- [x] `shunt.toml.example` has one `chatgptweb` provider with one account.
+  `chatgptweb_example_has_one_account_and_disabled_accounts_do_not_send` passed.
+- [x] A Responses request passes through `[server.codex_endpoint]` to the fake driver
+  and returns a valid stream.
+  `chatgptweb_codex_endpoint_streams_full_transcript_through_fake` passed for plain
+  and zstd requests, with ordered events, stable IDs, Unicode deltas, and final text.
+- [x] Models appear in the catalog Codex reads.
+  `chatgptweb_catalog_lists_configured_models_on_every_codex_alias` passed for
+  `/v1/models?client_version=0.152.0`, `/models`, and `/backend-api/codex/models`.
+- [x] Existing `codex` tests pass unchanged: 109 tests across the Codex pool,
+  WebSocket fallback/gated, inbound endpoint, route, and inbound WebSocket suites.
+  `git diff origin/main -- tests/codex_multi_account.rs tests/codex_websocket_fallback.rs
+  tests/codex_websocket_gated.rs tests/inbound_codex_endpoint.rs
+  tests/inbound_codex_routes.rs tests/inbound_codex_websocket.rs
+  src/adapters/responses` is empty.
+
+### Local verification in this session
+
+```text
+$ RUST_TEST_THREADS=1 cargo test
+Doc-tests shunt
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit 0
+Full-suite total: 3728 passed; 0 failed; 3 existing ignored.
+
+$ RUST_TEST_THREADS=1 cargo test --all-features --workspace
+Doc-tests shunt
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit 0
+Full-suite total: 3890 passed; 0 failed; 5 existing ignored.
+
+$ cargo clippy --all-targets -- -D warnings
+    Checking shunt-gateway v0.51.1 (/Users/jesusvillotamiranda/orca/workspaces/shunt/goal-chatgptweb-provider-task-004)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.92s
+exit 0
+
+$ cargo clippy --all-targets --all-features -- -D warnings
+    Checking shunt-gateway v0.51.1 (/Users/jesusvillotamiranda/orca/workspaces/shunt/goal-chatgptweb-provider-task-004)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.08s
+exit 0
+
+$ cargo fmt --all --check
+exit 0
+$ git diff --check
+exit 0
+```
+
+Selected default-suite output:
+
+```text
+test chatgptweb_catalog_lists_configured_models_on_every_codex_alias ... ok
+test chatgptweb_codex_endpoint_streams_full_transcript_through_fake ... ok
+test chatgptweb_example_has_one_account_and_disabled_accounts_do_not_send ... ok
+Running tests/chatgptweb_adapter.rs: test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+Running tests/codex_multi_account.rs: test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.18s
+Running tests/codex_websocket_fallback.rs: test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.67s
+Running tests/codex_websocket_gated.rs: test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.33s
+Running tests/inbound_codex_endpoint.rs: test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+Running tests/inbound_codex_routes.rs: test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+Running tests/inbound_codex_websocket.rs: test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+```
+
+PR #55 has no review threads or review comments. It remains open and non-draft,
+with `Goal-Task: chatgptweb-provider/TASK-004` and label `goal:chatgptweb-provider`.
+The requested tidy-up is addressed. No merge or GitHub Actions inspection occurred.
