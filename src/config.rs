@@ -4230,6 +4230,11 @@ impl Config {
                             && account.token_env.is_none()
                             && account.profile_dir.as_deref().is_some_and(|path| {
                                 std::path::Path::new(path).is_absolute()
+                                    && std::path::Path::new(path)
+                                        .components()
+                                        .collect::<std::path::PathBuf>()
+                                        .to_str()
+                                        == Some(path)
                                     && !std::path::Path::new(path)
                                         .components()
                                         .any(|part| matches!(part, std::path::Component::ParentDir))

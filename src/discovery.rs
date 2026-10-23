@@ -273,8 +273,8 @@ pub async fn get_negotiated(
     anthropic_models(state, headers).await
 }
 
-/// Serves Codex-only catalog aliases. A deliberately empty list is valid for
-/// the strict Codex schema and avoids inventing incomplete `ModelInfo` rows.
+/// Serves Codex-only catalog aliases. Only configured browser routes add rows;
+/// without them the existing empty-catalog behavior is preserved.
 pub async fn get_codex(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let state = state.refreshed();
     if let Some(response) = authentication_error(&state, &headers, true).await {
