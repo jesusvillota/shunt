@@ -3,7 +3,7 @@ id: TASK-002
 title: Define the driver protocol and a fake driver
 milestone: M-1
 state: approved
-depends_on: [DEC-002, DEC-003]
+depends_on: [DEC-002, DEC-003, TASK-011]
 delivery: pr
 ---
 
