@@ -135,6 +135,7 @@ flowchart TD
     DEC_001{{"DEC-001 Choose the tool-call approach (A MCP+tunnel, B text protocol)"}}
     DEC_002{{"DEC-002 Choose driver implementation and provider name"}}
     TASK_001["TASK-001 Survey the web driver approach and shunt adapter seams"]
+    TASK_002["TASK-002 Define the driver protocol and a fake driver"]
   end
   subgraph M_2["M-2 · Tool calls for Codex"]
   end
@@ -144,6 +145,7 @@ flowchart TD
   end
   TASK_001 --> DEC_001
   TASK_001 --> DEC_002
+  DEC_002 --> TASK_002
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
