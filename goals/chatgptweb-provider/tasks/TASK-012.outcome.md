@@ -8,7 +8,7 @@ Status: **blocked**. The only approved live prompt reached Send after an atomic 
   The rendered mode group selected Chat (`aria-pressed="true"`) and deselected Work (`aria-pressed="false"`). The health experiment did not return success. The unchanged driver's final health output is recorded below.
 - [ ] Sanitized live fixtures cover Chat, Work, logged out and changed layout; Work rejects sends.
   Composer, effort, Send and Stop markup were observed. Assistant, answer-boundary and copy-turn markup could not be captured. No fixture update is committed. Existing synthetic fixtures do not satisfy this requirement.
-- [ ] The conformance runner and `npm test` pass; no cookie, storage or credential access.
+- [x] The conformance runner and `npm test` pass; no cookie, storage or credential access.
   Local checks are recorded below. They verify the unchanged implementation, not a delivered fix. All live probes used rendered DOM only. No cookie, storage, credential, network interception or private API access occurred.
 - [ ] `upstream_model` follows DEC-004; docs and translations agree.
   Not delivered. DEC-004 still defines it as an optional exact visible effort label, for example `High`. The incomplete prototype and its partial Rust changes were removed. Existing behavior and docs remain unchanged.
@@ -53,7 +53,71 @@ The one approved prompt was `Reply with exactly: SHUNT_TASK012_OK`.
 
 ## Verification
 
-Verification was run after removing all exploratory code changes. Results and the final unchanged-driver health output will be added before this draft is handed back.
+All four requested local commands passed on the unchanged code. The first npm run timed out in `CLI eof cancels an active generation` (17 passed, one cancelled). After closing the live probe processes, the complete npm command passed on repeat. No test assertions were changed.
+
+`npm test --prefix helpers/chatgptweb-browser` — exit 0:
+
+```text
+✔ CLI eof cancels an active generation (1377.7085ms)
+✔ CLI SIGTERM cancels an active generation (1240.695334ms)
+ℹ tests 18
+ℹ suites 0
+ℹ pass 18
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 20012.535084
+    Blocking waiting for file lock on build directory
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 11s
+     Running tests/chatgptweb_browser.rs (/Users/jesusvillotamiranda/orca/workspaces/shunt/goal-chatgptweb-provider-task-012/target/debug/deps/chatgptweb_browser-7d77f011455832e5)
+
+running 1 test
+test chatgptweb_browser_uses_shared_fake_conformance_with_local_page ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.78s
+
+```
+
+`cargo fmt --all --check` — exit 0, no output.
+
+`cargo clippy --all-targets -- -D warnings` — exit 0:
+
+```text
+    Checking opentelemetry-otlp v0.32.0
+    Checking shunt-gateway v0.51.1 (/Users/jesusvillotamiranda/orca/workspaces/shunt/goal-chatgptweb-provider-task-012)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 00s
+```
+
+`cargo test` — exit 0 (tail):
+
+```text
+test compaction_and_auxiliary_stay_on_the_parent ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/tui_client.rs (target/debug/deps/tui_client-c5558d30fc617895)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests shunt
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+```
+
+Final live health on the unchanged driver:
+
+```json
+{"version":1,"id":"task012-final-health","type":"error","error":{"code":"ui_drift","message":"Browser driver: ui_drift","submission":"not_sent"}}
+```
+
+This is a failed health result, not `ok`. The helper's EOF shutdown also exceeded the probe wrapper's 15-second wait; the wrapper exited 1 after reading this JSON. The read-only health request did not type or send anything. These local successes do not satisfy the missing live fixtures or DEC-004 implementation.
+
 
 ## Decision request
 
@@ -71,4 +135,4 @@ Permit one additional short prompt after the profile can finish its browser chec
 
 What: inspected the real composer and used the single approved prompt to probe Send, Stop and completion. How: rendered DOM through Playwright, without cookie, storage or credential access. Deviation: the browser check failed after the guarded Send, so required answer markup was unavailable. All incomplete production and test edits were removed. This PR records only the blocker and sanitized evidence; README, docs, site translations and generated wiki need no edits for this outcome-only change.
 
-Verified code revision: `2738cf0933c1d97dc893680faf172d49871c4b98`. Follow-up: restore live browser access, authorize one additional short prompt, then resume TASK-012. No task specs, decisions, other outcomes or goal metadata were changed. Do not mark this task complete or merge this draft.
+Verified revision: `f7c70f9a8db2c4bb7d933a415ca8fc02f952fb03`. The rebase onto `origin/main` changed only goal documents; source and tests match the initial code revision `2738cf0933c1d97dc893680faf172d49871c4b98`. Follow-up: restore live browser access, authorize one additional short prompt, then resume TASK-012. No task specs, decisions, other outcomes or goal metadata were changed. Do not mark this task complete or merge this draft.
