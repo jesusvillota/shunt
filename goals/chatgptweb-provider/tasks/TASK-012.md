@@ -25,6 +25,7 @@ DEC-004 decision on `upstream_model`: the page shows no model name. Drop the mod
 - Fixtures built from the live markup cover Chat, Work, logged out and a changed layout; Work mode returns `not_chat_mode` with nothing sent.
 - The conformance runner and `npm test` pass; no cookie, storage or credential access.
 - `upstream_model` behaves as decided, and docs and translations agree.
+- Headless check: run the live `health` call on the signed-in `cemfi` profile again with `--headless` and report whether the page accepts it (`ok`, or the error code such as `logged_out` or `ui_drift`). Report only. Do not add stealth or any challenge bypass, and do not change the default (headed) mode. The owner wants to work on the Mac while the driver runs in the background, so this result decides whether headless can become the default later.
 
 ## Verify
 
