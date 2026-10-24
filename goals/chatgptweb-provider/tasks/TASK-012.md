@@ -3,7 +3,7 @@ id: TASK-012
 title: Fix the browser driver for the live ChatGPT page
 milestone: M-1
 state: approved
-depends_on: []
+depends_on: [DEC-005]
 delivery: pr
 ---
 
