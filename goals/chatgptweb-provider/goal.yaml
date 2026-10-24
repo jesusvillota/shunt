@@ -23,3 +23,4 @@ policy:
   turn_budget: 40
   plan_commits: push    # push | commit | off
   worktree_setup: null  # shell run in each new task worktree, e.g. "uv sync"
+  plan_route: {platform: codex, model: gpt-6-astra, effort: high}
