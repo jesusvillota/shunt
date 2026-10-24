@@ -135,6 +135,7 @@ flowchart TD
     DEC_001{{"DEC-001 Choose the tool-call approach (A MCP+tunnel, B text protocol)"}}
     DEC_002{{"DEC-002 Choose driver implementation and provider name"}}
     DEC_003{{"DEC-003 May TASK-002 fix the existing stage-store clippy error, or must issue #52 be fixed separately?"}}
+    DEC_004{{"DEC-004 Fix the driver in this PR, or in a new task, and what does upstream_model mean when the page shows no model name?"}}
     TASK_001["TASK-001 Survey the web driver approach and shunt adapter seams"]
     TASK_002["TASK-002 Define the driver protocol and a fake driver"]
     TASK_003["TASK-003 Build the real Chat-mode driver"]
@@ -163,6 +164,7 @@ flowchart TD
   TASK_003 --> TASK_006
   TASK_004 --> TASK_006
   TASK_005 --> TASK_006
+  DEC_004 --> TASK_006
   TASK_006 --> TASK_007
   DEC_001 --> TASK_007
   TASK_007 --> TASK_008
@@ -175,6 +177,7 @@ flowchart TD
   class DEC_001 decision
   class DEC_002 decision
   class DEC_003 decision
+  class DEC_004 decision
 ```
 <!-- goal:graph:end -->
 

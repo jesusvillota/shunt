@@ -3,7 +3,7 @@ id: TASK-006
 title: 'Live smoke: Chat-mode turn with Codex quota unchanged'
 milestone: M-1
 state: approved
-depends_on: [TASK-003, TASK-004, TASK-005]
+depends_on: [TASK-003, TASK-004, TASK-005, DEC-004]
 delivery: pr
 kind: gate
 ---
