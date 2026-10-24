@@ -25,3 +25,4 @@ policy:
   worktree_setup: null  # shell run in each new task worktree, e.g. "uv sync"
   plan_route: {platform: codex, model: gpt-6-astra, effort: high}
   discovery_route: {platform: codex, model: gpt-6.1-sol, effort: high}
+  gate_route: {platform: codex, model: gpt-6.1-sol, effort: high}
