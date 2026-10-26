@@ -422,6 +422,8 @@ struct AccountHealth {
     /// state_path` persists quota alone, so a restart clears this and the
     /// account's next terminal failure re-establishes it.
     needs_relogin: Option<ReloginCause>,
+    /// Organization policy forbids OAuth. Excluded until process restart or forget.
+    organization_blocked: bool,
     /// Provider-scoped operator pauses. Quota/cooldown state is shared by physical
     /// account identity, but an operator pause belongs to the configured provider
     /// lane that was paused. Memory-only and cleared on restart.
@@ -455,7 +457,7 @@ pub struct AccountSnapshot {
     /// Whether the pool has recorded at least one upstream response for this
     /// account. When `false`, the quota/cooldown fields are all absent.
     pub has_state: bool,
-    /// Derived: not disabled or paused for this provider, not cooling down, and not near quota.
+    /// Derived: not disabled, paused, organization-blocked, cooling down, or near quota.
     pub available: bool,
     pub near_quota: bool,
     /// Seconds until the account-wide cooldown expires, when active.
@@ -492,6 +494,8 @@ pub struct AccountSnapshot {
     /// into — `available` and the cooldown fields, so the dashboard can tell
     /// "cooling down, will retry" apart from "cooling down forever".
     pub needs_relogin: bool,
+    /// The upstream organization forbids OAuth for this account.
+    pub organization_blocked: bool,
     /// Upstream attempts against this account since the process started:
     /// `requests_succeeded + requests_failed + requests_cancelled`. The five
     /// request fields are reported whether or not `has_state` is set: an
@@ -544,6 +548,7 @@ impl AccountSnapshot {
             status: None,
             quota_buckets: Vec::new(),
             needs_relogin,
+            organization_blocked: false,
             requests_attempted: requests.attempted(),
             requests_succeeded: requests.succeeded(),
             requests_failed: requests.failed(),
@@ -992,7 +997,8 @@ impl AccountPool {
             for (index, account) in accounts.iter().enumerate() {
                 let health = self.health_entry(&mut entries, account_key(&provider, account));
                 health.enabled |= !account.disabled;
-                paused[index] = health.paused_providers.contains(&provider);
+                paused[index] =
+                    health.paused_providers.contains(&provider) || health.organization_blocked;
                 family_cooled[index] =
                     antigravity_cooldown(health, model).is_some_and(|until| until > now);
                 quota_expired |= expire_stale_quota(&mut health.quota, unix_now);
@@ -1720,6 +1726,15 @@ impl AccountPool {
             earliest = Some(earliest.map_or(until, |current| current.min(until)));
         }
         earliest.map(|until| until.duration_since(now))
+    }
+
+    /// Exclude an identity whose organization explicitly forbids OAuth.
+    /// Quota polls and cooldown expiry cannot clear an organization policy.
+    pub(crate) fn block_organization(&self, provider: &str, account: &AccountConfig) {
+        let mut entries = self.entries.lock().expect("account health lock poisoned");
+        let health = self.health_entry(&mut entries, account_key(provider, account));
+        health.organization_blocked = true;
+        health.observed = true;
     }
 
     pub fn cooldown(
@@ -2567,6 +2582,7 @@ impl AccountPool {
                         has_state: true,
                         available: !account.disabled
                             && !health.paused_providers.contains(provider)
+                            && !health.organization_blocked
                             && !cooling
                             && !quota.near,
                         near_quota: quota.near,
@@ -2603,6 +2619,7 @@ impl AccountPool {
                         // response on any row backed by that store account lifts
                         // it here as well.
                         needs_relogin: health.needs_relogin.is_some() || store_condemned,
+                        organization_blocked: health.organization_blocked,
                         requests_attempted: requests.attempted(),
                         requests_succeeded: requests.succeeded(),
                         requests_failed: requests.failed(),

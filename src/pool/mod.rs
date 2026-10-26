@@ -130,6 +130,8 @@ fn availability(account: &AccountDto) -> &'static str {
         "disabled"
     } else if account.paused {
         "paused"
+    } else if account.organization_blocked {
+        "organization blocked"
     } else if account.needs_relogin {
         "needs relogin"
     } else if account.cooldown_secs_remaining.unwrap_or(0) > 0 {

@@ -30,6 +30,7 @@ fn availability_and_missing_readings() {
     for (field, state) in [
         ("disabled", "disabled"),
         ("paused", "paused"),
+        ("organization_blocked", "organization blocked"),
         ("needs_relogin", "needs relogin"),
         ("near_quota", "near-quota"),
     ] {

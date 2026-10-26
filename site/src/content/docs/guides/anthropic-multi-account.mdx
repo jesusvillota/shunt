@@ -190,7 +190,9 @@ The file is a best-effort cache, not a source of truth — quota is re-derived f
 | 5xx or transport failure | Cooldown 30 seconds and rotate. |
 | Other status | Relay without failover. |
 
-Classification happens before the response body streams, so a mid-stream failure is never replayed. If the pool exhausts its attempts after receiving responses, the client gets the last real upstream status and body. If every account fails before any upstream response, shunt returns a gateway-owned error.
+Classification happens before the response body streams, so a mid-stream failure is never replayed. If all attempts fail, a received 429 takes priority over later authentication or server errors. The response keeps that account’s upstream body and `retry-after`. If `retry-after` is absent, shunt derives it from known rejected quota-window reset times. Otherwise, the last upstream response is returned. If every account fails before any upstream response, shunt returns a gateway-owned error.
+
+A 403 with `oauth_not_allowed_for_organization` excludes the account from rotation and tries the next account. `shunt pool` shows `organization blocked`; the admin pool response sets `organization_blocked: true` and `available: false`. The block survives cooldown expiry and config reloads. After correcting the upstream organization policy, restart the gateway to try the account again.
 
 Anthropic-routed `POST /v1/messages/count_tokens` requests use the same pool.
 
@@ -256,9 +258,10 @@ Pooled responses identify the account:
 
 ```http
 x-shunt-account: backup
+x-shunt-upstream-status: 200
 ```
 
-Use neutral account names on a shared gateway. This header exposes the configured label to every authorized client that receives the response. The final last-upstream-response relay after pool exhaustion omits `x-shunt-account`.
+Use neutral account names on a shared gateway. This header exposes the configured label to every authorized client that receives the response. Errors returned after pool exhaustion also identify the account. `x-shunt-upstream-status` reports the upstream HTTP status.
 
 ### `account_uuid`
 

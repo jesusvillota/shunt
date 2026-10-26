@@ -121,6 +121,7 @@ impl WindowPrimer {
                 if snapshot
                     .reset_5h
                     .is_some_and(|reset| is_running(reset, now))
+                    || snapshot.organization_blocked
                     || snapshot.paused
                     || snapshot.needs_relogin
                 {

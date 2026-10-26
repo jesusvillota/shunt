@@ -11,6 +11,7 @@ pub mod anthropic;
 pub mod antigravity;
 pub mod chatgptweb;
 pub mod cursor;
+mod error_body;
 pub mod gemini;
 pub mod noop;
 pub mod responses;

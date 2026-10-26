@@ -2469,3 +2469,219 @@ async fn a_throttle_pause_retry_counts_as_a_second_attempt_on_the_same_account()
     );
     upstream.verify().await;
 }
+
+/// A later auth/server failure must not hide a real quota rejection (#59).
+#[tokio::test]
+async fn exhausted_pool_preserves_quota_status_body_and_account() {
+    let mut vars = common::env_lock().await;
+    vars.set("SHUNT_TEST_FAILURE_QUOTA", "quota-token");
+    vars.set("SHUNT_TEST_FAILURE_OTHER", "other-token");
+    for status in [401, 403, 503] {
+        for quota_first in [true, false] {
+            let upstream = MockServer::start().await;
+            let quota_body = r#"{"type":"error","error":{"type":"rate_limit_error","message":"quota exhausted"}}"#;
+            Mock::given(method("POST"))
+                .and(BearerToken("quota-token".into()))
+                .respond_with(
+                    ResponseTemplate::new(429)
+                        .insert_header("retry-after", "120")
+                        .insert_header("anthropic-ratelimit-unified-5h-status", "rejected")
+                        .set_body_string(quota_body),
+                )
+                .expect(u64::from(quota_first || status != 403))
+                .mount(&upstream)
+                .await;
+            Mock::given(method("POST"))
+                .and(BearerToken("other-token".into()))
+                .respond_with(ResponseTemplate::new(status).set_body_string("other failure"))
+                .expect(1)
+                .mount(&upstream)
+                .await;
+            let quota = account("quota", "SHUNT_TEST_FAILURE_QUOTA", "quota-id");
+            let other = account("other", "SHUNT_TEST_FAILURE_OTHER", "other-id");
+            let accounts = if quota_first {
+                vec![quota, other]
+            } else {
+                vec![other, quota]
+            };
+            let gateway = start_gateway_with(test_config_accounts(&upstream.uri(), accounts)).await;
+            let response = post_messages(&gateway, None).await;
+            // An ordinary 403 is still a terminal client refusal inside the pool.
+            if !quota_first && status == 403 {
+                assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            } else {
+                assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+                assert_eq!(response.headers()["retry-after"], "120");
+                assert_eq!(response.headers()["x-shunt-account"], "quota");
+                assert_eq!(response.headers()["x-shunt-upstream-status"], "429");
+                assert_eq!(response.text().await.unwrap(), quota_body);
+            }
+            upstream.verify().await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn organization_block_rotates_and_stays_excluded_after_healthy_marks() {
+    let mut vars = common::env_lock().await;
+    vars.set("SHUNT_TEST_ORG_BLOCKED", "blocked-token");
+    vars.set("SHUNT_TEST_ORG_WORKING", "working-token");
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(BearerToken("blocked-token".into()))
+        .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+            "type": "error", "error": {"type": "permission_error", "message": "oauth_not_allowed_for_organization"}
+        })))
+        .expect(1).mount(&upstream).await;
+    Mock::given(method("POST"))
+        .and(BearerToken("working-token".into()))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-shunt-account", "spoofed")
+                .insert_header("x-shunt-upstream-status", "403")
+                .set_body_string("success"),
+        )
+        .expect(3)
+        .mount(&upstream)
+        .await;
+    let blocked = account("blocked", "SHUNT_TEST_ORG_BLOCKED", "blocked-id");
+    let working = account("working", "SHUNT_TEST_ORG_WORKING", "working-id");
+    let (gateway, state) = start_gateway_with_state(test_config(
+        &upstream.uri(),
+        blocked.clone(),
+        working.clone(),
+    ))
+    .await;
+    for _ in 0..3 {
+        let response = post_messages(&gateway, None).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["x-shunt-account"], "working");
+        assert_eq!(response.headers()["x-shunt-upstream-status"], "200");
+        assert_eq!(response.text().await.unwrap(), "success");
+        // A concurrent success or usage update must not undo organization policy.
+        state.accounts.mark_healthy("anthropic", &blocked, true);
+    }
+    let snapshots = state
+        .accounts
+        .snapshot("anthropic", &[blocked, working], None, None);
+    assert!(snapshots[0].organization_blocked);
+    assert!(!snapshots[0].available);
+    assert!(!snapshots[1].organization_blocked);
+    upstream.verify().await;
+}
+
+#[tokio::test]
+async fn organization_block_does_not_hide_quota_and_reset_supplies_retry_after() {
+    let mut vars = common::env_lock().await;
+    vars.set("SHUNT_TEST_ORG_QUOTA", "quota-token");
+    vars.set("SHUNT_TEST_ORG_DENIED", "denied-token");
+    for quota_first in [true, false] {
+        let upstream = MockServer::start().await;
+        let reset = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 120;
+        Mock::given(method("POST"))
+            .and(BearerToken("quota-token".into()))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("anthropic-ratelimit-unified-5h-status", "rejected")
+                    .insert_header("anthropic-ratelimit-unified-5h-reset", reset.to_string())
+                    .set_body_string("quota failure"),
+            )
+            .expect(1)
+            .mount(&upstream)
+            .await;
+        Mock::given(method("POST"))
+            .and(BearerToken("denied-token".into()))
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "error": {"type": "oauth_not_allowed_for_organization"}
+            })))
+            .expect(1)
+            .mount(&upstream)
+            .await;
+        let quota = account("quota", "SHUNT_TEST_ORG_QUOTA", "quota-id");
+        let denied = account("denied", "SHUNT_TEST_ORG_DENIED", "denied-id");
+        let accounts = if quota_first {
+            vec![quota, denied]
+        } else {
+            vec![denied, quota]
+        };
+        let gateway = start_gateway_with(test_config_accounts(&upstream.uri(), accounts)).await;
+        let response = post_messages(&gateway, None).await;
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()["x-shunt-account"], "quota");
+        assert_eq!(response.headers()["x-shunt-upstream-status"], "429");
+        let delay: u64 = response.headers()["retry-after"]
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!((115..=120).contains(&delay), "delay was {delay}");
+        assert_eq!(response.text().await.unwrap(), "quota failure");
+        upstream.verify().await;
+    }
+}
+
+#[tokio::test]
+async fn unrelated_forbidden_body_is_relayed_without_blocking_the_account() {
+    let mut vars = common::env_lock().await;
+    vars.set("SHUNT_TEST_ORG_UNRELATED", "unrelated-token");
+    let upstream = MockServer::start().await;
+    let body = r#"{"error":{"type":"permission_error","message":"model access denied"}}"#;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(403).set_body_string(body))
+        .expect(2)
+        .mount(&upstream)
+        .await;
+    let entry = account("unrelated", "SHUNT_TEST_ORG_UNRELATED", "unrelated-id");
+    let (gateway, state) =
+        start_gateway_with_state(test_config_accounts(&upstream.uri(), vec![entry.clone()])).await;
+    for _ in 0..2 {
+        let response = post_messages(&gateway, None).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.text().await.unwrap(), body);
+    }
+    assert!(!state.accounts.snapshot("anthropic", &[entry], None, None)[0].organization_blocked);
+    upstream.verify().await;
+}
+
+#[tokio::test]
+async fn organization_block_after_throttle_retry_rotates_to_a_working_account() {
+    let mut vars = common::env_lock().await;
+    vars.set("SHUNT_TEST_ORG_THROTTLE", "throttle-token");
+    vars.set("SHUNT_TEST_ORG_BACKUP", "backup-token");
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(BearerToken("throttle-token".into()))
+        .respond_with(ResponseTemplate::new(429).insert_header("retry-after", "0"))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .expect(1)
+        .mount(&upstream)
+        .await;
+    Mock::given(method("POST"))
+        .and(BearerToken("throttle-token".into()))
+        .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+            "error": {"code": "oauth_not_allowed_for_organization"}
+        })))
+        .expect(1)
+        .mount(&upstream)
+        .await;
+    Mock::given(method("POST"))
+        .and(BearerToken("backup-token".into()))
+        .respond_with(ResponseTemplate::new(200).set_body_string("success"))
+        .expect(1)
+        .mount(&upstream)
+        .await;
+    let blocked = account("blocked", "SHUNT_TEST_ORG_THROTTLE", "blocked-id");
+    let backup = account("backup", "SHUNT_TEST_ORG_BACKUP", "backup-id");
+    let (gateway, state) =
+        start_gateway_with_state(test_config(&upstream.uri(), blocked.clone(), backup)).await;
+    let response = post_messages(&gateway, None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["x-shunt-account"], "backup");
+    assert!(state.accounts.snapshot("anthropic", &[blocked], None, None)[0].organization_blocked);
+    upstream.verify().await;
+}
