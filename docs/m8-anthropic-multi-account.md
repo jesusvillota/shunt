@@ -173,9 +173,12 @@ shunt classifies the upstream response before streaming its body. It never retri
 | 401 from a `credentials` account | Force-refresh the credentials file even if its token has not expired, retry the same account once, then cool it for five minutes and rotate if it is still 401. |
 | 401 from a `token_env` or store-managed setup-token account | It cannot be refreshed; cool it for five minutes and rotate. |
 | 5xx | Cool the account for 30 seconds and rotate. |
+| 403 with `oauth_not_allowed_for_organization` | Exclude the account identity from rotation and try the next account. |
 | Other status | Relay immediately. |
 
-When attempts are exhausted after receiving upstream responses, shunt relays the **last upstream response body and status** rather than replacing it with a generic gateway error. If every account fails before any upstream response exists (for example, all credentials fail to resolve), shunt returns a gateway-owned upstream error.
+When attempts are exhausted after receiving upstream responses, a received **429 takes priority** over later authentication or server failures (issue #59). The retained response keeps its upstream body and account attribution. An upstream `retry-after` is preserved; when absent, shunt derives it from known rejected quota-window resets. Otherwise shunt relays the last upstream response. If every account fails before any upstream response exists (for example, all credentials fail to resolve), shunt returns a gateway-owned upstream error.
+
+An organization-policy block sets `organization_blocked: true` and `available: false` in the admin pool snapshot. `shunt pool` displays `organization blocked`. Cooldown expiry, quota polls, and config reloads cannot clear the block. Correct the upstream organization policy, then restart the gateway to retry. The block is runtime state; it does not modify credential files.
 
 The `POST /v1/messages/count_tokens` Anthropic path uses the same account injection and failover behavior.
 
@@ -192,9 +195,10 @@ A pooled upstream response includes:
 
 ```http
 x-shunt-account: backup
+x-shunt-upstream-status: 200
 ```
 
-This is useful for observing selection and failover. On a shared gateway it also exposes configured account names to clients, so use neutral labels such as `primary`, `backup-1`, or `pool-a`, not names or email addresses. The final last-upstream-response relay after pool exhaustion does not include `x-shunt-account`.
+This is useful for observing selection and failover. On a shared gateway it also exposes configured account names to clients, so use neutral labels such as `primary`, `backup-1`, or `pool-a`, not names or email addresses. Errors returned after pool exhaustion also include `x-shunt-account`. The `x-shunt-upstream-status` header reports the upstream HTTP status.
 
 ## `account_uuid` rewrite
 

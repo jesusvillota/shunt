@@ -190,7 +190,9 @@ disabled = true              # 保留配置,但永不被选中
 | 5xx 或传输失败 | 冷却 30 秒并轮换。 |
 | 其他状态 | 直接中继,不做故障转移。 |
 
-分类发生在响应体开始流式传输之前,因此流中途的失败绝不会被重放。如果池在收到响应后耗尽了尝试,客户端会得到最后一个真实的上游状态和响应体。如果所有账户在收到任何上游响应之前都失败了,shunt 返回一个网关自身的错误。
+分类发生在响应体开始流式传输之前，因此流中途的失败不会被重放。如果所有尝试均失败，已收到的 429 优先于后续认证或服务器错误。响应保留该账户的上游响应体和 `retry-after`。如果没有 `retry-after`，shunt 会根据已知的被拒绝配额窗口重置时间计算。其他情况下返回最后一个上游响应。如果所有账户在收到任何上游响应之前都失败，则返回网关错误。
+
+收到包含 `oauth_not_allowed_for_organization` 的 403 后，shunt 会将该账户从轮换中排除并尝试下一个账户。`shunt pool` 显示 `organization blocked`，管理池响应设置 `organization_blocked: true` 和 `available: false`。冷却到期和配置重新加载不会解除此限制。修正上游组织策略后，重启网关即可重新尝试该账户。
 
 路由到 Anthropic 的 `POST /v1/messages/count_tokens` 请求使用同一个池。
 
@@ -256,9 +258,10 @@ anthropic-beta: ...,oauth-2025-04-20
 
 ```http
 x-shunt-account: backup
+x-shunt-upstream-status: 200
 ```
 
-在共享网关上请使用中性的账户名。该头部会把配置的标签暴露给收到响应的每个已授权客户端。池耗尽后对最后一个上游响应的中继会省略 `x-shunt-account`。
+在共享网关上请使用中性的账户名。该头部会把配置的标签暴露给收到响应的每个已授权客户端。池耗尽后返回的错误也会标识账户。`x-shunt-upstream-status` 表示上游 HTTP 状态。
 
 ### `account_uuid`
 

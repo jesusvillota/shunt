@@ -25,6 +25,9 @@ use crate::{
 mod auto_mode_classifier;
 mod deferral;
 mod model_rewrite;
+mod pool_failure;
+
+use pool_failure::{inspect_organization_block, quota_retry_after, remember_response};
 mod safeguards;
 mod thinking;
 
@@ -315,6 +318,12 @@ async fn forward_claude_oauth(
         state
             .accounts
             .note_quota(&route.provider, account, upstream.headers());
+        let (upstream, blocked) =
+            inspect_organization_block(&state, &route, account, upstream, bounds).await?;
+        if blocked {
+            remember_response(&mut last_response, upstream, &account.name);
+            continue;
+        }
         let status = upstream.status();
         match accounts::classify(status, upstream.headers()) {
             FailoverAction::Relay => {
@@ -333,6 +342,10 @@ async fn forward_claude_oauth(
                         Some(route.upstream_model.as_str()),
                         account,
                     );
+                }
+                if status == StatusCode::FORBIDDEN && last_response.is_some() {
+                    remember_response(&mut last_response, upstream, &account.name);
+                    break;
                 }
                 return relay_response(&state, &route, upstream, Some(&account.name), bounds)
                     .await
@@ -389,7 +402,7 @@ async fn forward_claude_oauth(
                     status = %status,
                     "Claude OAuth account failed over; cooling down and rotating to the next account"
                 );
-                last_response = Some(upstream);
+                remember_response(&mut last_response, upstream, &account.name);
             }
             FailoverAction::PauseSame => {
                 let delay = accounts::retry_after(upstream.headers())
@@ -407,9 +420,15 @@ async fn forward_claude_oauth(
                 )
                 .await?
                 else {
-                    last_response = Some(upstream);
+                    remember_response(&mut last_response, upstream, &account.name);
                     continue;
                 };
+                let (retry, blocked) =
+                    inspect_organization_block(&state, &route, account, retry, bounds).await?;
+                if blocked {
+                    remember_response(&mut last_response, retry, &account.name);
+                    continue;
+                }
                 let retry_status = retry.status();
                 if retry_status.is_success() {
                     state
@@ -439,6 +458,15 @@ async fn forward_claude_oauth(
                         status = %retry_status,
                         "Claude OAuth throttle retry did not succeed; cooling down account"
                     );
+                }
+                if retry_status == StatusCode::TOO_MANY_REQUESTS
+                    || (last_response.is_some()
+                        && (retry_status == StatusCode::FORBIDDEN
+                            || retry_status == StatusCode::UNAUTHORIZED
+                            || retry_status.is_server_error()))
+                {
+                    remember_response(&mut last_response, retry, &account.name);
+                    break;
                 }
                 return relay_response(&state, &route, retry, Some(&account.name), bounds)
                     .await
@@ -483,7 +511,7 @@ async fn forward_claude_oauth(
                         account = %account.name,
                         "Claude OAuth account returned 401 but its credential is not refreshable (token_env or long-lived setup token); cooling down"
                     );
-                    last_response = Some(upstream);
+                    remember_response(&mut last_response, upstream, &account.name);
                     continue;
                 }
 
@@ -500,7 +528,7 @@ async fn forward_claude_oauth(
                             account = %account.name,
                             "claude_oauth account resolved a non-OAuth credential"
                         );
-                        last_response = Some(upstream);
+                        remember_response(&mut last_response, upstream, &account.name);
                         continue;
                     }
                 };
@@ -557,7 +585,7 @@ async fn forward_claude_oauth(
                                 terminal,
                                 "failed to force-refresh Claude OAuth account"
                             );
-                            last_response = Some(upstream);
+                            remember_response(&mut last_response, upstream, &account.name);
                             continue;
                         }
                     }
@@ -579,9 +607,15 @@ async fn forward_claude_oauth(
                 )
                 .await?
                 else {
-                    last_response = Some(upstream);
+                    remember_response(&mut last_response, upstream, &account.name);
                     continue;
                 };
+                let (retry, blocked) =
+                    inspect_organization_block(&state, &route, account, retry, bounds).await?;
+                if blocked {
+                    remember_response(&mut last_response, retry, &account.name);
+                    continue;
+                }
                 let retry_status = retry.status();
                 if retry_status == StatusCode::UNAUTHORIZED {
                     // Refresh succeeded but the credential is still rejected — the
@@ -607,7 +641,7 @@ async fn forward_claude_oauth(
                         account,
                         accounts::ReloginCause::ServedRequest,
                     );
-                    last_response = Some(retry);
+                    remember_response(&mut last_response, retry, &account.name);
                     continue;
                 }
                 // Classify the refreshed retry the same way the initial response is
@@ -640,6 +674,10 @@ async fn forward_claude_oauth(
                             // place, because this change adds a signal and must not
                             // alter routing.
                             state.accounts.clear_needs_relogin(&route.provider, account);
+                        }
+                        if retry_status == StatusCode::FORBIDDEN && last_response.is_some() {
+                            remember_response(&mut last_response, retry, &account.name);
+                            break;
                         }
                         return relay_response(&state, &route, retry, Some(&account.name), bounds)
                             .await
@@ -697,7 +735,7 @@ async fn forward_claude_oauth(
                             status = %retry_status,
                             "Claude OAuth refresh retry did not succeed; rotating to the next account"
                         );
-                        last_response = Some(retry);
+                        remember_response(&mut last_response, retry, &account.name);
                         continue;
                     }
                 }
@@ -706,8 +744,21 @@ async fn forward_claude_oauth(
     }
 
     crate::metrics::record_pool_rotation(&route.provider, "exhausted");
-    if let Some(response) = last_response {
-        return relay_response(&state, &route, response, None, bounds).await;
+    if let Some((mut response, account_name)) = last_response {
+        let snapshots = state.accounts.snapshot(
+            &route.provider,
+            &accounts,
+            Some(route.upstream_model.as_str()),
+            state.config.server.pool.as_ref(),
+        );
+        quota_retry_after(
+            &mut response,
+            is_fable,
+            snapshots
+                .iter()
+                .find(|snapshot| snapshot.name == account_name),
+        );
+        return relay_response(&state, &route, response, Some(&account_name), bounds).await;
     }
 
     Err(AdapterError {
@@ -1078,7 +1129,9 @@ async fn relay_response(
     bounds: crate::adapters::ResponseBounds,
 ) -> Result<(StatusCode, axum::response::Response), AdapterError> {
     let status = upstream.status();
-    let response_headers = headers::filtered(upstream.headers());
+    let mut response_headers = headers::filtered(upstream.headers());
+    response_headers.remove("x-shunt-account");
+    response_headers.remove("x-shunt-upstream-status");
     let is_sse = upstream
         .headers()
         .get("content-type")
@@ -1095,7 +1148,9 @@ async fn relay_response(
     // body byte-for-byte, preserving passthrough for api.anthropic.com routes.
     let alias = (route.model != route.upstream_model).then(|| route.model.clone());
 
-    let mut builder = Response::builder().status(status);
+    let mut builder = Response::builder()
+        .status(status)
+        .header("x-shunt-upstream-status", status.as_str());
     for (name, value) in response_headers {
         if let Some(name) = name {
             builder = builder.header(name, value);

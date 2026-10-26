@@ -34,6 +34,7 @@ pub struct AccountDto {
     pub disabled: bool,
     pub paused: bool,
     pub needs_relogin: bool,
+    pub organization_blocked: bool,
     pub has_state: bool,
     pub near_quota: bool,
     pub priority: Option<u32>,

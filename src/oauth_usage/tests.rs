@@ -38,6 +38,7 @@ fn snapshot(
         status: None,
         quota_buckets: Vec::new(),
         needs_relogin: false,
+        organization_blocked: false,
         requests_attempted: 0,
         requests_succeeded: 0,
         requests_failed: 0,
