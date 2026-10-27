@@ -186,12 +186,12 @@ fn family_quota_acceptance_frames_use_one_account_row() {
             assert_eq!(buffer[(second, y)].fg, Color::Red);
             assert!(screen.contains("exhausted"));
             assert_eq!(buffer[(second + WINDOW_W as u16 + 2, y)].fg, Color::Red);
-        } else {
+        } else if width >= 100 {
             assert!(screen.contains("available"));
         }
-        if width < 80 {
-            assert!(!screen.contains("Claude + GPT"));
-        } else {
+        // Columns keep their offsets; a narrow terminal clips them.
+        assert!(screen.contains("Claude + GPT"), "{screen}");
+        if width >= 80 {
             assert!(screen.contains("Claude + GPT · weekly"));
             if name != "unknown quota" {
                 assert!(screen.contains("2d 2h"));
@@ -225,11 +225,11 @@ fn family_countdowns_are_never_cut_mid_token() {
 }
 
 #[test]
-fn hidden_second_family_still_surfaces_exhausted_state() {
+fn one_exhausted_family_is_not_an_exhausted_account_at_any_width() {
     let mut account = family_account();
     account.quota_buckets[0].remaining = Some(0.5);
     account.quota_buckets[1].remaining = Some(0.0);
-    for (width, expected) in [(68, true), (120, false)] {
+    for (width, expected) in [(68, false), (120, false)] {
         let mut app = app_from_account(account.clone());
         let (screen, _) = draw(&mut app, width, 10);
         assert_eq!(screen.contains("exhausted"), expected, "{screen}");
@@ -326,7 +326,7 @@ fn family_rows_handle_compact_unknown_paused_and_scrolled_views() {
     }));
     let mut app = app(vec![provider("agy", "antigravity_oauth", accounts)]);
     let (screen, _) = draw(&mut app, 84, 32);
-    assert!(screen.contains("Claude + GPT · 7d"), "{screen}");
+    assert!(screen.contains("Claude + GPT · weekly"), "{screen}");
     let unknown = screen.lines().find(|l| l.contains("unknown")).unwrap();
     assert_eq!(unknown.matches('—').count(), 2);
     assert!(!unknown.contains('%'));
@@ -905,4 +905,19 @@ fn opencode_shows_the_selected_ranker_and_the_picker_key() {
         "{text}"
     );
     assert!(!text.contains("chatgptweb"), "{text}");
+}
+
+#[test]
+fn family_columns_keep_their_offsets_at_every_width() {
+    let offsets = |width| {
+        let mut app = app_from_account(family_account());
+        let (screen, _) = draw(&mut app, width, 10);
+        let heading = screen.lines().find(|l| l.contains("Account")).unwrap();
+        (heading.find("Gemini"), heading.find("Claude"))
+    };
+    let first = offsets(70);
+    assert!(first.0.is_some() && first.1.is_some());
+    for width in [85, 100, 140] {
+        assert_eq!(offsets(width), first, "width {width}");
+    }
 }

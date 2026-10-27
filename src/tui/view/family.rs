@@ -9,14 +9,10 @@ pub(super) fn applies(provider: &ProviderView) -> bool {
 
 struct Columns {
     labels: Vec<String>,
-    name_width: usize,
-    cell_width: usize,
-    /// A reported family column was dropped for width.
-    narrowed: bool,
 }
 
 impl Columns {
-    fn new(provider: &ProviderView, width: usize) -> Self {
+    fn new(provider: &ProviderView) -> Self {
         let mut labels: Vec<String> = provider
             .rows
             .iter()
@@ -36,23 +32,7 @@ impl Columns {
         if labels.is_empty() {
             labels.push(String::new());
         }
-        let name_width = NAME_W.min(width.saturating_sub(4 + 14));
-        let mut narrowed = false;
-        let cell_width = if width >= 92 {
-            WINDOW_W
-        } else if width >= 80 {
-            (width - (NAME_W + 5) - 4 - (STATE_W + 1)) / 2
-        } else {
-            narrowed = labels.len() > 1;
-            labels.truncate(1);
-            WINDOW_W.min(width.saturating_sub(name_width + 5))
-        };
-        Self {
-            labels,
-            name_width,
-            cell_width,
-            narrowed,
-        }
+        Self { labels }
     }
 
     fn title(&self, label: &str) -> String {
@@ -61,12 +41,12 @@ impl Columns {
         } else {
             label.replace(" Models", "")
         };
-        let title = if title.chars().count() > self.cell_width {
+        let title = if title.chars().count() > WINDOW_W {
             title.replace(" · weekly", " · 7d")
         } else {
             title
         };
-        fit(&title, self.cell_width)
+        fit(&title, WINDOW_W)
     }
 }
 
@@ -102,12 +82,12 @@ fn cell(bucket: Option<&QuotaBucketDto>, now: u64, width: usize) -> Vec<Span<'st
         .collect()
 }
 
-pub(super) fn heading(provider: &ProviderView, width: usize) -> Line<'static> {
-    let columns = Columns::new(provider, width);
+pub(super) fn heading(provider: &ProviderView) -> Line<'static> {
+    let columns = Columns::new(provider);
     let mut spans = vec![Span::raw(format!(
         "{:>3} {}",
         "#",
-        fit("Account", columns.name_width + 1)
+        fit("Account", NAME_W + 1)
     ))];
     for (i, label) in columns.labels.iter().enumerate() {
         if i > 0 {
@@ -115,28 +95,21 @@ pub(super) fn heading(provider: &ProviderView, width: usize) -> Line<'static> {
         }
         spans.push(Span::raw(columns.title(label)));
     }
-    // Trailing columns appear only when they fit whole.
-    for text in [
-        format!("  {}", fit("State", STATE_W + 1)),
-        fit("Requests ok/fail · avg", REQUESTS_W + 1),
-        "Plan".to_string(),
-    ] {
-        let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-        if used + text.chars().count() <= width {
-            spans.push(Span::raw(text));
-        }
-    }
+    // Fixed offsets like the shared heading; a narrow terminal clips, never reflows.
+    spans.push(Span::raw(format!("  {}", fit("State", STATE_W + 1))));
+    spans.push(Span::raw(fit("Requests ok/fail · avg", REQUESTS_W + 1)));
+    spans.push(Span::raw("Plan"));
     Line::from(spans).dark_gray()
 }
 
 pub(super) fn account_line(entry: &Entry<'_>, now: u64, width: usize) -> Line<'static> {
     let (rank, row) = entry.row.expect("account entry");
     let a = &row.account;
-    let columns = Columns::new(entry.provider, width);
+    let columns = Columns::new(entry.provider);
     let rank = rank.map_or_else(|| "–".to_string(), |n| n.to_string());
     let mut spans = vec![
         Span::styled(format!("{rank:>3} "), Style::new().bold()),
-        Span::raw(fit(&a.name, columns.name_width + 1)),
+        Span::raw(fit(&a.name, NAME_W + 1)),
     ];
     for (i, label) in columns.labels.iter().enumerate() {
         if i > 0 {
@@ -145,17 +118,11 @@ pub(super) fn account_line(entry: &Entry<'_>, now: u64, width: usize) -> Line<'s
         spans.extend(cell(
             a.quota_buckets.iter().find(|b| &b.label == label),
             now,
-            columns.cell_width,
+            WINDOW_W,
         ));
     }
     let spent = |b: &QuotaBucketDto| b.remaining.is_some_and(|r| r.is_finite() && r <= 0.0);
-    // A family column hidden for width must still surface in the state.
-    let exhausted = !a.quota_buckets.is_empty()
-        && if columns.narrowed {
-            a.quota_buckets.iter().any(spent)
-        } else {
-            a.quota_buckets.iter().all(spent)
-        };
+    let exhausted = !a.quota_buckets.is_empty() && a.quota_buckets.iter().all(spent);
     let (state, style) = if exhausted
         && matches!(
             row.state,
