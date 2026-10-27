@@ -1583,7 +1583,8 @@ pub struct CodexRouteConfig {
     /// (`passthrough` or `none`) is rejected, since the inbound client's own
     /// `Authorization` is always stripped.
     pub provider: String,
-    /// Model id sent upstream; defaults to `model`.
+    /// Model id sent upstream; defaults to `model`. For `chatgptweb_browser`,
+    /// optional exact visible effort label; omission leaves effort unchecked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream_model: Option<String>,
 }

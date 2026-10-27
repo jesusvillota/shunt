@@ -9,6 +9,11 @@ export class BrowserDriver {
     this.context = context; this.account = account; this.profile = profile; this.url = url;
     this.ids = new Set();
   }
+  async close() {
+    this.closing = true;
+    await this.opening?.catch(() => {});
+    await this.page?.close().catch(() => {});
+  }
   async request(request, emit) {
     let submission = 'not_sent';
     let page;
@@ -26,7 +31,8 @@ export class BrowserDriver {
     this.ids.add(request.id);
     if (request.account !== this.account || request.profile_dir !== this.profile) return fail('account_mismatch');
     if (!['health', 'generate'].includes(request.type) || (request.type === 'generate' &&
-        (!nonblank(request.prompt) || !nonblank(request.model)))) return fail('invalid_request');
+        (!nonblank(request.prompt) || (request.model !== undefined && !nonblank(request.model))))) return fail('invalid_request');
+    if (this.closing) return fail('internal_error');
     const deadline = Date.now() + request.timeout_ms;
     const timer = setTimeout(() => {
       expired = true;
@@ -34,7 +40,9 @@ export class BrowserDriver {
       void page?.close().catch(() => {});
     }, request.timeout_ms);
     try {
-      page = await this.context.newPage();
+      this.opening = this.context.newPage();
+      page = this.page = await this.opening;
+      if (this.closing) throw new PageError('internal_error');
       if (expired) throw new PageError('timeout');
       page.setDefaultTimeout(Math.max(1, deadline - Date.now()));
       const chat = new ChatPage(page, this.url);
@@ -68,6 +76,7 @@ export class BrowserDriver {
     } finally {
       clearTimeout(timer);
       await page?.close().catch(() => {});
+      this.page = undefined;
     }
   }
 }

@@ -22,6 +22,14 @@ There is no HTTP listener, bearer token, or unsolicited startup event.
 Launch with `node helpers/chatgptweb-browser/cli.mjs --account ACCOUNT
 --profile-dir ABSOLUTE_PATH`. The Node helper uses Playwright Chromium and
 keeps the browser's persistent profile at that exact path. See the helper README.
+Direct helper runs accept `--chrome` to attach to an already running Chrome
+at `http://127.0.0.1:9333` through CDP. `--cdp-url` accepts an HTTP loopback
+endpoint without authentication. Start Chrome manually with its separate
+`~/.local/share/shunt/chatgptweb-browser/chrome/cemfi` profile and the debugging
+port. The helper adds no browser flags. Shutdown closes only its request tab,
+leaving the owner's browser open. `--headless` applies only to launched
+Chromium and cannot be combined with `--chrome`. Shunt does not pass these
+flags. See the [helper instructions](../helpers/chatgptweb-browser/README.md).
 
 Shunt serializes requests per helper. Only one request can be active, including
 health checks. Every request has a nonblank `id`, unique within that helper's
@@ -59,13 +67,13 @@ gets `unsupported_version`. An invalid value gets `invalid_request`.
 ### Generate
 
 `type` is `generate`. `prompt` is nonblank plain text, preserved exactly,
-including whitespace and Unicode. `model` is a nonblank exact model identifier
-agreed by the helper and adapter; no model IDs are advertised by this module.
-An unavailable or unknown model gets `invalid_request` before sending.
-Do not substitute a different model.
+including whitespace and Unicode. `model` is optional. When present, it is a
+nonblank exact visible effort label, such as `Medium` or `High` (DEC-004).
+Omission leaves effort unchecked; it does not mean the public route name. A
+mismatch gets `invalid_request` before sending. Never change the selected effort.
 
 ```json
-{"version":1,"id":"turn-1","type":"generate","account":"personal","profile_dir":"/profiles/personal","timeout_ms":120000,"prompt":"Hello\nworld","model":"example-chat-model"}
+{"version":1,"id":"turn-1","type":"generate","account":"personal","profile_dir":"/profiles/personal","timeout_ms":120000,"prompt":"Hello\nworld","model":"Medium"}
 ```
 
 Start a fresh chat for each generate request. Immediately before every physical

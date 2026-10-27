@@ -26,7 +26,7 @@ fn request(command: DriverCommand) -> DriverRequest {
 fn generate(prompt: &str) -> DriverRequest {
     request(DriverCommand::Generate {
         prompt: prompt.into(),
-        model: "fixture-model".into(),
+        model: Some("fixture-model".into()),
     })
 }
 
@@ -257,7 +257,6 @@ fn chatgptweb_wire_rejects_unknown_or_malformed_messages() {
         "timeout_ms",
         "type",
         "prompt",
-        "model",
     ] {
         let mut value = valid.clone();
         value.as_object_mut().unwrap().remove(field);
@@ -266,6 +265,14 @@ fn chatgptweb_wire_rejects_unknown_or_malformed_messages() {
             "{field}"
         );
     }
+    let mut optional = valid.clone();
+    optional.as_object_mut().unwrap().remove("model");
+    assert!(matches!(
+        serde_json::from_value::<DriverRequest>(optional)
+            .unwrap()
+            .command,
+        DriverCommand::Generate { model: None, .. }
+    ));
     for bad in [
         r#"{"version":1,"id":"a","type":"unknown"}"#,
         r#"{"version":1,"id":"a","type":"text_delta"}"#,

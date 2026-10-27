@@ -22,7 +22,7 @@ async function harness(state, run) {
   const request = async (fields = {}) => {
     const events = [];
     await driver.request({ version: 1, id: `request-${id++}`, type: 'generate', account: 'fixture',
-      profile_dir: profile, timeout_ms: 5000, prompt, model: 'fixture-model', ...fields }, e => events.push(e));
+      profile_dir: profile, timeout_ms: 5000, prompt, model: 'Medium', ...fields }, e => events.push(e));
     return events;
   };
   try { await run({ request, fixture, context }); }
@@ -47,7 +47,7 @@ test('clipboard preserves prompt; streams before completion; fresh chat per turn
 for (const [state, code] of [
   ['work', 'not_chat_mode'], ['logged_out', 'logged_out'], ['drift', 'ui_drift'], ['composer_drift', 'ui_drift'],
   ['missing', 'not_chat_mode'], ['unknown', 'not_chat_mode'], ['conflicting', 'not_chat_mode'],
-  ['switch_on_paste', 'not_chat_mode'],
+  ['switch_on_paste', 'not_chat_mode'], ['mixed_work', 'not_chat_mode'], ['duplicate_chat', 'not_chat_mode'],
 ]) test(`${state}: fails closed and sends nothing`, async () => {
   await harness(state, async ({ request, fixture }) => {
     for (const type of ['generate', 'health']) {
@@ -126,7 +126,7 @@ for (const stop of ['eof', 'SIGTERM']) test(`CLI ${stop} cancels an active gener
   const exit = new Promise(resolve => child.once('exit', resolve));
   try {
     child.stdin.write(`${JSON.stringify({ version: 1, id: 'cancel', type: 'generate', prompt,
-      model: 'fixture-model', account: 'fixture', profile_dir: profile, timeout_ms: 60000 })}\n`);
+      model: 'Medium', account: 'fixture', profile_dir: profile, timeout_ms: 60000 })}\n`);
     assert.equal(JSON.parse((await lines.next()).value).type, 'text_delta');
     if (stop === 'eof') child.stdin.end(); else child.kill(stop);
     assert.equal(await exit, 0);
@@ -135,4 +135,84 @@ for (const stop of ['eof', 'SIGTERM']) test(`CLI ${stop} cancels an active gener
     child.kill(); fixture.server.closeAllConnections(); fixture.server.close();
     await rm(profile, { recursive: true, force: true });
   }
+});
+
+for (const stop of ['eof', 'SIGTERM']) test(`CDP ${stop} closes only the helper page`, { timeout: 15000 }, async () => {
+  const { createServer } = await import('node:net');
+  const socket = createServer();
+  await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
+  const port = socket.address().port;
+  await new Promise(resolve => socket.close(resolve));
+  const profile = await mkdtemp(join(tmpdir(), 'shunt-web-cdp-'));
+  const fixture = await serve();
+  const context = await chromium.launchPersistentContext(profile, {
+    headless: true, args: [`--remote-debugging-port=${port}`],
+    permissions: ['clipboard-read', 'clipboard-write'],
+  });
+  const ownerPage = context.pages()[0];
+  const child = spawn(process.execPath, [new URL('cli.mjs', root).pathname, '--chrome',
+    '--cdp-url', `http://127.0.0.1:${port}`, '--account', 'fixture', '--profile-dir', profile,
+    '--fixture-url', `${fixture.url}?state=timeout`]);
+  const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  const exit = new Promise(resolve => child.once('exit', resolve));
+  try {
+    child.stdin.write(`${JSON.stringify({ version: 1, id: 'cdp', type: 'generate', prompt,
+      model: 'Medium', account: 'fixture', profile_dir: profile, timeout_ms: 60000 })}\n`);
+    assert.equal(JSON.parse((await lines.next()).value).type, 'text_delta');
+    if (stop === 'eof') child.stdin.end(); else child.kill(stop);
+    assert.equal(await exit, 0);
+    assert.equal(ownerPage.isClosed(), false);
+    assert.equal(await ownerPage.evaluate(() => 6 * 7), 42);
+    assert.equal(context.pages().length, 1);
+    assert.equal(fixture.stats.sends, 1);
+  } finally {
+    child.kill(); await context.close(); fixture.server.closeAllConnections(); fixture.server.close();
+    await rm(profile, { recursive: true, force: true });
+  }
+});
+
+test('CDP rejects remote endpoints and incompatible launch flags before connecting', async () => {
+  for (const args of [
+    ['--chrome', '--cdp-url', 'http://example.com:9333'],
+    ['--chrome', '--cdp-url', 'http://127.0.0.1.example.com:9333'],
+    ['--chrome', '--cdp-url', 'http://user:secret@127.0.0.1:9333'],
+    ['--chrome', '--cdp-url', 'https://127.0.0.1:9333'],
+    ['--chrome', '--headless'], ['--cdp-url', 'http://127.0.0.1:9333'],
+  ]) {
+    const child = spawn(process.execPath, [new URL('cli.mjs', root).pathname,
+      '--account', 'fixture', '--profile-dir', '/tmp/shunt-cdp-validation', ...args]);
+    let stderr = ''; child.stderr.on('data', data => { stderr += data; });
+    assert.equal(await new Promise(resolve => child.once('exit', resolve)), 1);
+    assert.match(stderr, /CDP requires --chrome, an HTTP loopback URL without authentication, and no --headless/);
+  }
+});
+
+for (const model of [undefined, 'Medium', 'High', '']) test(`optional effort guard: ${model}`, async () => {
+  await harness('chat', async ({ request, fixture }) => {
+    const events = await request({ model });
+    assert.equal(events.at(-1).type, model === undefined || model === 'Medium' ? 'done' : 'error');
+    assert.equal(fixture.stats.sends, model === undefined || model === 'Medium' ? 1 : 0);
+  });
+});
+
+test('health waits for the profile control to finish rendering', async () => {
+  await harness('loading', async ({ request, fixture }) => {
+    assert.equal((await request({ type: 'health' })).at(-1).type, 'health');
+    assert.equal(fixture.stats.sends, 0);
+  });
+});
+
+test('CDP shutdown waits for page creation and prevents any later navigation', async () => {
+  let resolvePage;
+  let closed = false;
+  const driver = new BrowserDriver({ newPage: () => new Promise(resolve => { resolvePage = resolve; }) },
+    'fixture', '/tmp/fixture', 'http://127.0.0.1/');
+  const events = [];
+  const request = driver.request({ version: 1, id: 'pending', type: 'health',
+    account: 'fixture', profile_dir: '/tmp/fixture', timeout_ms: 5000 }, event => events.push(event));
+  const closing = driver.close();
+  resolvePage({ close: async () => { closed = true; }, goto: () => assert.fail('must not navigate') });
+  await closing; await request;
+  assert.equal(closed, true);
+  assert.equal(events[0].error.submission, 'not_sent');
 });

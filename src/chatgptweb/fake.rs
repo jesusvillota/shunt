@@ -72,7 +72,9 @@ impl FakeDriver {
             );
         }
         if let DriverCommand::Generate { prompt, model } = &request.command {
-            if prompt.trim().is_empty() || model.trim().is_empty() {
+            if prompt.trim().is_empty()
+                || model.as_ref().is_some_and(|model| model.trim().is_empty())
+            {
                 return Self::reject(ErrorCode::InvalidRequest, "empty prompt or model");
             }
         }
@@ -84,11 +86,10 @@ impl FakeDriver {
         match &request.command {
             DriverCommand::Health => vec![Event::Health],
             DriverCommand::Generate { prompt, model } => {
-                let Some(fixture) = self
-                    .fixtures
-                    .iter()
-                    .find(|fixture| fixture.prompt == *prompt && fixture.model == *model)
-                else {
+                let Some(fixture) = self.fixtures.iter().find(|fixture| {
+                    fixture.prompt == *prompt
+                        && model.as_ref().is_none_or(|model| fixture.model == *model)
+                }) else {
                     return Self::reject(ErrorCode::InvalidRequest, "no matching fixture");
                 };
                 let mut events: Vec<_> = fixture

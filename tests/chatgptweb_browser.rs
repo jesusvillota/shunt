@@ -159,7 +159,7 @@ async fn chatgptweb_browser_uses_shared_fake_conformance_with_local_page() {
                     id,
                     DriverCommand::Generate {
                         prompt: "exact 🌍\n你好".into(),
-                        model: "fixture-model".into(),
+                        model: Some("Medium".into()),
                     },
                 );
                 assert_case(

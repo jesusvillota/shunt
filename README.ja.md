@@ -2,6 +2,9 @@
 
 実験的なテキスト専用 ChatGPT Web 機能は、Codex Responses エンドポイントで `kind = "chatgptweb_browser"` を指定して使えます。ログイン済みのブラウザープロファイルを1つと、別の Node ヘルパーを使います。ツールは拒否します。[設定と制限](docs/chatgptweb-provider.md)を参照してください。
 
+ブラウザーヘルパーの `--chrome` はループバックのデバッグポートで実行中の Chrome に接続します。ヘルパーはブラウザーを閉じません。[ヘルパーの手順（英語）](helpers/chatgptweb-browser/README.md)を参照してください。
+ChatGPT Web の任意項目 `upstream_model` は画面の思考努力ラベル（例: `Medium`）と完全一致するか確認します。ヘルパーは努力を変更しません。
+
 オフライン認証情報インポート: `shunt import opencodex --dry-run` で互換 API キーと Cursor/Command Code のアクセストークンを確認できます。既存設定を変更せず、更新トークンをコピーせずに新しい非公開スナップショットを作成します。[インポートガイド（英語）](docs/credential-import.md)を参照してください。
 
 [![CI](https://github.com/pleaseai/shunt/actions/workflows/ci.yml/badge.svg)](https://github.com/pleaseai/shunt/actions/workflows/ci.yml)
