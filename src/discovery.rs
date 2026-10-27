@@ -68,6 +68,10 @@ const BUILTIN_MODELS: &[BuiltinModel] = builtin_models![
     "claude-haiku-4-5-20251001" => "Claude Haiku 4.5", "2025-10-15T00:00:00Z", 200_000, 64_000;
     "claude-sonnet-4-5-20250929" => "Claude Sonnet 4.5", "2025-09-29T00:00:00Z", 1_000_000, 64_000;
     "claude-opus-4-1-20250805" => "Claude Opus 4.1", "2025-08-05T00:00:00Z", 200_000, 32_000;
+    "claude-gemini-3.8-flash-low-via-antigravity" => "Gemini 3.8 Flash Low (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
+    "claude-gemini-3.8-flash-via-antigravity" => "Gemini 3.8 Flash (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
+    "claude-gemini-3.8-flash-medium-via-antigravity" => "Gemini 3.8 Flash Medium (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
+    "claude-gemini-3.1-pro-high-via-antigravity" => "Gemini 3.1 Pro High (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
 ];
 
 /// Anthropic list envelope. shunt never paginates, so `has_more` is constant,
