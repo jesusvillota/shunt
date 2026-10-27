@@ -137,6 +137,7 @@ flowchart TD
     DEC_003{{"DEC-003 May TASK-002 fix the existing stage-store clippy error, or must issue #52 be fixed separately?"}}
     DEC_004{{"DEC-004 Fix the driver in this PR, or in a new task, and what does upstream_model mean when the page shows no model name?"}}
     DEC_005{{"DEC-005 May TASK-012 send one additional short Chat-mode prompt after the cemfi browser check succeeds?"}}
+    DEC_006{{"DEC-006 How should TASK-012 obtain completed live answer markup after the DEC-005 prompt produced no observable assistant turn?"}}
     TASK_001["TASK-001 Survey the web driver approach and shunt adapter seams"]
     TASK_002["TASK-002 Define the driver protocol and a fake driver"]
     TASK_003["TASK-003 Build the real Chat-mode driver"]
@@ -175,6 +176,7 @@ flowchart TD
   TASK_007 --> TASK_010
   TASK_009 --> TASK_010
   DEC_005 --> TASK_012
+  DEC_006 --> TASK_012
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
@@ -183,6 +185,7 @@ flowchart TD
   class DEC_003 decision
   class DEC_004 decision
   class DEC_005 decision
+  class DEC_006 decision
 ```
 <!-- goal:graph:end -->
 
