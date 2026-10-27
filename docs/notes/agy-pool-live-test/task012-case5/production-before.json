@@ -1,6 +1,0 @@
-{
-  "config_sha256": "41c267ae3f54974b6644357922a7b85fb501d1e98ab5cbddea243d485a7438b0",
-  "launchd": [
-    "57240\t0\tcom.jesusvillotamiranda.shunt"
-  ]
-}
