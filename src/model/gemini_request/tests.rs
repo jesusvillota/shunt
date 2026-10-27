@@ -928,3 +928,36 @@ fn any_of_is_sent_as_one_of() {
     assert!(x.get("anyOf").is_none());
     assert_eq!(x["oneOf"].as_array().unwrap().len(), 2);
 }
+
+#[test]
+fn claude_tool_pairing_carries_ids_and_gemini_does_not() {
+    let input = json!({
+        "messages": [
+            { "role": "user", "content": "go" },
+            { "role": "assistant", "content": [
+                { "type": "tool_use", "id": "toolu_1", "name": "ls", "input": {} }
+            ]},
+            { "role": "user", "content": [
+                { "type": "tool_result", "tool_use_id": "toolu_1", "content": "ok" }
+            ]}
+        ]
+    });
+
+    let claude = translate_request_for_model(&input, "claude-sonnet-4-6").unwrap();
+    assert_eq!(
+        claude["contents"][1]["parts"][0]["functionCall"]["id"],
+        "toolu_1"
+    );
+    assert_eq!(
+        claude["contents"][2]["parts"][0]["functionResponse"]["id"],
+        "toolu_1"
+    );
+
+    let gemini = translate_request_for_model(&input, "gemini-2.5-pro").unwrap();
+    assert!(gemini["contents"][1]["parts"][0]["functionCall"]
+        .get("id")
+        .is_none());
+    assert!(gemini["contents"][2]["parts"][0]["functionResponse"]
+        .get("id")
+        .is_none());
+}
