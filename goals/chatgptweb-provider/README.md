@@ -149,6 +149,9 @@ flowchart TD
   end
   subgraph M_2["M-2 · Tool calls for Codex"]
     TASK_007["TASK-007 Plan: decompose M-2"]
+    TASK_013["TASK-013 Define and test the ChatGPT Web text tool protocol"]
+    TASK_014["TASK-014 Integrate Codex tool turns and a self-checking fake demo"]
+    TASK_015["TASK-015 Live smoke a Codex shell and file-edit task in Chat mode"]
   end
   subgraph M_3["M-3 · Two-account pool"]
     TASK_008["TASK-008 Plan: decompose M-3"]
@@ -171,11 +174,22 @@ flowchart TD
   TASK_012 --> TASK_006
   DEC_001 --> TASK_007
   TASK_007 --> TASK_008
+  TASK_015 --> TASK_008
   TASK_001 --> TASK_009
   TASK_007 --> TASK_010
   TASK_009 --> TASK_010
+  TASK_015 --> TASK_010
   DEC_005 --> TASK_012
   DEC_006 --> TASK_012
+  TASK_007 --> TASK_013
+  TASK_004 --> TASK_013
+  TASK_012 --> TASK_013
+  DEC_001 --> TASK_013
+  DEC_002 --> TASK_013
+  TASK_013 --> TASK_014
+  TASK_014 --> TASK_015
+  TASK_005 --> TASK_015
+  TASK_012 --> TASK_015
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
