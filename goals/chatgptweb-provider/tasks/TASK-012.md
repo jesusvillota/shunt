@@ -25,6 +25,7 @@ DEC-004 decision on `upstream_model`: the page shows no model name. Drop the mod
 - Fixtures built from the live markup cover Chat, Work, logged out and a changed layout; Work mode returns `not_chat_mode` with nothing sent.
 - The conformance runner and `npm test` pass; no cookie, storage or credential access.
 - `upstream_model` behaves as decided, and docs and translations agree.
+- Real Chrome: add a `--chrome` option that launches the installed Google Chrome (Playwright `channel: 'chrome'`) instead of bundled Chromium. Chromium hit captchas and the "browser check couldn't finish" page; real Chrome did not when driven by hand. Use its own profile directory, `~/.local/share/shunt/chatgptweb-browser/chrome/cemfi` (Chrome blocks automation on the everyday profile). Do not remove Playwright's default automation flags and add no stealth or challenge bypass. The owner signs in once by hand in that window (email sign-in); wait for it, then run the headed live `health` call and report the result. If Chrome also fails the browser check, stop and report: do not work around it.
 - Headless check: run the live `health` call on the signed-in `cemfi` profile again with `--headless` and report whether the page accepts it (`ok`, or the error code such as `logged_out` or `ui_drift`). Report only. Do not add stealth or any challenge bypass, and do not change the default (headed) mode. The owner wants to work on the Mac while the driver runs in the background, so this result decides whether headless can become the default later.
 
 ## Verify
