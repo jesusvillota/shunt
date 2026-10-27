@@ -1,94 +1,59 @@
 # TASK-012 outcome
 
-Status: **blocked**. Installed Google Chrome cannot finish the default Playwright launch. No window became available for manual sign-in. The launch timed out after 180 seconds, before navigation, browser-check inspection or headed health. TASK-012 is not delivered.
+Status: ready for review. The driver reads the live signed-in page and its completed answer. The owner restored access manually. DEC-006's one guarded prompt completed with `OK`; no retry occurred. Chrome remains open.
 
 ## Acceptance
 
-1. [ ] Signed-in `cemfi` health returns `ok`, with live Chat selection.
-   Not reached in this session: Chrome failed during `launchPersistentContext`, before a page or driver health result existed. No successful health output is claimed.
-2. [ ] Sanitized live fixtures cover Chat, Work, logged out and changed layout; Work sends nothing.
-   Live answer markup remains unavailable. Existing synthetic fixtures are unchanged. Their Work rejection test passed locally, but does not satisfy the live-fixture requirement.
-3. [x] Conformance runner and `npm test` pass; no cookie, storage or credential access.
-   This session passed all 18 Node tests, including the source-access check, and the shared Rust conformance test. The live launcher attempted no cookie, storage, credential, private API or network interception access. No account content was captured.
-4. [ ] `upstream_model` follows DEC-004 and docs/translations agree.
-   Not implemented. The optional exact visible effort-label behavior still needs the driver, adapter, validation and documentation changes. Current model-label semantics remain in place. The new Chrome launch option is documented in the helper, protocol, provider guide, root README and site provider page, including their maintained translations. Generated wiki files were not edited.
-5. [ ] Real Chrome opens the separate profile; owner signs in; headed health is reported.
-   `--chrome` now selects Playwright `channel: 'chrome'`. Default flags and headed operation are preserved. The launch used `~/.local/share/shunt/chatgptweb-browser/chrome/cemfi`, but failed before a sign-in window opened. Installed Chrome version: `156.0.8078.48`. This is partial implementation, not acceptance.
-6. [ ] Repeat live health with `--headless` and report the result.
-   Not run in this session. The required headed step could not start. Missing browser access blocks the requested sequence before further live work.
+1. [x] Signed-in `cemfi` health succeeds and reads live Chat selection.
+   The final CLI ran with `--chrome`, the separate `~/.local/share/shunt/chatgptweb-browser/chrome/cemfi` binding, and the default loopback CDP endpoint. Exact stdout:
 
-## Live launch evidence
+   ```json
+   {"version":1,"id":"task012-cdp-headed-final","type":"health"}
+   ```
 
-Date: 2026-10-27. DEC-006 option 2 remains accepted. Its one additional guarded prompt was **not used in this session**. No text was inserted and no physical Send occurred. No Chat/Work control, login flow or browser challenge was automated.
+   Read-only live mode output:
 
-The read-only temporary launcher used the same installed Playwright and launch options as the helper's Chrome path:
+   ```json
+   [{"text":"Chat","pressed":"true"},{"text":"Work","pressed":"false"}]
+   ```
 
-```js
-await chromium.launchPersistentContext(profile, {
-  channel: 'chrome', headless: false,
-  permissions: ['clipboard-read', 'clipboard-write'],
-});
-```
+   The live guard also returned `{"model":"Medium","prompt":"","disabled":true}`. An empty live composer shows Start Voice instead of Send. The driver waits for profile/effort controls to finish rendering.
+2. [x] Sanitized live structures cover Chat, Work, logged out and layout drift; Work sends nothing.
+   `test/fixture.mjs` projects the observed mode group, pressed buttons, ProseMirror textbox, visible effort span, profile control, submit button, user bubble, assistant renderer, turn wrapper, completed state and Copy/Stop controls. Identifiers and text are synthetic. Work and drift are local mutations of this structure, not live mode switches. Work, missing/unknown/conflicting states, malformed Work state, duplicate Chat labels and a mode change during paste all reject with `not_chat_mode` and zero fixture sends. The logged-out fixture uses the live `data-login-button` attributes. No account name, old chats, secrets or profile files are committed.
+3. [x] Browser tests and the shared conformance runner pass; no secret extraction.
+   Final `npm test --prefix helpers/chatgptweb-browser` exited 0: 29 Node tests passed, zero failed; shared Rust conformance passed 1/1. The unchanged source-access check rejects cookie, storage, credential and network extraction APIs. Live work read rendered DOM only. No login, browser challenge, Work selection, private API or account-secret access was automated.
+4. [x] Optional `upstream_model` means the exact visible effort label (DEC-004).
+   Rust preserves omission as `None`; the browser receives no effort constraint in that case. A configured label must match exactly before sending and in the atomic guard. Node tests cover omitted, matching, mismatched and empty labels. Rust tests cover the optional wire field, blank-field rejection, default-provider omission and a routed omission with a public name unrelated to effort. Existing config validation accepts omission and rejects a blank configured value. The config field comment, example, protocol, helper/provider docs, root README and provider site page agree; maintained README/site translations are updated. No public config key was added.
+5. [x] Real Chrome access, manual sign-in and headed health are reported.
+   As explicitly requested for this resume, `--chrome` now uses `chromium.connectOverCDP(url)` instead of launching Chrome. The endpoint defaults to `http://127.0.0.1:9333`; overrides accept HTTP numeric loopback only, without authentication. The helper adds no browser flags. Shutdown closes only its request tab, including when tab creation is still pending. EOF/SIGTERM tests prove the owner's page remains usable. Final live inspection reported `OWNER_BROWSER_ALIVE true` after CLI shutdown.
+6. [x] Headless checks run where possible; the live limitation is reported.
+   All browser fixtures and conformance ran in headless Chromium. Live signed-in headless health was not run: the supplied Chrome was already headed, and CDP cannot change its display mode. Restarting it would conflict with the instruction to leave it open; copying its sign-in state would conflict with the no-extraction boundary. `--chrome --headless` is rejected explicitly and tested. This follows the resume instruction's “headless check where possible” qualification, rather than claiming a second live display-mode result.
 
-`profile` was the absolute expanded `~/.local/share/shunt/chatgptweb-browser/chrome/cemfi` path. No custom browser flags, stealth settings or challenge bypass were used. The intended next step was to open ChatGPT and allow up to 15 minutes for the owner's hand sign-in. That wait could not begin because launch never returned.
+## Live sequence and single-send evidence
 
-Actual launch output, with the default flag list omitted:
+Date: 2026-10-27. The read-only manual-sign-in wait began at 22:37:35 UTC, with a 22:52:35 deadline. It observed logged-out controls until the signed-in profile and Composer mode controls appeared at 22:40:20. No challenge iframe was observed during the successful sequence. Initial health reported `logged_out`, `submission: not_sent`.
 
-```text
-browserType.launchPersistentContext: Timeout 180000ms exceeded.
-  - <launching> /Applications/Google Chrome.app/Contents/MacOS/Google Chrome ...
-  - <launched> pid=42940
-  - [pid=42940][err] Trying to load the allocator multiple times. This is *not* supported.
-```
+After successful headed health, the helper's production guard read Chat=true, Work=false and effort `Medium`. One fresh task tab staged `Reply with exactly OK.` using Playwright's textbox fill. The production `inspect` function checked mode, effort, exact prompt and enabled Send, then clicked Send in one JavaScript task. A temporary exclusive-create marker prevented another attempt. There was exactly one physical Send; no retries or further prompts followed.
 
-The launcher exited 1. During launch, `orca computer list-windows --app pid:42940 --json` returned `windows: []`. After the timeout, the process was absent. Therefore there is no headed health JSON, live mode selection, completed answer DOM, or headless result from this session. This is a Chrome startup failure; the task did not reach the website's browser check.
+The page showed Stop during generation, then Copy and `data-talvt-turn-state="complete"`. Production `ChatPage.answer()` read accepted=true, text=`OK`, invalid=false, done=true, with a stable turn identity. Completion came from rendered DOM, not Copy output. The full clipboard/streaming pipeline is covered by headless fixture tests; no second live generation was used to retest it after learning the markup.
 
 ## Verification
 
-Verified source revision: `41e56d7e` (source and docs commit). The following commands ran on the same source before that commit; later edits only update this outcome.
+Verified source revision: `8c1f05ea`. Subsequent changes only record this outcome.
 
-`npm test --prefix helpers/chatgptweb-browser` — exit 0:
+- `npm test --prefix helpers/chatgptweb-browser`: exit 0; 29 passed, 0 failed; shared Rust conformance 1 passed, 0 failed.
+- `cargo fmt --all --check`: exit 0, no output.
+- `cargo clippy --all-targets -- -D warnings`: exit 0; `Finished dev profile`.
+- `cargo test`: exit 0; 3,729 passed, 0 failed, 4 ignored across 51 result summaries, including the new routed optional-effort test.
+- `node --check` for CLI/page and `git diff --check`: passed.
+- Independent code review found shutdown-during-tab-creation and malformed-mode gaps. Both were fixed with tests; the reviewer found no remaining important issues. GitHub review-thread query returned an empty list.
 
-```text
-ℹ tests 18
-ℹ pass 18
-ℹ fail 0
-ℹ cancelled 0
-ℹ skipped 0
-chatgptweb_browser_uses_shared_fake_conformance_with_local_page ... ok
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.48s
-```
-
-`cargo fmt --all --check` — exit 0, no output.
-
-`cargo clippy --all-targets -- -D warnings` — exit 0:
-
-```text
-Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.02s
-```
-
-`cargo test` — exit 101:
-
-```text
-gateway::spend::persist::tests::malformed_typed_limit_is_hidden_without_losing_valid_limits
-panicked at src/gateway/spend/persist/tests.rs:233:9
-(empty captured warning log)
-test result: FAILED. 3017 passed; 1 failed; 3 ignored
-```
-
-The failure matches existing [issue #60](https://github.com/jesusvillota/shunt/issues/60). Duplicate searches and issue inspection confirmed the same parallel log-capture assertion. The exact isolated rerun passed:
-
-```text
-cargo test --lib gateway::spend::persist::tests::malformed_typed_limit_is_hidden_without_losing_valid_limits -- --exact
-test result: ok. 1 passed; 0 failed; 0 ignored; 3020 filtered out
-```
-
-No spend-limit code or tests were changed. The full test suite did not pass or reach later test binaries. `node --check helpers/chatgptweb-browser/cli.mjs` and `git diff --check` passed. GitHub Actions were not inspected. Site pages were not built.
+GitHub Actions were not inspected. Site pages were not built. The live signed-in headless limitation is stated above. English UI labels remain necessary for some controls; unfamiliar markup fails closed. TASK-006 still owns the quota check.
 
 ## Summary
 
-What: added `--chrome` and documented its separate profile and direct-launch use. How: two production lines select Playwright's installed Chrome channel while keeping default flags. Deviation: Chrome startup prevented manual sign-in and all subsequent live steps; no selector, fixture or `upstream_model` fix was attempted without the required live evidence.
+What: attach to the owner's Chrome, read the current Chat-only composer and completed-turn DOM, and carry optional effort checks through the adapter and protocol. How: reuse Playwright CDP, the existing atomic guard, the existing driver protocol and local conformance runner. All affected documentation surfaces were considered; README, docs and translated site pages changed, while generated wiki files were left to their separate workflow.
 
-The temporary launcher is outside the repository. No secrets or profile files are committed. No task spec, accepted decision, other task or goal metadata was edited. PR #58 remains an open draft with `Goal-Task: chatgptweb-provider/TASK-012` and `Goal-Blocked: installed Google Chrome launch times out before manual sign-in`. No review threads were present in the session's GitHub query.
+Deviation from launch wording: the owner's later instruction replaces Playwright Chrome launch with attachment to the already running browser. No automation flags were added. The owner completed normal sign-in manually. The attached headed browser was preserved, so a live headless restart was unavailable. Work fixtures are local mutations because switching live mode is prohibited. No task spec, other task, decision or goal metadata was edited.
 
-Required next step: restore normal installed-Chrome startup for this separate profile, then resume TASK-012 with Playwright's default flags. Manual sign-in, successful browser-check observation and headed health must precede the DEC-006 prompt. Read the answer DOM; do not use Copy output. The accepted decision is resolved; this blocker requires working browser access, not another send authorization. Do not mark the task complete or merge this draft.
+PR #58 carries `Goal-Task: chatgptweb-provider/TASK-012` and `goal:chatgptweb-provider`. It is intended for open, non-draft review and must not be merged by this worker. No decision or access blocker remains. Proposed follow-up: resume TASK-006's separate live quota gate.
