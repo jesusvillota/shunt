@@ -308,7 +308,7 @@ fn test_unsigned_gemini_3_history_uses_documented_placeholder() {
     let translated = translate_request_for_model(&request, "gemini-3.1-pro-preview").unwrap();
     assert_eq!(
         translated["contents"][0]["parts"][0]["thoughtSignature"],
-        "context_engineering_is_the_way to_go"
+        "Y29udGV4dF9lbmdpbmVlcmluZ19pc190aGVfd2F5X3RvX2dv"
     );
 }
 
@@ -334,7 +334,7 @@ fn test_foreign_tool_history_after_failover_uses_gemini_3_placeholder() {
     let parts = translated["contents"][1]["parts"].as_array().unwrap();
     assert_eq!(
         parts[0]["thoughtSignature"],
-        "context_engineering_is_the_way to_go"
+        "Y29udGV4dF9lbmdpbmVlcmluZ19pc190aGVfd2F5X3RvX2dv"
     );
     assert!(parts[1].get("thoughtSignature").is_none());
     assert_eq!(

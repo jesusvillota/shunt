@@ -13,8 +13,10 @@ const GEMINI_3_MODEL_PREFIX: &str = "gemini-3";
 /// `tool_use`/`tool_result` and rejects them without an `id`.
 const CLAUDE_MODEL_PREFIX: &str = "claude";
 const GEMINI_TOOL_USE_ID_PREFIX: &str = "call_gemini_v1_";
-// Google documents this exact value for imported/custom Gemini 3 function-call history.
-const GEMINI_THOUGHT_SIGNATURE_PLACEHOLDER: &str = "context_engineering_is_the_way to_go";
+// Google documents a placeholder for imported/custom Gemini 3 function-call history.
+// Must be valid URL-safe Base64 (no padding): the API validates thoughtSignature as TYPE_BYTES.
+const GEMINI_THOUGHT_SIGNATURE_PLACEHOLDER: &str =
+    "Y29udGV4dF9lbmdpbmVlcmluZ19pc190aGVfd2F5X3RvX2dv";
 const MAX_TOOL_SIGNATURE_BYTES: usize = 64 * 1024;
 const MAX_TOOL_USE_ID_BYTES: usize = 96 * 1024;
 /// Budget an enabled `thinking` block asks for when it names none. Shared with
