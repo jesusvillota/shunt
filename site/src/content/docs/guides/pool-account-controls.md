@@ -92,8 +92,8 @@ Like `sort_by_reset`, the runtime toggle overrides the config file's value until
 ## Terminal ranking cycle
 
 Antigravity accounts in Antigravity accounts in `shunt tui` use one row per account. The quota columns
-are `Gemini · weekly` and `Claude + GPT · weekly`. At full width, they start at
-the same positions as the other providers' 5h and 7d columns.
+are `Gemini · weekly` and `Claude + GPT · weekly`. They always start at the same
+positions as the other providers' 5h and 7d columns, at any window width.
 Bars and percentages show **used** quota (`used = 1 - remaining`). Bars turn
 yellow at 70% used and red at 90%. An exhausted family shows a red full bar
 and `100%`. When every reported family window is exhausted, the State column
@@ -104,11 +104,9 @@ readings show a dim `—`, never `0%`. Missing or invalid reset times have no
 countdown. Weekly-only replies stay weekly-only. Any further reported window (a 5h
 window or a third family) appears as a labelled cell after Plan, aligned, only
 when the whole cell fits; otherwise it is omitted. Reset countdowns are never
-cut: they shrink to the largest unit (`2d`) or disappear. At narrower widths,
-titles shorten to `7d`, then the section shows one quota column and the State
-column reads `exhausted` if any reported family is exhausted. The heading line
-drops trailing column titles that do not fit. Very small
-terminals shorten account names too. Rows never wrap. Clicking the account row
+cut: they shrink to the largest unit (`2d`) or disappear. Columns keep fixed
+offsets like Claude and Codex: a narrow terminal clips the right side instead of
+moving or dropping columns. Rows never wrap. Clicking the account row
 selects it; column headings do not select an account. Claude and Codex keep
 their existing usage bars and resets.
 

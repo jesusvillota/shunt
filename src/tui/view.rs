@@ -323,10 +323,7 @@ fn render_list(frame: &mut Frame, app: &mut App, heading: Rect, list: Rect, now:
             && family::applies(entry.provider)
             && !app.collapsed.contains(&entry.sel.provider)
         {
-            lines.push((
-                family::heading(entry.provider, usize::from(list.width)),
-                None,
-            ));
+            lines.push((family::heading(entry.provider), None));
         }
     }
 
