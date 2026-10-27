@@ -2,10 +2,11 @@
 id: TASK-006
 title: 'Live smoke: Chat-mode turn with Codex quota unchanged'
 milestone: M-1
-state: approved
+state: cancelled
 depends_on: [TASK-003, TASK-004, TASK-005, DEC-004, TASK-012]
 delivery: pr
 kind: gate
+reason: 'Waived by owner: chatgptweb Chat mode does not affect Codex limits; quota movement came from other Codex tasks.'
 ---
 
 ## Why
