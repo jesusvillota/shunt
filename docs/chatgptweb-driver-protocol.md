@@ -22,6 +22,10 @@ There is no HTTP listener, bearer token, or unsolicited startup event.
 Launch with `node helpers/chatgptweb-browser/cli.mjs --account ACCOUNT
 --profile-dir ABSOLUTE_PATH`. The Node helper uses Playwright Chromium and
 keeps the browser's persistent profile at that exact path. See the helper README.
+Direct helper launches accept `--chrome` for installed Google Chrome with
+Playwright's default flags. Use a separate profile such as
+`~/.local/share/shunt/chatgptweb-browser/chrome/cemfi`. Default operation is
+headed; `--headless` hides the window. These flags are not passed by shunt.
 
 Shunt serializes requests per helper. Only one request can be active, including
 health checks. Every request has a nonblank `id`, unique within that helper's

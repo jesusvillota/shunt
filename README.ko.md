@@ -2,6 +2,8 @@
 
 실험적인 텍스트 전용 ChatGPT Web 기능은 Codex Responses 엔드포인트에서 `kind = "chatgptweb_browser"`로 사용할 수 있습니다. 로그인한 브라우저 프로필 하나와 별도의 Node 도우미가 필요합니다. 도구 요청은 거부합니다. [설정 및 제한](docs/chatgptweb-provider.md)을 참조하세요.
 
+브라우저 도우미를 직접 실행할 때 `--chrome`으로 설치된 Google Chrome을 선택할 수 있습니다. 별도 프로필을 사용하세요. [도우미 안내(영문)](helpers/chatgptweb-browser/README.md)를 참조하세요.
+
 오프라인 자격 증명 가져오기: `shunt import opencodex --dry-run`으로 호환 API 키와 Cursor/Command Code 액세스 토큰을 미리 확인합니다. 기존 설정이나 갱신 토큰을 변경·복사하지 않고 새 비공개 스냅샷을 생성합니다. [가져오기 안내(영문)](docs/credential-import.md)를 참고하세요.
 
 [![CI](https://github.com/pleaseai/shunt/actions/workflows/ci.yml/badge.svg)](https://github.com/pleaseai/shunt/actions/workflows/ci.yml)

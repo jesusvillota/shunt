@@ -7,6 +7,7 @@ import { BrowserDriver } from './driver.mjs';
 const { values } = parseArgs({ options: {
   account: { type: 'string' }, 'profile-dir': { type: 'string' },
   'fixture-url': { type: 'string' }, headless: { type: 'boolean', default: false },
+  chrome: { type: 'boolean', default: false },
 } });
 const profile = values['profile-dir'];
 if (!values.account?.trim() || !profile || !isAbsolute(profile) || normalize(profile) !== profile)
@@ -17,6 +18,7 @@ if (values['fixture-url'] && (target.protocol !== 'http:' || target.hostname !==
   throw new Error('Fixture URL must use http://127.0.0.1');
 
 const context = await chromium.launchPersistentContext(profile, {
+  ...(values.chrome ? { channel: 'chrome' } : {}),
   headless: values.headless, permissions: ['clipboard-read', 'clipboard-write'],
 });
 let closing;

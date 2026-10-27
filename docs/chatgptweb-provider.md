@@ -13,6 +13,12 @@ The helper owns login and checks Chat mode immediately before Send.
 Missing helpers, unknown modes, login failures, and page changes fail closed.
 TASK-005 handles interactive login; TASK-006 owns the live quota smoke test.
 
+For direct helper runs, `--chrome` selects installed Google Chrome with
+Playwright's default flags. Use the separate profile
+`~/.local/share/shunt/chatgptweb-browser/chrome/cemfi`. The default is headed;
+`--headless` hides the window. Shunt does not pass these flags. See the
+[helper launch example](../helpers/chatgptweb-browser/README.md).
+
 Add the following to a legacy provider-table configuration. An ordered
 `[[upstreams]]` configuration must declare all providers in that form instead.
 

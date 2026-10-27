@@ -2,6 +2,8 @@
 
 Experimental text-only ChatGPT Web turns are available through the Codex Responses endpoint with `kind = "chatgptweb_browser"`. This uses one logged-in browser profile and the separate Node helper. Tools are rejected. See [setup and limits](docs/chatgptweb-provider.md).
 
+Direct browser helper runs accept `--chrome` for installed Google Chrome; use a separate profile. See the [helper instructions](helpers/chatgptweb-browser/README.md).
+
 Offline credential import: `shunt import opencodex --dry-run` previews compatible API keys and Cursor/Command Code access tokens. Exports create new private snapshots without changing existing settings or copying refresh tokens. See [credential import](docs/credential-import.md).
 
 [![CI](https://github.com/pleaseai/shunt/actions/workflows/ci.yml/badge.svg)](https://github.com/pleaseai/shunt/actions/workflows/ci.yml)

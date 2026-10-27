@@ -17,6 +17,15 @@ It does not register a shunt provider. TASK-004 adds that adapter.
 
 The browser manages its profile at the exact `--profile-dir` path. Use a
 separate directory for each account. Do not share a running browser profile.
+Use `--chrome` to launch installed Google Chrome with Playwright's default
+flags. Keep Chrome profiles separate from Playwright Chromium profiles:
+
+```sh
+node cli.mjs --chrome --account cemfi \
+  --profile-dir "$HOME/.local/share/shunt/chatgptweb-browser/chrome/cemfi"
+```
+
+Default operation is headed. Add `--headless` to run without a visible window.
 Login is an owner step in TASK-005. This helper does not automate login,
 challenges, or approvals. It does not import or extract account secrets.
 

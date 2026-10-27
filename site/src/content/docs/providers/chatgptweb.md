@@ -10,3 +10,5 @@ Use `kind = "chatgptweb_browser"` with the Codex Responses endpoint. One logged-
 The configured browser routes appear in the Codex model picker. `upstream_model` must equal the selected browser model label. Use `auth = "none"` and one account with `profile_dir`. Set `SHUNT_CHATGPTWEB_HELPER` to the helper’s absolute `cli.mjs` path. The legacy `base_url` field is required but unused. Send the complete text history each turn. Shunt never retries an uncertain browser send.
 
 [Configuration example and transport details (English)](https://github.com/jesusvillota/shunt/blob/main/docs/chatgptweb-provider.md)
+
+Direct helper runs accept `--chrome` for installed Google Chrome with Playwright’s default flags. Use the separate profile `~/.local/share/shunt/chatgptweb-browser/chrome/cemfi`. Default operation opens a window; `--headless` hides it. Shunt does not pass these flags.
