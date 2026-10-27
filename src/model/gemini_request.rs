@@ -560,6 +560,14 @@ fn sanitize_gemini_schema(value: &mut Value, depth: usize) -> Result<(), Adapter
             flatten_type_list(map);
             drop_tuple_keywords_from_non_array(map);
             give_array_schema_items(map);
+            // Antigravity forwards `parameters` to its Claude models as a JSON
+            // Schema, and Claude rejects the `anyOf` that arrives (400 "must
+            // match draft 2020-12"); `oneOf` passes there and on Gemini.
+            if !map.contains_key("oneOf") {
+                if let Some(arms) = map.remove("anyOf") {
+                    map.insert("oneOf".to_string(), arms);
+                }
+            }
         }
         Value::Array(array) => {
             for child in array {

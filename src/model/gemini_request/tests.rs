@@ -910,3 +910,21 @@ fn the_code_assist_envelope_carries_none_of_the_agent_fields() {
     }
     assert!(wrapped["request"].get("sessionId").is_none());
 }
+
+#[test]
+fn any_of_is_sent_as_one_of() {
+    let result = translate_request(&json!({
+        "messages": [{ "role": "user", "content": "hi" }],
+        "tools": [{
+            "name": "t",
+            "input_schema": {
+                "type": "object",
+                "properties": { "x": { "anyOf": [{ "type": "string" }, { "type": "number" }] } }
+            }
+        }]
+    }))
+    .unwrap();
+    let x = &result["tools"][0]["functionDeclarations"][0]["parameters"]["properties"]["x"];
+    assert!(x.get("anyOf").is_none());
+    assert_eq!(x["oneOf"].as_array().unwrap().len(), 2);
+}
