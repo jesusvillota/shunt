@@ -9,6 +9,9 @@ use crate::adapters::AdapterError;
 
 const MAX_SCHEMA_DEPTH: usize = 64;
 const GEMINI_3_MODEL_PREFIX: &str = "gemini-3";
+/// Claude on Antigravity (Vertex) maps `functionCall`/`functionResponse` to
+/// `tool_use`/`tool_result` and rejects them without an `id`.
+const CLAUDE_MODEL_PREFIX: &str = "claude";
 const GEMINI_TOOL_USE_ID_PREFIX: &str = "call_gemini_v1_";
 // Google documents this exact value for imported/custom Gemini 3 function-call history.
 const GEMINI_THOUGHT_SIGNATURE_PLACEHOLDER: &str = "context_engineering_is_the_way to_go";
@@ -199,12 +202,15 @@ fn translate_messages(request: &Value, model: &str) -> Result<Vec<Value>, Adapte
                 if block.get("is_error").and_then(Value::as_bool) == Some(true) {
                     response.insert("error".to_string(), Value::Bool(true));
                 }
-                let function_response = json!({
+                let mut function_response = json!({
                     "functionResponse": {
                         "name": name,
                         "response": response
                     }
                 });
+                if model.starts_with(CLAUDE_MODEL_PREFIX) {
+                    function_response["functionResponse"]["id"] = json!(tool_use_id);
+                }
                 if matched
                     .insert(tool_use_id.to_string(), function_response)
                     .is_some()
@@ -333,6 +339,9 @@ fn translate_messages(request: &Value, model: &str) -> Result<Vec<Value>, Adapte
                                         "args": input
                                     }
                                 });
+                                if model.starts_with(CLAUDE_MODEL_PREFIX) {
+                                    part["functionCall"]["id"] = json!(id);
+                                }
                                 if let Some(signature) = signature {
                                     part["thoughtSignature"] = Value::String(signature);
                                 }
