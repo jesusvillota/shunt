@@ -202,7 +202,7 @@ api_key_env = "OPENAI_API_KEY" # env var shunt reads the key from
 # [[server.codex_endpoint.routes]]
 # model = "chatgptweb-chat"
 # provider = "chatgptweb"
-# upstream_model = "GPT-5.6" # exact selected model label in the browser
+# upstream_model = "Medium" # optional: exact visible browser effort label
 #
 # [providers.chatgptweb]
 # kind = "chatgptweb_browser"

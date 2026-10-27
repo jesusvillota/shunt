@@ -100,7 +100,13 @@ pub(crate) async fn forward(state: AppState, route: Route, body: Bytes) -> Adapt
         timeout_ms,
         command: DriverCommand::Generate {
             prompt,
-            model: route.upstream_model,
+            model: state
+                .config
+                .server
+                .codex_endpoint
+                .as_ref()
+                .and_then(|endpoint| endpoint.route_for(&route.model))
+                .and_then(|route| route.upstream_model.clone()),
         },
     };
     let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms as u64);

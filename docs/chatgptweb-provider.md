@@ -13,11 +13,14 @@ The helper owns login and checks Chat mode immediately before Send.
 Missing helpers, unknown modes, login failures, and page changes fail closed.
 TASK-005 handles interactive login; TASK-006 owns the live quota smoke test.
 
-For direct helper runs, `--chrome` selects installed Google Chrome with
-Playwright's default flags. Use the separate profile
-`~/.local/share/shunt/chatgptweb-browser/chrome/cemfi`. The default is headed;
-`--headless` hides the window. Shunt does not pass these flags. See the
-[helper launch example](../helpers/chatgptweb-browser/README.md).
+Direct helper runs accept `--chrome` to attach to an already running Chrome
+at `http://127.0.0.1:9333` through CDP. `--cdp-url` accepts an HTTP loopback
+endpoint without authentication. Start Chrome manually with its separate
+`~/.local/share/shunt/chatgptweb-browser/chrome/cemfi` profile and the debugging
+port. The helper adds no browser flags. Shutdown closes only its request tab,
+leaving the owner's browser open. `--headless` applies only to launched
+Chromium and cannot be combined with `--chrome`. Shunt does not pass these
+flags. See the [helper instructions](../helpers/chatgptweb-browser/README.md).
 
 Add the following to a legacy provider-table configuration. An ordered
 `[[upstreams]]` configuration must declare all providers in that form instead.
@@ -29,7 +32,7 @@ provider = "codex" # preserve the existing default Codex pool
 [[server.codex_endpoint.routes]]
 model = "chatgptweb-chat"
 provider = "chatgptweb"
-upstream_model = "GPT-5.6" # example only: exact selected browser model label
+upstream_model = "Medium" # optional: exact visible effort label
 
 [providers.chatgptweb]
 kind = "chatgptweb_browser"
@@ -41,8 +44,9 @@ name = "personal"
 profile_dir = "~/Library/Application Support/shunt/chatgptweb/personal"
 ```
 
-Use the exact model label selected in the browser as `upstream_model`. The
-helper rejects a mismatch instead of changing models. No model entitlement or
+`upstream_model` is optional. When set, it must exactly match the visible
+effort label, such as `Medium` or `High`. The helper rejects a mismatch and
+never changes effort. Omission leaves effort unchecked. No model entitlement or
 context size is assumed. Configured browser routes appear in all Codex catalogs:
 `/v1/models?client_version=...`, `/models`, and `/backend-api/codex/models`.
 Their rows disable shell tools and advertise text input only. With no browser

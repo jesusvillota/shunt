@@ -26,7 +26,11 @@ pub struct DriverRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DriverCommand {
-    Generate { prompt: String, model: String },
+    Generate {
+        prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+    },
     Health,
 }
 

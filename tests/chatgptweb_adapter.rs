@@ -38,7 +38,7 @@ fn config(routed: bool) -> Config {
         routes: vec![CodexRouteConfig {
             model: "web-chat".into(),
             provider: "chatgptweb".into(),
-            upstream_model: Some("Chat Model".into()),
+            upstream_model: Some("Medium".into()),
         }],
     });
     config
@@ -70,7 +70,7 @@ async fn gateway(failure: Option<DriverError>, routed: bool) -> axum::Router {
                 PROFILE.into(),
                 vec![Fixture {
                     prompt: PROMPT.into(),
-                    model: "Chat Model".into(),
+                    model: "Medium".into(),
                     deltas: vec!["Hello ".into(), "🌍".into()],
                     error: failure,
                 }],
@@ -197,7 +197,7 @@ async fn chatgptweb_nonstreaming_and_default_provider_work() {
     let _vars = common::env_lock().await;
     let mut request = request();
     request["stream"] = json!(false);
-    request["model"] = json!("Chat Model");
+    request["model"] = json!("public-name-is-not-an-effort");
     let response = post(gateway(None, false).await, request, true).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value =
@@ -423,4 +423,31 @@ for await (const line of createInterface({{input:process.stdin}})) {{
     .await
     .expect("detached browser process must exit on disconnect");
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn chatgptweb_route_can_omit_effort_without_using_the_public_model() {
+    let _vars = common::env_lock().await;
+    let mut config = config(true);
+    config.server.codex_endpoint.as_mut().unwrap().routes[0].upstream_model = None;
+    let config = config.validate().unwrap();
+    let (router, _, state) = server::build_router(config).unwrap();
+    state
+        .chatgptweb_drivers
+        .insert(
+            PROFILE.into(),
+            Box::new(FakeDriver::new(
+                "personal".into(),
+                PROFILE.into(),
+                vec![Fixture {
+                    prompt: PROMPT.into(),
+                    model: "Medium".into(),
+                    deltas: vec!["OK".into()],
+                    error: None,
+                }],
+            )),
+        )
+        .await;
+    let result = events(post(router, request(), false).await).await;
+    assert_eq!(result.last().unwrap()["type"], "response.completed");
 }
