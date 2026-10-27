@@ -36,3 +36,6 @@ ui/dist/
 
 # Machine-local runbook (personal LaunchAgent/symlink setup); never shared upstream.
 /LOCAL.md
+
+# Review-agent memory (per-developer, regenerated)
+.claude/agent-memory/

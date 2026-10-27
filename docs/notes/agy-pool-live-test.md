@@ -3,8 +3,7 @@
 **Date:** 2026-10-14 · goal `agy-pool`, TASK-010 · build: this branch (`cargo build`, shunt 0.51.1, debug)
 **Result:** cases 1, 2, 3 PASS; case 4 PASS **on a mock upstream only**; case 5 PASS after TASK-012 (live recheck below).
 
-All raw evidence is in [`agy-pool-live-test/`](agy-pool-live-test/). This note was re-run from scratch on
-2026-10-14 (11:26–11:28 CEST) after review; every number below comes from the committed files.
+This note was re-run from scratch on 2026-10-14 (11:26–11:28 CEST) after review. The raw files are in git history.
 
 ## Setup
 
@@ -12,7 +11,7 @@ All raw evidence is in [`agy-pool-live-test/`](agy-pool-live-test/). This note w
   token write-back never touches the real files), bind `127.0.0.1:39010`, `[server.pool] usage_refresh_seconds = 60`,
   the five live accounts (`computingjvm`, `keepuntouser`, `tommyshelby`, `personal`, `cemfi`), two routes.
   Started with `HOME=/tmp/t010/home RUST_LOG=shunt=debug shunt run --config /tmp/t010/shunt.toml`.
-- Quota at test start (`agy-pool-live-test/start.pool.json`):
+- Quota at test start :
 
   | Account | Gemini weekly | Claude + GPT weekly |
   | --- | --- | --- |
@@ -120,8 +119,7 @@ only by the TASK-003 unit test for weekly cooldown expiry, not by this note.
 
 **Rechecked:** 2026-10-14 10:02:26–10:02:29 UTC, revision `ff732df`.
 The original TASK-010 run returned 503 on its second and third requests.
-TASK-012 fixes that fallback; the original evidence remains in `c5-r*.request.txt`.
-New raw evidence is in [`task012-case5/`](agy-pool-live-test/task012-case5/).
+TASK-012 fixes that fallback.
 
 Scratch gateway only: port **39020**, separate HOME
 `/var/folders/_j/7j25pgqd5z3dh647gtb8vmbw0000gn/T/shunt-task012-_k5nvecd/home`,
@@ -200,7 +198,7 @@ Re-run with the fixed helper (`antigravity_retry_after` now needs every enabled,
 cooled). Scratch gateway only: port 39020, the same scratch HOME, `./target/debug/shunt run` at
 the fix commit. The admin pause call returned 401 with the copied token, so instead of pausing, the
 scratch config omits `keepuntouser` and `cemfi` (the two accounts that still have Gemini quota); the
-three exhausted accounts remain. Evidence is in [`task012-case5-recheck2/`](agy-pool-live-test/task012-case5-recheck2/).
+three exhausted accounts remain.
 
 | Request | HTTP | Time | `Retry-After` | Body message |
 | --- | --- | --- | --- | --- |

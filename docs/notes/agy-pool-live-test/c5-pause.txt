@@ -1,6 +1,0 @@
-# keepuntouser
-$ curl -sS -w ' HTTP %{http_code}' -X PATCH http://127.0.0.1:39010/admin/api/pool/antigravity/accounts/acct_8dd04e3a7763fddd321a03cee41232a12771868726dea230d8f35b8b98c09f88 -H "x-shunt-admin-token: $(cut -d: -f2- /tmp/t010/home/.shunt/admin-token)" -H 'content-type: application/json' -d '{"paused":true}'
-{"ok":true} HTTP 200
-# cemfi
-$ curl -sS -w ' HTTP %{http_code}' -X PATCH http://127.0.0.1:39010/admin/api/pool/antigravity/accounts/acct_696649adab6f91a2bd24d56eac61cddbacac86c5384ada8a35a577b4140d0c94 -H "x-shunt-admin-token: $(cut -d: -f2- /tmp/t010/home/.shunt/admin-token)" -H 'content-type: application/json' -d '{"paused":true}'
-{"ok":true} HTTP 200

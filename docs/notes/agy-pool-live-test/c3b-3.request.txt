@@ -1,3 +1,0 @@
-$ curl -sS -m 90 -o /tmp/t010/body.txt -w 'HTTP %{http_code} in %{time_total}s' http://127.0.0.1:39010/v1/messages -H 'content-type: application/json' -H 'anthropic-version: 2023-06-01' -d '{"model":"claude-gemini-3.8-flash-low-via-antigravity","max_tokens":16,"messages":[{"role":"user","content":"Say ok"}]}'
-HTTP 200 in 4.555744s
-body: {"id":"msg_gemini_572232512c8c499e","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"model":"claude-gemini-3.8-flash-low-via-antigravity","stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":3,"output_tokens":1}}
