@@ -1,8 +1,6 @@
-//! Text-only browser transport for the inbound Responses endpoint.
+//! Browser transport for the inbound Responses endpoint.
 mod process;
 pub use process::terminate_all;
-// Protocol contract is integrated in TASK-014.
-#[allow(dead_code)]
 mod tool_protocol;
 mod translate;
 
@@ -68,8 +66,21 @@ pub(crate) fn error(status: StatusCode, message: &str) -> AdapterError {
 pub(crate) async fn forward(state: AppState, route: Route, body: Bytes) -> AdapterResult {
     let request: serde_json::Value = serde_json::from_slice(&body)
         .map_err(|_| error(StatusCode::BAD_REQUEST, "invalid Responses JSON"))?;
-    let prompt =
-        translate::prompt(&request).map_err(|message| error(StatusCode::BAD_REQUEST, message))?;
+    let id = format!("resp_{}", uuid::Uuid::new_v4().simple());
+    let contract = tool_protocol::Contract::new(&request, &id)
+        .map_err(|message| error(StatusCode::BAD_REQUEST, message))?;
+    let has_tools = request
+        .get("tools")
+        .is_some_and(|v| v.as_array().is_some_and(|a| !a.is_empty()))
+        || request["input"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["type"] == "additional_tools"));
+    let contract = has_tools.then_some(contract);
+    let prompt = match &contract {
+        Some(contract) => contract.prompt().to_string(),
+        None => translate::prompt(&request)
+            .map_err(|message| error(StatusCode::BAD_REQUEST, message))?,
+    };
     let streaming = request
         .get("stream")
         .and_then(|v| v.as_bool())
@@ -88,7 +99,6 @@ pub(crate) async fn forward(state: AppState, route: Route, body: Bytes) -> Adapt
     let profile = account.profile_dir.as_ref().expect("validated profile");
     let driver = state.chatgptweb_drivers.get(profile).await;
     let guard = driver.lock_owned().await;
-    let id = format!("resp_{}", uuid::Uuid::new_v4().simple());
     let timeout_ms = state
         .config
         .server
@@ -123,7 +133,7 @@ pub(crate) async fn forward(state: AppState, route: Route, body: Bytes) -> Adapt
             )
         })?
         .map_err(|_| error(StatusCode::BAD_GATEWAY, "browser helper could not start"))?;
-    let mut output = translate::Output::new(id, route.model);
+    let mut output = translate::Output::new(id, route.model, contract, &request);
     let prefix = output.start();
     let body_stream = stream::unfold(
         (events, guard, output, false),
@@ -137,10 +147,16 @@ pub(crate) async fn forward(state: AppState, route: Route, body: Bytes) -> Adapt
                     if event.version == PROTOCOL_VERSION && event.id == output.id =>
                 {
                     match event.event {
-                        Event::TextDelta { text } if !text.is_empty() => {
-                            (output.delta(text), false)
-                        }
-                        Event::Done => (output.finish(), true),
+                        Event::TextDelta { text } if !text.is_empty() => match output.delta(text) {
+                            Ok(frames) => (frames, false),
+                            Err(_) => (output.fail("invalid_tool_output"), true),
+                        },
+                        Event::Done => (
+                            output
+                                .finish()
+                                .unwrap_or_else(|_| output.fail("invalid_tool_output")),
+                            true,
+                        ),
                         Event::Error { error } => (
                             output
                                 .fail(serde_json::to_value(error.code).unwrap().as_str().unwrap()),

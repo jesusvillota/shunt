@@ -303,13 +303,13 @@ fn codex_models_response(config: &crate::config::Config) -> Response {
         .filter(|route| config.provider(&route.provider).is_some_and(|provider| provider.kind == crate::config::ProviderKind::ChatgptwebBrowser))
         .enumerate().map(|(priority, route)| serde_json::json!({
             "slug": route.model, "display_name": format!("{} (ChatGPT Web)", route.model),
-            "description": "ChatGPT Web Chat mode. Text only; tools are unsupported.",
+            "description": "ChatGPT Web Chat mode with serial shell and file-edit tools.",
             "default_reasoning_level": "none", "supported_reasoning_levels": [],
-            "shell_type": "disabled", "visibility": "list", "supported_in_api": true,
+            "shell_type": "shell_command", "visibility": "list", "supported_in_api": true,
             "priority": priority, "availability_nux": null, "upgrade": null,
-            "model_messages": {"instructions_template": "Answer the user with text only.", "instructions_variables": null},
+            "model_messages": {"instructions_template": "Use shell and file-edit tools when needed. Run tools serially.", "instructions_variables": null},
             "support_verbosity": false, "default_verbosity": null,
-            "default_reasoning_summary": "none", "apply_patch_tool_type": null,
+            "default_reasoning_summary": "none", "apply_patch_tool_type": "freeform",
             "web_search_tool_type": "text", "truncation_policy": {"mode":"tokens", "limit":10000},
             "input_modalities": ["text"], "supports_search_tool": false,
             "experimental_supported_tools": [], "context_window": null,

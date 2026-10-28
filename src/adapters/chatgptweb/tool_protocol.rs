@@ -1,4 +1,4 @@
-//! Offline text-tool contract. The adapter continues to use translate until TASK-014.
+//! Validated text-tool contract for fresh-chat Responses turns.
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 mod schema;
