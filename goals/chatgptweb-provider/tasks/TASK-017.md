@@ -2,9 +2,10 @@
 id: TASK-017
 title: 'Fix live ui_drift on Codex generate (issue #69)'
 milestone: M-2
-state: approved
+state: cancelled
 depends_on: [TASK-014]
 delivery: pr
+reason: "Goal called off by owner 2026-10-28: ChatGPT web is now driven through Orca's browser via the delegate-chatgptweb skill."
 ---
 
 ## Why
