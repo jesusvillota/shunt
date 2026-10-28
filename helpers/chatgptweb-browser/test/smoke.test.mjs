@@ -34,7 +34,7 @@ test('live launcher guards, shared budgets, failure latch and owner preservation
   const reset = async (overrides = {}) => writeFile(ledgerPath, JSON.stringify({
     sends: 0, calls: 0, results: 0, stopped: false, deadline: Date.now() + 900000, ...overrides,
   }));
-  const run = async (type, state = 'chat') => {
+  const run = async (type, state = 'chat', expectedPages = 1) => {
     const child = spawn(process.execPath, [launcher, '--account', 'cemfi', '--profile-dir', directory,
       '--fixture-url', `${fixture.url}?state=${state}`]);
     const exit = new Promise(resolve => child.once('exit', resolve));
@@ -52,7 +52,7 @@ test('live launcher guards, shared budgets, failure latch and owner preservation
       assert.equal(owner.isClosed(), false);
       assert.equal(owner.url(), ownerUrl);
       assert.equal(await owner.evaluate(() => 6 * 7), 42);
-      assert.equal(context.pages().length, 1, 'helper tab closes before terminal is returned');
+      assert.equal(context.pages().length, expectedPages, 'helper tab closes before terminal is returned');
       return frames.at(-1);
     } finally { child.kill(); }
   };
@@ -109,6 +109,15 @@ test('live launcher guards, shared budgets, failure latch and owner preservation
     const creationCleanup = spawn(process.execPath, [launcher, '--cleanup']);
     assert.equal(await new Promise(resolve => creationCleanup.once('exit', resolve)), 0);
     assert.equal(context.pages().length, 1, 'creation-race blank tab cleaned by marker');
+    await reset();
+    const source = await readFile(launcher, 'utf8');
+    await writeFile(launcher, source.replace("const { targetId } = await session.send",
+      "await session.send('Target.createTarget', {url:'about:blank#concurrent-owner'}); const { targetId } = await session.send"));
+    assert.equal((await run('health', 'chat', 2)).type, 'health');
+    const concurrentOwner = context.pages().find(page => page.url() === 'about:blank#concurrent-owner');
+    assert.ok(concurrentOwner, 'an owner page created before the request target stays unchanged');
+    await concurrentOwner.close();
+    await writeFile(launcher, source);
     await reset({ stopped: true });
     assert.equal((await run('generate')).type, 'error', 'a killed helper leaves its reservation latched');
   } finally {

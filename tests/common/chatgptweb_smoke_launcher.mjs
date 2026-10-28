@@ -47,10 +47,11 @@ BrowserDriver.prototype.request = async function (input, emit) {
   save();
   this.context.newPage = async () => {
     const session = await this.context.browser().newBrowserCDPSession();
-    const pageReady = this.context.waitForEvent('page');
+    const marker = `about:blank#shunt-smoke-${ledger.marker}`;
+    const pageReady = this.context.waitForEvent('page', page => page.url() === marker);
     // The marker permits cleanup even if killed before the target ID is saved.
     const { targetId } = await session.send('Target.createTarget', {
-      url: `about:blank#shunt-smoke-${ledger.marker}`,
+      url: marker,
     });
     ledger.targets.push(targetId);
     writeFileSync(ledgerPath, JSON.stringify(ledger));
