@@ -2,10 +2,11 @@
 id: TASK-015
 title: Live smoke a Codex shell and file-edit task in Chat mode
 milestone: M-2
-state: approved
+state: cancelled
 depends_on: [TASK-014, TASK-005, TASK-012, TASK-017]
 delivery: pr
 kind: run
+reason: "Goal called off by owner 2026-10-28: ChatGPT web is now driven through Orca's browser via the delegate-chatgptweb skill."
 ---
 
 ## Why
