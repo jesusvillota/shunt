@@ -154,6 +154,7 @@ flowchart TD
     TASK_014["TASK-014 Integrate Codex tool turns and a self-checking fake demo"]
     TASK_015["TASK-015 Live smoke a Codex shell and file-edit task in Chat mode"]
     TASK_016["TASK-016 Fix discovery catalog ordering and fixtures (issue #73)"]
+    TASK_017["TASK-017 Fix live ui_drift on Codex generate (issue #69)"]
   end
   subgraph M_3["M-3 · Two-account pool"]
     TASK_008["TASK-008 Plan: decompose M-3"]
@@ -194,6 +195,7 @@ flowchart TD
   TASK_014 --> TASK_015
   TASK_005 --> TASK_015
   TASK_012 --> TASK_015
+  TASK_014 --> TASK_017
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
