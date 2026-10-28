@@ -1583,8 +1583,7 @@ pub struct CodexRouteConfig {
     /// (`passthrough` or `none`) is rejected, since the inbound client's own
     /// `Authorization` is always stripped.
     pub provider: String,
-    /// Model id sent upstream; defaults to `model`. For `chatgptweb_browser`,
-    /// optional exact visible effort label; omission leaves effort unchecked.
+    /// Model id sent upstream; defaults to `model`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream_model: Option<String>,
 }
@@ -1993,7 +1992,7 @@ impl RetryConfig {
 #[serde(deny_unknown_fields)]
 pub struct AccountConfig {
     pub name: String,
-    /// Browser profile for chatgptweb_browser, or agy HOME for an Antigravity /usage probe.
+    /// Explicit agy HOME for this Antigravity account's read-only /usage probe.
     /// Absent profiles use the existing HTTP quota source, never ambient login.
     #[serde(
         default,
@@ -2158,8 +2157,6 @@ pub enum ProviderKind {
     /// OpenAI Responses API — Anthropic Messages are translated to it (OpenAI,
     /// ChatGPT/Codex).
     Responses,
-    /// ChatGPT browser helper, text-only Responses turns.
-    ChatgptwebBrowser,
     /// Cursor ConnectRPC AgentService protocol.
     Cursor,
     /// Google Gemini via the Code Assist backend — Anthropic Messages are
@@ -2614,8 +2611,6 @@ fn validate_tool_semantics(
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("providers.{provider}: chatgptweb_browser requires auth = none and exactly one named account with an absolute, unique profile_dir; no credential fields")]
-    InvalidChatgptwebProvider { provider: String },
     #[error("failed to load configuration: {0}")]
     Figment(#[from] Box<figment::Error>),
     #[error("config file not found: {}", .0.display())]
@@ -4216,38 +4211,7 @@ impl Config {
                 // repeat the log and mix a side effect into pure validation.
             }
         }
-        let mut browser_profiles = std::collections::HashSet::new();
         for (name, provider) in &self.providers {
-            if provider.kind == ProviderKind::ChatgptwebBrowser {
-                let account = provider.accounts.first();
-                let valid = provider.auth == AuthMode::None
-                    && provider.account_scope.is_empty()
-                    && provider.api_key_env.is_none()
-                    && provider.profile_dir.is_none()
-                    && provider.accounts.len() == 1
-                    && account.is_some_and(|account| {
-                        !account.name.trim().is_empty()
-                            && account.credentials.is_none()
-                            && account.token_env.is_none()
-                            && account.profile_dir.as_deref().is_some_and(|path| {
-                                std::path::Path::new(path).is_absolute()
-                                    && std::path::Path::new(path)
-                                        .components()
-                                        .collect::<std::path::PathBuf>()
-                                        .to_str()
-                                        == Some(path)
-                                    && !std::path::Path::new(path)
-                                        .components()
-                                        .any(|part| matches!(part, std::path::Component::ParentDir))
-                                    && browser_profiles.insert(path.to_string())
-                            })
-                    });
-                if !valid {
-                    return Err(ConfigError::InvalidChatgptwebProvider {
-                        provider: name.clone(),
-                    });
-                }
-            }
             let url = self.provider_base_url(name, &provider.base_url)?;
             if provider.auth == AuthMode::ApiKey
                 && provider
@@ -4383,7 +4347,6 @@ impl Config {
                 }
             }
             if (!provider.accounts.is_empty() || !provider.account_scope.is_empty())
-                && provider.kind != ProviderKind::ChatgptwebBrowser
                 && !matches!(
                     provider.auth,
                     AuthMode::ClaudeOauth
@@ -4639,10 +4602,7 @@ impl Config {
                         codex_endpoint.provider.clone(),
                     ));
                 }
-                Some(provider)
-                    if provider.auth != AuthMode::ChatgptOauth
-                        && provider.kind != ProviderKind::ChatgptwebBrowser =>
-                {
+                Some(provider) if provider.auth != AuthMode::ChatgptOauth => {
                     return Err(ConfigError::CodexEndpointWrongAuth(
                         codex_endpoint.provider.clone(),
                     ));
@@ -4681,12 +4641,7 @@ impl Config {
                             provider: route.provider.clone(),
                         });
                     }
-                    Some(provider)
-                        if !matches!(
-                            provider.kind,
-                            ProviderKind::Responses | ProviderKind::ChatgptwebBrowser
-                        ) =>
-                    {
+                    Some(provider) if provider.kind != ProviderKind::Responses => {
                         return Err(ConfigError::CodexRouteWrongKind {
                             model: route.model.clone(),
                             provider: route.provider.clone(),
@@ -4697,8 +4652,7 @@ impl Config {
                     // strips, and `none` sends nothing at all. Either way the
                     // routed request would reach the upstream unauthenticated.
                     Some(provider)
-                        if provider.kind != ProviderKind::ChatgptwebBrowser
-                            && matches!(provider.auth, AuthMode::Passthrough | AuthMode::None) =>
+                        if matches!(provider.auth, AuthMode::Passthrough | AuthMode::None) =>
                     {
                         return Err(ConfigError::CodexRouteNoCredential {
                             model: route.model.clone(),

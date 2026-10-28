@@ -14,7 +14,6 @@ use stage::{ConsultJudge, ConsultKind, StageContext};
 pub enum AdapterKind {
     Anthropic,
     Responses,
-    ChatgptwebBrowser,
     Cursor,
     Gemini,
     /// Local `agy` subprocess execution. Deprecated alongside
@@ -33,7 +32,6 @@ impl From<ProviderKind> for AdapterKind {
         match kind {
             ProviderKind::Anthropic => AdapterKind::Anthropic,
             ProviderKind::Responses => AdapterKind::Responses,
-            ProviderKind::ChatgptwebBrowser => AdapterKind::ChatgptwebBrowser,
             ProviderKind::Cursor => AdapterKind::Cursor,
             ProviderKind::Gemini => AdapterKind::Gemini,
             // Stage 1 of the native Antigravity upstream is wire-identical to

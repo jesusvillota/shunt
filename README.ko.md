@@ -1,10 +1,5 @@
 # shunt
 
-실험적인 ChatGPT Web 기능은 Codex Responses 엔드포인트에서 `kind = "chatgptweb_browser"`로 텍스트와 직렬 Codex 셸/파일 편집 도구를 지원합니다. 로그인한 브라우저 프로필 하나와 별도의 Node 도우미가 필요합니다. 오프라인 데모는 브라우저나 계정 없이 실제 Codex를 실행합니다. 브라우저 안정성은 별도 라이브 검증이 필요합니다. [설정, 데모 및 제한](docs/chatgptweb-provider.md)을 참조하세요.
-
-브라우저 도우미의 `--chrome`은 루프백 디버깅 포트에서 실행 중인 Chrome에 연결합니다. 도우미는 브라우저를 닫지 않습니다. [도우미 안내(영문)](helpers/chatgptweb-browser/README.md)를 참조하세요.
-ChatGPT Web의 선택 항목 `upstream_model`은 화면의 추론 노력 레이블(예: `Medium`)을 정확히 확인합니다. 도우미는 노력을 변경하지 않습니다.
-
 오프라인 자격 증명 가져오기: `shunt import opencodex --dry-run`으로 호환 API 키와 Cursor/Command Code 액세스 토큰을 미리 확인합니다. 기존 설정이나 갱신 토큰을 변경·복사하지 않고 새 비공개 스냅샷을 생성합니다. [가져오기 안내(영문)](docs/credential-import.md)를 참고하세요.
 
 [![CI](https://github.com/pleaseai/shunt/actions/workflows/ci.yml/badge.svg)](https://github.com/pleaseai/shunt/actions/workflows/ci.yml)
