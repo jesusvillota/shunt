@@ -2,10 +2,11 @@
 id: TASK-008
 title: 'Plan: decompose M-3'
 milestone: M-3
-state: approved
+state: cancelled
 depends_on: [TASK-007, TASK-015]
 delivery: pr
 kind: plan
+reason: "Goal called off by owner 2026-10-28: ChatGPT web is now driven through Orca's browser via the delegate-chatgptweb skill."
 ---
 
 ## Why
