@@ -148,6 +148,7 @@ flowchart TD
     TASK_012["TASK-012 Fix the browser driver for the live ChatGPT page"]
   end
   subgraph M_2["M-2 · Tool calls for Codex"]
+    DEC_007{{"DEC-007 Should a separate fix restore discovery verification before TASK-013 resumes, or may this task repair the unrelated catalog?"}}
     TASK_007["TASK-007 Plan: decompose M-2"]
     TASK_013["TASK-013 Define and test the ChatGPT Web text tool protocol"]
     TASK_014["TASK-014 Integrate Codex tool turns and a self-checking fake demo"]
@@ -186,6 +187,7 @@ flowchart TD
   TASK_012 --> TASK_013
   DEC_001 --> TASK_013
   DEC_002 --> TASK_013
+  DEC_007 --> TASK_013
   TASK_013 --> TASK_014
   TASK_014 --> TASK_015
   TASK_005 --> TASK_015
@@ -200,6 +202,7 @@ flowchart TD
   class DEC_004 decision
   class DEC_005 decision
   class DEC_006 decision
+  class DEC_007 decision
 ```
 <!-- goal:graph:end -->
 

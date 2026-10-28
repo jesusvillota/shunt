@@ -3,7 +3,7 @@ id: TASK-013
 title: Define and test the ChatGPT Web text tool protocol
 milestone: M-2
 state: approved
-depends_on: [TASK-007, TASK-004, TASK-012, DEC-001, DEC-002]
+depends_on: [TASK-007, TASK-004, TASK-012, DEC-001, DEC-002, DEC-007]
 delivery: pr
 ---
 
