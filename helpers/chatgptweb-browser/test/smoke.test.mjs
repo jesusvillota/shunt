@@ -98,6 +98,17 @@ test('live launcher guards, shared budgets, failure latch and owner preservation
     assert.equal(owner.isClosed(), false);
     assert.equal(extraOwner.isClosed(), false, 'concurrent owner tab preserved');
     await extraOwner.close();
+    await reset();
+    const creating = spawn(process.execPath, [launcher, '--account', 'cemfi', '--profile-dir', directory,
+      '--fixture-url', fixture.url]);
+    const createdExit = new Promise(resolve => creating.once('exit', resolve));
+    context.once('page', () => creating.kill('SIGKILL'));
+    creating.stdin.write(`${JSON.stringify({version:1,id:'creation-race',type:'health',account:'cemfi',
+      profile_dir:directory,timeout_ms:5000})}\n`);
+    await createdExit;
+    const creationCleanup = spawn(process.execPath, [launcher, '--cleanup']);
+    assert.equal(await new Promise(resolve => creationCleanup.once('exit', resolve)), 0);
+    assert.equal(context.pages().length, 1, 'creation-race blank tab cleaned by marker');
     await reset({ stopped: true });
     assert.equal((await run('generate')).type, 'error', 'a killed helper leaves its reservation latched');
   } finally {

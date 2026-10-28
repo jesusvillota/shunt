@@ -1,11 +1,18 @@
 // Test-only wrapper: keep the production page guards and wait for tab cleanup.
 import { readFileSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 const cli = __CLI__;
 const ledgerPath = __LEDGER__;
 if (process.argv.includes('--cleanup')) {
   const ledger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
-  for (const id of ledger.targets ?? []) {
+  const tabs = await (await fetch(new URL('/json/list', __CDP__),
+    { signal: AbortSignal.timeout(3000) })).json();
+  const targets = new Set(ledger.targets ?? []);
+  for (const tab of tabs) {
+    if (ledger.marker && tab.url === `about:blank#shunt-smoke-${ledger.marker}`) targets.add(tab.id);
+  }
+  for (const id of targets) {
     const response = await fetch(new URL(`/json/close/${encodeURIComponent(id)}`, __CDP__),
       { signal: AbortSignal.timeout(3000) });
     if (!response.ok && response.status !== 404) throw new Error('Owned tab cleanup failed');
@@ -36,13 +43,18 @@ BrowserDriver.prototype.request = async function (input, emit) {
       ['function_call_output', 'custom_tool_call_output'].includes(item.type)).length;
   }
   save();
-  const newPage = this.context.newPage.bind(this.context);
-  this.context.newPage = async (...args) => {
-    const page = await newPage(...args);
-    const session = await this.context.newCDPSession(page);
-    const { targetInfo } = await session.send('Target.getTargetInfo');
-    ledger.targets.push(targetInfo.targetId);
+  ledger.marker ??= randomUUID();
+  save();
+  this.context.newPage = async () => {
+    const session = await this.context.browser().newBrowserCDPSession();
+    const pageReady = this.context.waitForEvent('page');
+    // The marker permits cleanup even if killed before the target ID is saved.
+    const { targetId } = await session.send('Target.createTarget', {
+      url: `about:blank#shunt-smoke-${ledger.marker}`,
+    });
+    ledger.targets.push(targetId);
     writeFileSync(ledgerPath, JSON.stringify(ledger));
+    const page = await pageReady;
     await session.detach();
     return page;
   };
