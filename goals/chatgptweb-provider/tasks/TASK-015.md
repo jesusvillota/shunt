@@ -69,4 +69,6 @@ git diff --check
 
 ## Attempts
 
+
 - 2026-10-28: PR #79 closed without merging: Owner authorized a fresh bounded live smoke. The earlier tab loss (#78) was the owner closing a tab by accident; unknown whether before or after the ui_drift failure. Keep the cemfi Chrome profile untouched during the run.
+- 2026-10-28: PR #80 closed without merging: Blocked by ui_drift twice (PRs #79, #80); retry after TASK-017 driver fix.
