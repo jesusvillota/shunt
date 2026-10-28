@@ -10,7 +10,6 @@ pub mod auth;
 #[doc(hidden)]
 pub mod bench_support;
 pub mod blueprints;
-pub mod chatgptweb;
 pub mod codex_analytics;
 pub mod codex_endpoint;
 pub(crate) mod compression;
