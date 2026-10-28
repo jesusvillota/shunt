@@ -712,7 +712,33 @@ fn rejects_overlapping_consecutive_model_tool_batches() {
 }
 
 #[test]
-fn rejects_rich_media_tool_results() {
+fn image_tool_results_follow_function_responses_as_inline_data() {
+    let input = json!({
+        "messages": [
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_1", "name": "shot", "input": {}},
+                {"type": "tool_use", "id": "toolu_2", "name": "read", "input": {}}
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1", "content": [
+                    {"type": "text", "text": "ok"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "AA=="}}
+                ]},
+                {"type": "tool_result", "tool_use_id": "toolu_2", "content": "done"}
+            ]}
+        ]
+    });
+
+    let parts = translate_request(&input).unwrap()["contents"][1]["parts"].clone();
+    assert_eq!(parts[0]["functionResponse"]["name"], "shot");
+    assert_eq!(parts[0]["functionResponse"]["response"]["output"], "ok");
+    assert_eq!(parts[1]["functionResponse"]["name"], "read");
+    assert_eq!(parts[2]["inlineData"]["mimeType"], "image/jpeg");
+    assert_eq!(parts[2]["inlineData"]["data"], "AA==");
+}
+
+#[test]
+fn rejects_document_tool_results() {
     let input = json!({
         "messages": [
             {"role": "assistant", "content": [{
@@ -720,14 +746,14 @@ fn rejects_rich_media_tool_results() {
             }]},
             {"role": "user", "content": [{
                 "type": "tool_result", "tool_use_id": "toolu_1", "content": [{
-                    "type": "image", "source": {"type": "base64", "data": "AA=="}
+                    "type": "document", "source": {"type": "base64", "data": "AA=="}
                 }]
             }]}
         ]
     });
 
     let error = translate_request(&input).unwrap_err();
-    assert!(error.message.contains("rich media tool results"));
+    assert!(error.message.contains("document tool results"));
 }
 
 #[test]
