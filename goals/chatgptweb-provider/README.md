@@ -153,6 +153,7 @@ flowchart TD
     TASK_013["TASK-013 Define and test the ChatGPT Web text tool protocol"]
     TASK_014["TASK-014 Integrate Codex tool turns and a self-checking fake demo"]
     TASK_015["TASK-015 Live smoke a Codex shell and file-edit task in Chat mode"]
+    TASK_016["TASK-016 Fix discovery catalog ordering and fixtures (issue #73)"]
   end
   subgraph M_3["M-3 · Two-account pool"]
     TASK_008["TASK-008 Plan: decompose M-3"]
