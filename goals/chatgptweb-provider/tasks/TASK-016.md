@@ -9,16 +9,17 @@ delivery: pr
 
 ## Why
 
-<the success criterion or milestone this serves>
+TASK-013's required Verify (`cargo test --all-features --workspace`) fails on `main` in three discovery catalog tests. DEC-007 chose to fix it in its own task so TASK-013 keeps its scope. Fixes jesusvillota/shunt#73.
 
 ## Scope
 
-<included work, touched areas and interfaces, explicitly out of scope>
+In `src/discovery.rs`, put the four July 2026 Antigravity aliases in newest-first order and update the default and curated response fixtures to match the intended catalog. Keep every assertion. Out of scope: any other change.
 
 ## Acceptance
 
-- <observable criterion, provable by command output>
+- `discovery::tests::builtin_table_is_newest_first_with_unique_ids`, `default_returns_builtin_models_in_api_order` and `curated_models_precede_and_override_matching_builtins` pass.
+- `cargo test --all-features --workspace` passes.
 
 ## Verify
 
-<commands that prove the acceptance criteria>
+`cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-features --workspace` (set `PYO3_PYTHON` as in AGENTS.md). Paste the output in the PR, with `Fixes jesusvillota/shunt#73` in the description.
