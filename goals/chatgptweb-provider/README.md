@@ -202,6 +202,7 @@ flowchart TD
   classDef decision fill:#f3e8ff,stroke:#7c3aed
   class TASK_006 cancelled
   class TASK_008 cancelled
+  class TASK_010 cancelled
   class TASK_015 cancelled
   class TASK_017 cancelled
   class DEC_001 decision
