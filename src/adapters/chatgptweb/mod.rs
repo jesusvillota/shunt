@@ -1,6 +1,9 @@
 //! Text-only browser transport for the inbound Responses endpoint.
 mod process;
 pub use process::terminate_all;
+// Protocol contract is integrated in TASK-014.
+#[allow(dead_code)]
+mod tool_protocol;
 mod translate;
 
 use super::{AdapterError, AdapterResult};
