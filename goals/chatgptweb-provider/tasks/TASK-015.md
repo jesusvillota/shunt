@@ -66,3 +66,7 @@ codex --version
 cargo test --test chatgptweb_codex_smoke demo -- --ignored --exact --nocapture --test-threads=1
 SHUNT_CHATGPTWEB_SMOKE_PROFILE="$HOME/.local/share/shunt/chatgptweb-browser/chrome/cemfi" SHUNT_CHATGPTWEB_SMOKE_CDP_URL="http://127.0.0.1:9333" cargo test --test chatgptweb_codex_smoke live -- --ignored --exact --nocapture --test-threads=1
 git diff --check
+
+## Attempts
+
+- 2026-10-28: PR #79 closed without merging: Owner authorized a fresh bounded live smoke. The earlier tab loss (#78) was the owner closing a tab by accident; unknown whether before or after the ui_drift failure. Keep the cemfi Chrome profile untouched during the run.
