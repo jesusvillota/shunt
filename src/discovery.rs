@@ -58,6 +58,10 @@ const BUILTIN_MODELS: &[BuiltinModel] = builtin_models![
     "claude-opus-5-5" => "Claude Opus 5.5", "2026-09-21T16:24:00Z", 1_000_000, 128_000;
     "claude-fable-5-1" => "Claude Fable 5.1", "2026-08-28T00:00:00Z", 1_000_000, 128_000;
     "claude-opus-5" => "Claude Opus 5", "2026-07-24T00:00:00Z", 1_000_000, 128_000;
+    "claude-gemini-3.8-flash-low-via-antigravity" => "Gemini 3.8 Flash Low (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
+    "claude-gemini-3.8-flash-via-antigravity" => "Gemini 3.8 Flash (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
+    "claude-gemini-3.8-flash-medium-via-antigravity" => "Gemini 3.8 Flash Medium (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
+    "claude-gemini-3.1-pro-high-via-antigravity" => "Gemini 3.1 Pro High (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
     "claude-sonnet-5" => "Claude Sonnet 5", "2026-06-29T00:00:00Z", 1_000_000, 128_000;
     "claude-fable-5" => "Claude Fable 5", "2026-06-07T00:00:00Z", 1_000_000, 128_000;
     "claude-opus-4-8" => "Claude Opus 4.8", "2026-05-28T00:00:00Z", 1_000_000, 128_000;
@@ -68,10 +72,6 @@ const BUILTIN_MODELS: &[BuiltinModel] = builtin_models![
     "claude-haiku-4-5-20251001" => "Claude Haiku 4.5", "2025-10-15T00:00:00Z", 200_000, 64_000;
     "claude-sonnet-4-5-20250929" => "Claude Sonnet 4.5", "2025-09-29T00:00:00Z", 1_000_000, 64_000;
     "claude-opus-4-1-20250805" => "Claude Opus 4.1", "2025-08-05T00:00:00Z", 200_000, 32_000;
-    "claude-gemini-3.8-flash-low-via-antigravity" => "Gemini 3.8 Flash Low (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
-    "claude-gemini-3.8-flash-via-antigravity" => "Gemini 3.8 Flash (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
-    "claude-gemini-3.8-flash-medium-via-antigravity" => "Gemini 3.8 Flash Medium (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
-    "claude-gemini-3.1-pro-high-via-antigravity" => "Gemini 3.1 Pro High (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
 ];
 
 /// Anthropic list envelope. shunt never paginates, so `has_more` is constant,
@@ -455,6 +455,10 @@ mod tests {
                     {"type": "model", "id": "claude-opus-5-5", "display_name": "Claude Opus 5.5", "created_at": "2026-09-21T16:24:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
                     {"type": "model", "id": "claude-fable-5-1", "display_name": "Claude Fable 5.1", "created_at": "2026-08-28T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
                     {"type": "model", "id": "claude-opus-5", "display_name": "Claude Opus 5", "created_at": "2026-07-24T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
+                    {"type": "model", "id": "claude-gemini-3.8-flash-low-via-antigravity", "display_name": "Gemini 3.8 Flash Low (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 8192},
+                    {"type": "model", "id": "claude-gemini-3.8-flash-via-antigravity", "display_name": "Gemini 3.8 Flash (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 8192},
+                    {"type": "model", "id": "claude-gemini-3.8-flash-medium-via-antigravity", "display_name": "Gemini 3.8 Flash Medium (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 8192},
+                    {"type": "model", "id": "claude-gemini-3.1-pro-high-via-antigravity", "display_name": "Gemini 3.1 Pro High (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 8192},
                     {"type": "model", "id": "claude-sonnet-5", "display_name": "Claude Sonnet 5", "created_at": "2026-06-29T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
                     {"type": "model", "id": "claude-fable-5", "display_name": "Claude Fable 5", "created_at": "2026-06-07T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
                     {"type": "model", "id": "claude-opus-4-8", "display_name": "Claude Opus 4.8", "created_at": "2026-05-28T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
@@ -514,6 +518,10 @@ mod tests {
                     {"type": "model", "id": "claude-opus-5-5", "display_name": "Claude Opus 5.5", "created_at": "2026-09-21T16:24:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
                     {"type": "model", "id": "claude-fable-5-1", "display_name": "Claude Fable 5.1", "created_at": "2026-08-28T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
                     {"type": "model", "id": "claude-opus-5", "display_name": "Claude Opus 5", "created_at": "2026-07-24T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
+                    {"type": "model", "id": "claude-gemini-3.8-flash-low-via-antigravity", "display_name": "Gemini 3.8 Flash Low (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 8192},
+                    {"type": "model", "id": "claude-gemini-3.8-flash-via-antigravity", "display_name": "Gemini 3.8 Flash (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 8192},
+                    {"type": "model", "id": "claude-gemini-3.8-flash-medium-via-antigravity", "display_name": "Gemini 3.8 Flash Medium (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 8192},
+                    {"type": "model", "id": "claude-gemini-3.1-pro-high-via-antigravity", "display_name": "Gemini 3.1 Pro High (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 8192},
                     {"type": "model", "id": "claude-sonnet-5", "display_name": "Claude Sonnet 5", "created_at": "2026-06-29T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
                     {"type": "model", "id": "claude-fable-5", "display_name": "Claude Fable 5", "created_at": "2026-06-07T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
                     {"type": "model", "id": "claude-opus-4-7", "display_name": "Claude Opus 4.7", "created_at": "2026-04-14T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
