@@ -198,7 +198,7 @@ fn translate_messages(request: &Value, model: &str) -> Result<Vec<Value>, Adapte
                 let Some((_, name)) = expected.iter().find(|(id, _)| id == tool_use_id) else {
                     return Err(unknown_tool_result(tool_use_id));
                 };
-                let output = extract_tool_result_content(block)?;
+                let (output, images) = extract_tool_result_content(block)?;
                 let mut response = Map::new();
                 response.insert("output".to_string(), output);
                 if block.get("is_error").and_then(Value::as_bool) == Some(true) {
@@ -214,7 +214,7 @@ fn translate_messages(request: &Value, model: &str) -> Result<Vec<Value>, Adapte
                     function_response["functionResponse"]["id"] = json!(tool_use_id);
                 }
                 if matched
-                    .insert(tool_use_id.to_string(), function_response)
+                    .insert(tool_use_id.to_string(), (function_response, images))
                     .is_some()
                 {
                     return Err(bad_request(format!(
@@ -227,16 +227,18 @@ fn translate_messages(request: &Value, model: &str) -> Result<Vec<Value>, Adapte
                     "Gemini tool-result batch must answer every parallel call exactly once",
                 ));
             }
-            Some(
-                expected
-                    .iter()
-                    .map(|(id, _)| {
-                        matched
-                            .remove(id)
-                            .expect("complete identity mapping was validated")
-                    })
-                    .collect::<Vec<_>>(),
-            )
+            // Every `functionResponse` must sit together right after the
+            // calls; the images they carried follow as plain user parts.
+            let (mut responses, mut images) = (Vec::new(), Vec::new());
+            for (id, _) in expected {
+                let (response, found) = matched
+                    .remove(id)
+                    .expect("complete identity mapping was validated");
+                responses.push(response);
+                images.extend(found);
+            }
+            responses.extend(images);
+            Some(responses)
         } else {
             None
         };
@@ -259,42 +261,7 @@ fn translate_messages(request: &Value, model: &str) -> Result<Vec<Value>, Adapte
                                     }
                                 }
                             }
-                            "image" => {
-                                let source = block
-                                    .get("source")
-                                    .ok_or_else(|| bad_request("image block is missing source"))?;
-                                match source.get("type").and_then(Value::as_str) {
-                                    Some("base64") => {
-                                        let media_type = source
-                                            .get("media_type")
-                                            .and_then(Value::as_str)
-                                            .unwrap_or("image/png");
-                                        let data = source
-                                            .get("data")
-                                            .and_then(Value::as_str)
-                                            .filter(|data| !data.is_empty())
-                                            .ok_or_else(|| {
-                                                bad_request("base64 image source is missing data")
-                                            })?;
-                                        parts.push(json!({
-                                            "inlineData": {
-                                                "mimeType": media_type,
-                                                "data": data
-                                            }
-                                        }));
-                                    }
-                                    Some("url") => {
-                                        return Err(bad_request(
-                                            "URL image sources are not supported by the Gemini adapter",
-                                        ));
-                                    }
-                                    _ => {
-                                        return Err(bad_request(
-                                            "unsupported image source type for Gemini",
-                                        ));
-                                    }
-                                }
-                            }
+                            "image" => parts.push(image_part(block)?),
                             "tool_use" => {
                                 if role != "model" {
                                     return Err(bad_request(
@@ -455,7 +422,39 @@ fn decode_tool_use_signature(id: &str) -> Result<Option<String>, AdapterError> {
     Ok(Some(signature))
 }
 
-fn extract_tool_result_content(block: &Value) -> Result<Value, AdapterError> {
+fn image_part(block: &Value) -> Result<Value, AdapterError> {
+    let source = block
+        .get("source")
+        .ok_or_else(|| bad_request("image block is missing source"))?;
+    match source.get("type").and_then(Value::as_str) {
+        Some("base64") => {
+            let media_type = source
+                .get("media_type")
+                .and_then(Value::as_str)
+                .unwrap_or("image/png");
+            let data = source
+                .get("data")
+                .and_then(Value::as_str)
+                .filter(|data| !data.is_empty())
+                .ok_or_else(|| bad_request("base64 image source is missing data"))?;
+            Ok(json!({
+                "inlineData": {
+                    "mimeType": media_type,
+                    "data": data
+                }
+            }))
+        }
+        Some("url") => Err(bad_request(
+            "URL image sources are not supported by the Gemini adapter",
+        )),
+        _ => Err(bad_request("unsupported image source type for Gemini")),
+    }
+}
+
+/// Returns the text output plus any images; `functionResponse` carries only
+/// text, so the caller sends the images as `inlineData` parts after it.
+fn extract_tool_result_content(block: &Value) -> Result<(Value, Vec<Value>), AdapterError> {
+    let mut images = Vec::new();
     let output = if let Some(content) = block.get("content") {
         match content {
             Value::String(text) => json!(text),
@@ -468,9 +467,10 @@ fn extract_tool_result_content(block: &Value) -> Result<Value, AdapterError> {
                                 text_parts.push(text);
                             }
                         }
-                        Some("image") | Some("document") => {
+                        Some("image") => images.push(image_part(block)?),
+                        Some("document") => {
                             return Err(bad_request(
-                                "rich media tool results are not supported by the Gemini adapter",
+                                "document tool results are not supported by the Gemini adapter",
                             ));
                         }
                         _ => {}
@@ -483,7 +483,7 @@ fn extract_tool_result_content(block: &Value) -> Result<Value, AdapterError> {
     } else {
         json!("")
     };
-    Ok(output)
+    Ok((output, images))
 }
 
 fn translate_generation_config(request: &Value) -> Map<String, Value> {

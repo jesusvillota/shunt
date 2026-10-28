@@ -415,6 +415,65 @@ async fn gemini_no_post_header_replay_preserves_tool_call_result_pairing_next_tu
 }
 
 #[tokio::test]
+async fn gemini_forwards_image_tool_results_as_inline_data() {
+    if !can_bind_loopback() {
+        return;
+    }
+
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1beta/models/gemini-2.5-pro:generateContent"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "done"}]},
+                "finishReason": "STOP"
+            }]
+        })))
+        .expect(1)
+        .mount(&upstream)
+        .await;
+    let gateway = start_gateway(upstream.uri()).await;
+    let response = reqwest::Client::new()
+        .post(format!("{}/v1/messages", gateway.base_url))
+        .json(&json!({
+            "model": "claude-via-gemini",
+            "max_tokens": 64,
+            "stream": false,
+            "messages": [
+                {"role": "user", "content": "fixture"},
+                {"role": "assistant", "content": [{
+                    "type": "tool_use", "id": "call_gemini_v1_c2lnLTE",
+                    "name": "screenshot", "input": {}
+                }]},
+                {"role": "user", "content": [{
+                    "type": "tool_result", "tool_use_id": "call_gemini_v1_c2lnLTE",
+                    "content": [
+                        {"type": "text", "text": "captured"},
+                        {"type": "image", "source": {
+                            "type": "base64", "media_type": "image/png", "data": "AAAA"
+                        }}
+                    ]
+                }]}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = upstream.received_requests().await.unwrap();
+    let translated = requests[0].body_json::<serde_json::Value>().unwrap();
+    let parts = &translated["contents"][2]["parts"];
+    assert_eq!(
+        parts[0]["functionResponse"]["response"]["output"],
+        "captured"
+    );
+    assert_eq!(
+        parts[1],
+        json!({"inlineData": {"mimeType": "image/png", "data": "AAAA"}})
+    );
+}
+
+#[tokio::test]
 async fn gemini_no_post_header_replay_rejects_orphan_result_before_dispatch() {
     if !can_bind_loopback() {
         return;
