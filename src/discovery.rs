@@ -62,6 +62,7 @@ const BUILTIN_MODELS: &[BuiltinModel] = builtin_models![
     "claude-gemini-3.8-flash-via-antigravity" => "Gemini 3.8 Flash (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
     "claude-gemini-3.8-flash-medium-via-antigravity" => "Gemini 3.8 Flash Medium (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
     "claude-gemini-3.1-pro-high-via-antigravity" => "Gemini 3.1 Pro High (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 8_192;
+    "claude-opus-4-6-thinking-via-antigravity" => "Claude Opus 4.6 Thinking (Antigravity)", "2026-07-01T00:00:00Z", 1_000_000, 128_000;
     "claude-sonnet-5" => "Claude Sonnet 5", "2026-06-29T00:00:00Z", 1_000_000, 128_000;
     "claude-fable-5" => "Claude Fable 5", "2026-06-07T00:00:00Z", 1_000_000, 128_000;
     "claude-opus-4-8" => "Claude Opus 4.8", "2026-05-28T00:00:00Z", 1_000_000, 128_000;
@@ -459,6 +460,7 @@ mod tests {
                     {"type": "model", "id": "claude-gemini-3.8-flash-via-antigravity", "display_name": "Gemini 3.8 Flash (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 8192},
                     {"type": "model", "id": "claude-gemini-3.8-flash-medium-via-antigravity", "display_name": "Gemini 3.8 Flash Medium (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 8192},
                     {"type": "model", "id": "claude-gemini-3.1-pro-high-via-antigravity", "display_name": "Gemini 3.1 Pro High (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 8192},
+                    {"type": "model", "id": "claude-opus-4-6-thinking-via-antigravity", "display_name": "Claude Opus 4.6 Thinking (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
                     {"type": "model", "id": "claude-sonnet-5", "display_name": "Claude Sonnet 5", "created_at": "2026-06-29T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
                     {"type": "model", "id": "claude-fable-5", "display_name": "Claude Fable 5", "created_at": "2026-06-07T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
                     {"type": "model", "id": "claude-opus-4-8", "display_name": "Claude Opus 4.8", "created_at": "2026-05-28T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
@@ -522,6 +524,7 @@ mod tests {
                     {"type": "model", "id": "claude-gemini-3.8-flash-via-antigravity", "display_name": "Gemini 3.8 Flash (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 8192},
                     {"type": "model", "id": "claude-gemini-3.8-flash-medium-via-antigravity", "display_name": "Gemini 3.8 Flash Medium (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 8192},
                     {"type": "model", "id": "claude-gemini-3.1-pro-high-via-antigravity", "display_name": "Gemini 3.1 Pro High (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 8192},
+                    {"type": "model", "id": "claude-opus-4-6-thinking-via-antigravity", "display_name": "Claude Opus 4.6 Thinking (Antigravity)", "created_at": "2026-07-01T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
                     {"type": "model", "id": "claude-sonnet-5", "display_name": "Claude Sonnet 5", "created_at": "2026-06-29T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
                     {"type": "model", "id": "claude-fable-5", "display_name": "Claude Fable 5", "created_at": "2026-06-07T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
                     {"type": "model", "id": "claude-opus-4-7", "display_name": "Claude Opus 4.7", "created_at": "2026-04-14T00:00:00Z", "max_input_tokens": 1000000, "max_tokens": 128000},
