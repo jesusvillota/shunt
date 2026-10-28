@@ -1,6 +1,6 @@
 # shunt
 
-実験的なテキスト専用 ChatGPT Web 機能は、Codex Responses エンドポイントで `kind = "chatgptweb_browser"` を指定して使えます。ログイン済みのブラウザープロファイルを1つと、別の Node ヘルパーを使います。ツールは拒否します。[設定と制限](docs/chatgptweb-provider.md)を参照してください。
+実験的な ChatGPT Web 機能は、Codex Responses エンドポイントで `kind = "chatgptweb_browser"` を指定し、テキストと直列実行の Codex シェル・ファイル編集ツールを使えます。ログイン済みブラウザープロファイル1つと別の Node ヘルパーが必要です。オフラインデモはブラウザーやアカウントなしで実際の Codex を実行します。ブラウザーの信頼性には別途ライブ検証が必要です。[設定、デモと制限](docs/chatgptweb-provider.md)を参照してください。
 
 ブラウザーヘルパーの `--chrome` はループバックのデバッグポートで実行中の Chrome に接続します。ヘルパーはブラウザーを閉じません。[ヘルパーの手順（英語）](helpers/chatgptweb-browser/README.md)を参照してください。
 ChatGPT Web の任意項目 `upstream_model` は画面の思考努力ラベル（例: `Medium`）と完全一致するか確認します。ヘルパーは努力を変更しません。

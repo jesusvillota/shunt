@@ -1,17 +1,17 @@
-# ChatGPT Web text provider
+# ChatGPT Web provider
 
-`kind = "chatgptweb_browser"` serves text-only OpenAI Responses requests through
+`kind = "chatgptweb_browser"` serves text and serial Codex shell/file-edit Responses turns through
 `[server.codex_endpoint]`. The provider instance can be named `chatgptweb`.
 DEC-002 chose the distinct kind name. This provider does not use Codex OAuth.
 
-The separate TASK-003 helper must be installed with its Node dependencies and
+The browser helper must be installed with its Node dependencies and
 browser runtime. Set `SHUNT_CHATGPTWEB_HELPER` to its absolute `cli.mjs` path.
 Shunt launches `node "$SHUNT_CHATGPTWEB_HELPER" --account NAME --profile-dir PATH`
 through private JSON Lines pipes. The default script path is
 `helpers/chatgptweb-browser/cli.mjs`, relative to shunt's working directory.
 The helper owns login and checks Chat mode immediately before Send.
 Missing helpers, unknown modes, login failures, and page changes fail closed.
-TASK-005 handles interactive login; TASK-006 owns the live quota smoke test.
+Interactive login uses the helper; browser reliability requires the separate live gate.
 
 Direct helper runs accept `--chrome` to attach to an already running Chrome
 at `http://127.0.0.1:9333` through CDP. `--cdp-url` accepts an HTTP loopback
@@ -49,7 +49,7 @@ effort label, such as `Medium` or `High`. The helper rejects a mismatch and
 never changes effort. Omission leaves effort unchecked. No model entitlement or
 context size is assumed. Configured browser routes appear in all Codex catalogs:
 `/v1/models?client_version=...`, `/models`, and `/backend-api/codex/models`.
-Their rows disable shell tools and advertise text input only. With no browser
+Their rows advertise shell commands, freeform patches, text input, and no parallel tools. With no browser
 routes the Codex catalog remains empty, as before.
 
 Each provider requires exactly one named account with an absolute profile path
@@ -60,11 +60,12 @@ body completes or disconnects. Multi-account rotation is outside this stage.
 The endpoint default can also name this provider; catalog models still need
 explicit routes. The Anthropic Messages endpoint does not support this kind.
 
-The adapter sends instructions and the full ordered text transcript to a fresh
-chat each turn. Tools, images, function-call items, and `previous_response_id`
-return a clear error. Send full history again on each request. Streaming emits
-Responses text deltas and a final message snapshot. Non-streaming requests
-collect the same events into a JSON response. Token usage is unknown (`null`).
+The adapter sends instructions and the full ordered transcript to a fresh chat
+each turn, including tool calls and their matching results. Images, unsupported
+tool inventories, and `previous_response_id` return errors before Send.
+Streaming emits text immediately and native function/custom tool events only
+after validated driver completion. Non-streaming JSON uses the same completed
+snapshot. Token usage is unknown (`null`). Codex owns execution and permissions.
 
 The helper and adapter share the `server.timeouts.upstream_ttfb_ms` budget for
 the complete browser turn (default 120 seconds). Each helper frame is limited
@@ -81,9 +82,10 @@ See [the driver contract](chatgptweb-driver-protocol.md).
 
 ## Internal text tool protocol v1
 
-This contract is implemented and tested in `adapters::chatgptweb::tool_protocol`.
-It is not connected to the adapter yet. The endpoint and discovery catalog
-continue to reject tools. Adapter integration belongs to TASK-014.
+The adapter uses `adapters::chatgptweb::tool_protocol` whenever tools are
+declared, including ordered code-mode `additional_tools`. Requests without
+tools retain the ordinary text prompt and streaming behavior. All requests
+validate before Send.
 Helper wire protocol v1 is unchanged: `Generate.prompt` carries the transcript,
 `TextDelta.text` carries answer fragments, and `Done` confirms completion.
 
@@ -119,8 +121,8 @@ Two model catalogs produce different tool surfaces:
 The complete direct inventory also includes `tool_search`. The contract
 rejects that raw inventory. Fixture tests then remove only `tool_search` to
 check the supported shell/edit transcript. The complete code-mode inventory
-validates without removing declarations. Integration must reject unsupported
-inventories before send; it must not silently filter client tools.
+validates without removing declarations. The adapter rejects unsupported
+inventories before Send; it never silently filters client tools.
 
 The inventory accepts function, custom and one-level namespace declarations.
 Unsupported server tools, images, opaque reasoning items, and deferred tool
@@ -129,7 +131,7 @@ search are rejected. Nothing silently turns them into function tools.
 ### Transcript and validation
 
 `Contract::new(request, turn)` validates before any browser dispatch. `turn`
-is a fresh, unpredictable identifier chosen by the future caller, at most
+is a fresh, unpredictable identifier chosen by the adapter, at most
 64 bytes long. Other identifiers
 contain 1–128 ASCII letters, digits, underscores, hyphens or dots. Namespace
 and name are separate fields; the parser never splits a dotted name.
@@ -209,3 +211,53 @@ The framing identifier limits accidental matches; it does not prevent prompt
 injection. A model can still request destructive commands or unauthorized
 edits. Shunt never executes them. Client approval and permission checks remain
 necessary for every model-generated tool call.
+
+
+## Offline demo and explicit live gate
+
+Install Codex CLI 0.164.0 or a compatible tool surface, then run:
+
+```sh
+cargo test --test chatgptweb_codex_smoke demo -- --ignored --exact --nocapture --test-threads=1
+```
+
+The demo runs real Codex against an injected scripted driver and local shunt
+HTTP endpoint. It reads a seed with a shell command, patches `result.txt` from
+`BEFORE` to `AFTER`, reads the result, and checks returned tool outputs and final
+completion. An adversarial answer cannot edit the file. It needs no browser,
+account or external service. A normal integration fixture checks a 900,000-byte
+transcript, single-character frame boundaries, and the 1 MiB request limit;
+it records elapsed time without a hardware-specific threshold.
+
+The live test is a separate explicit gate. Do not run it for fixture work.
+The owner must have cemfi Chrome running with its separate profile, logged in,
+in Chat mode with visible `Medium` effort. Set both test-only inputs explicitly:
+
+```sh
+SHUNT_CHATGPTWEB_SMOKE_PROFILE="$HOME/.local/share/shunt/chatgptweb-browser/chrome/cemfi" \
+SHUNT_CHATGPTWEB_SMOKE_CDP_URL="http://127.0.0.1:9333" \
+cargo test --test chatgptweb_codex_smoke live -- --ignored --exact --nocapture --test-threads=1
+```
+
+Missing inputs fail the test. A temporary launcher uses
+`SHUNT_CHATGPTWEB_HELPER`, appends `--chrome` and `--cdp-url`, and imports the
+production CLI. No public configuration key is added. A non-sending Chat-only
+health check must pass first. Each send retains the atomic production Chat-only
+guard. A profile lock excludes another smoke harness using the same profile.
+The shared ledger permits at most six Generate requests, 120 seconds per turn,
+and 15 minutes overall, including health. Errors and uncertain sends latch the
+run closed. Neither Codex nor shunt retries. Do not start other sends on that
+profile during a smoke run.
+
+Both runners isolate HOME, CODEX_HOME, rules and unrelated inherited connectors,
+retain `model_provider="shunt"`, and use the normal workspace-write sandbox.
+They never edit the owner's Codex configuration or bypass tool permissions.
+Scratch files, test servers and helper children are cleaned up. Terminal events
+wait for helper-tab cleanup; owner Chrome and its original tabs stay open.
+Local browser fixtures test this launcher, including mode changes before Send,
+shared send/deadline limits and uncertain submissions. The live summary includes
+revision, CLI version, cemfi/Medium, call/result counts, turns, elapsed time and
+final file assertion, without private prompts or profile paths.
+
+Browser reliability and real-model protocol adherence remain subject to the
+separate live gate; the offline demo does not establish them.

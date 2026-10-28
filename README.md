@@ -1,6 +1,6 @@
 # shunt
 
-Experimental text-only ChatGPT Web turns are available through the Codex Responses endpoint with `kind = "chatgptweb_browser"`. This uses one logged-in browser profile and the separate Node helper. Tools are rejected. See [setup and limits](docs/chatgptweb-provider.md).
+Experimental ChatGPT Web turns support text and serial Codex shell/file-edit tools through the Codex Responses endpoint with `kind = "chatgptweb_browser"`. This uses one logged-in browser profile and the separate Node helper. An offline demo runs real Codex without a browser or account. Browser reliability still requires the separate live gate. See [setup, demo and limits](docs/chatgptweb-provider.md).
 
 Direct browser helper runs accept `--chrome` to attach to an existing Chrome on a loopback debugging port. The helper leaves that browser open. See the [helper instructions](helpers/chatgptweb-browser/README.md).
 For ChatGPT Web, optional `upstream_model` checks the exact visible effort label (for example `Medium`); the helper never changes effort.

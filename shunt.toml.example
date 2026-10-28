@@ -194,7 +194,7 @@ api_key_env = "OPENAI_API_KEY" # env var shunt reads the key from
 # max_backoff_ms = 8000        # cap on any backoff and on an honored Retry-After
 # multiplier = 2.0             # exponential growth factor per attempt (>= 1.0)
 
-# Optional text-only ChatGPT Web provider. Install the Node helper in helpers/chatgptweb-browser.
+# Optional ChatGPT Web provider with serial shell/edit tools. Install helpers/chatgptweb-browser.
 # See docs/chatgptweb-provider.md. Set SHUNT_CHATGPTWEB_HELPER to cli.mjs.
 # Keep the existing codex pool as the default; add this model route:
 # [server.codex_endpoint]

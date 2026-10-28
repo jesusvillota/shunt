@@ -94,7 +94,11 @@ async fn post(router: axum::Router, request: Value, compressed: bool) -> axum::r
         .unwrap()
 }
 async fn events(response: axum::response::Response) -> Vec<Value> {
-    assert_eq!(response.status(), StatusCode::OK);
+    if response.status() != StatusCode::OK {
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        panic!("HTTP {status}: {}", String::from_utf8_lossy(&body));
+    }
     assert_eq!(response.headers()["content-type"], "text/event-stream");
     assert_eq!(response.headers()["x-shunt-account"], "personal");
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -227,7 +231,11 @@ async fn chatgptweb_catalog_lists_configured_models_on_every_codex_alias() {
         assert_eq!(catalog["models"].as_array().unwrap().len(), 1);
         assert_eq!(row["slug"], "web-chat");
         assert_eq!(row["visibility"], "list");
-        assert_eq!(row["shell_type"], "disabled");
+        assert_eq!(row["shell_type"], "shell_command");
+        assert_eq!(row["apply_patch_tool_type"], "freeform");
+        assert_eq!(row["supports_parallel_tool_calls"], false);
+        assert_eq!(row["supports_search_tool"], false);
+        assert_eq!(row["experimental_supported_tools"], json!([]));
         assert_eq!(row["input_modalities"], json!(["text"]));
         assert!(row["display_name"]
             .as_str()
@@ -450,4 +458,295 @@ async fn chatgptweb_route_can_omit_effort_without_using_the_public_model() {
         .await;
     let result = events(post(router, request(), false).await).await;
     assert_eq!(result.last().unwrap()["type"], "response.completed");
+}
+
+#[derive(Clone)]
+struct ToolAnswer {
+    records: Vec<Value>,
+    text: String,
+    failure: bool,
+}
+struct ToolDriver {
+    answers: std::collections::VecDeque<ToolAnswer>,
+    prompts: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+}
+#[async_trait::async_trait]
+impl shunt::chatgptweb::Driver for ToolDriver {
+    async fn request(
+        &mut self,
+        request: shunt::chatgptweb::DriverRequest,
+    ) -> Result<shunt::chatgptweb::DriverStream, shunt::chatgptweb::DriverTransportError> {
+        use shunt::chatgptweb::{DriverCommand, DriverEvent, Event};
+        let DriverCommand::Generate { prompt, .. } = request.command else {
+            panic!("generate expected")
+        };
+        let prompt: Value = serde_json::from_str(prompt.lines().last().unwrap()).unwrap();
+        let turn = prompt["turn"].as_str().unwrap();
+        let answer = self.answers.pop_front().expect("no replay after failure");
+        let mut chunks: Vec<_> = (!answer.text.is_empty())
+            .then_some(answer.text)
+            .into_iter()
+            .collect();
+        for record in answer.records {
+            let frame = format!("<<<SHUNT:1:{turn}>>>{record}\n");
+            chunks.extend(frame.chars().map(|c| c.to_string()));
+        }
+        self.prompts.lock().unwrap().push(prompt);
+        let mut events: Vec<_> = chunks
+            .into_iter()
+            .map(|text| Event::TextDelta { text })
+            .collect();
+        events.push(if answer.failure {
+            Event::Error {
+                error: DriverError {
+                    code: ErrorCode::UiDrift,
+                    message: "private".into(),
+                    submission: Submission::MayHaveBeenSent,
+                    retry_after_ms: None,
+                },
+            }
+        } else {
+            Event::Done
+        });
+        Ok(Box::pin(futures_util::stream::iter(
+            events.into_iter().map(move |event| {
+                Ok(DriverEvent {
+                    version: 1,
+                    id: request.id.clone(),
+                    event,
+                })
+            }),
+        )))
+    }
+}
+fn tool_request() -> Value {
+    json!({"model":"web-chat","stream":true,"parallel_tool_calls":false,"tools":[
+        {"type":"function","name":"exec_command","parameters":{"type":"object","properties":{"cmd":{"type":"string"}},"required":["cmd"],"additionalProperties":false}},
+        {"type":"custom","name":"apply_patch","format":{"type":"text"}}
+    ],"input":[{"role":"user","content":"Read and edit"}]})
+}
+async fn tool_gateway(
+    answers: Vec<ToolAnswer>,
+) -> (axum::Router, std::sync::Arc<std::sync::Mutex<Vec<Value>>>) {
+    let (router, _, state) = server::build_router(config(true)).unwrap();
+    let prompts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    state
+        .chatgptweb_drivers
+        .insert(
+            PROFILE.into(),
+            Box::new(ToolDriver {
+                answers: answers.into(),
+                prompts: prompts.clone(),
+            }),
+        )
+        .await;
+    (router, prompts)
+}
+#[tokio::test]
+async fn chatgptweb_tools_roundtrip_shell_edit_and_final_text() {
+    let _vars = common::env_lock().await;
+    let shell = json!({"type":"function_call","name":"exec_command","call_id":"shell_1","arguments":"{\"cmd\":\"cat seed.txt\"}"});
+    let patch = json!({"type":"custom_tool_call","name":"apply_patch","call_id":"edit_1","input":"*** Begin Patch\n*** Update File: seed.txt\n@@\n-BEFORE\n+AFTER\n*** End Patch\n"});
+    let (router, prompts) = tool_gateway(vec![
+        ToolAnswer {
+            text: "Reading. ".into(),
+            records: vec![shell, json!({"type":"done"})],
+            failure: false,
+        },
+        ToolAnswer {
+            text: String::new(),
+            records: vec![patch, json!({"type":"done"})],
+            failure: false,
+        },
+        ToolAnswer {
+            text: "Finished 🌍".into(),
+            records: vec![json!({"type":"done"})],
+            failure: false,
+        },
+    ])
+    .await;
+    let mut request = tool_request();
+    for (turn, result) in ["BEFORE", "Success"].into_iter().enumerate() {
+        let frames = events(post(router.clone(), request.clone(), turn == 0).await).await;
+        for (index, frame) in frames.iter().enumerate() {
+            assert_eq!(frame["sequence_number"], index);
+        }
+        let completed = &frames.last().unwrap()["response"];
+        assert_eq!(completed["status"], "completed");
+        assert!(completed["usage"].is_null());
+        let call = completed["output"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["type"] == "function_call" || v["type"] == "custom_tool_call")
+            .unwrap();
+        let done = frames
+            .iter()
+            .find(|f| f["type"] == "response.output_item.done" && f["item"]["id"] == call["id"])
+            .unwrap();
+        assert_eq!(&done["item"], call);
+        let field = if turn == 0 { "arguments" } else { "input" };
+        let event = if turn == 0 {
+            "response.function_call_arguments.delta"
+        } else {
+            "response.custom_tool_call_input.delta"
+        };
+        assert_eq!(
+            frames.iter().find(|f| f["type"] == event).unwrap()["delta"],
+            call[field]
+        );
+        request["input"]
+            .as_array_mut()
+            .unwrap()
+            .extend(completed["output"].as_array().unwrap().clone());
+        request["input"].as_array_mut().unwrap().push(json!({"type":format!("{}_output",call["type"].as_str().unwrap()),"call_id":call["call_id"],"output":result}));
+    }
+    request["stream"] = json!(false);
+    let response = post(router, request, true).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let final_response: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(
+        final_response["output"][0]["content"][0]["text"],
+        "Finished 🌍"
+    );
+    let prompts = prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 3);
+    assert!(prompts[2]["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["call_id"] == "shell_1" && v["output"] == "BEFORE"));
+    assert!(prompts[2]["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["call_id"] == "edit_1" && v["output"] == "Success"));
+}
+
+#[tokio::test]
+async fn chatgptweb_invalid_tool_answers_never_release_calls() {
+    let _vars = common::env_lock().await;
+    let shell = json!({"type":"function_call","name":"exec_command","call_id":"shell_1","arguments":"{\"cmd\":\"true\"}"});
+    for case in 0..8 {
+        let mut request = tool_request();
+        let mut call = shell.clone();
+        let mut records = vec![shell.clone(), json!({"type":"done"})];
+        match case {
+            0 => {
+                call["name"] = json!("undeclared");
+                records[0] = call;
+            }
+            1 => {
+                call["arguments"] = json!("{");
+                records[0] = call;
+            }
+            2 => {
+                call["call_id"] = json!("bad id");
+                records[0] = call;
+            }
+            3 => records.push(json!({"type":"done"})),
+            4 => {
+                request["tool_choice"] = json!("none");
+            }
+            5 => {
+                request["tool_choice"] = json!("required");
+                records.remove(0);
+            }
+            6 => {
+                records.pop();
+            }
+            _ => {}
+        }
+        let (router, prompts) = tool_gateway(vec![ToolAnswer {
+            text: "Already visible".into(),
+            records,
+            failure: case == 7,
+        }])
+        .await;
+        let frames = events(post(router, request, false).await).await;
+        assert_eq!(
+            frames.last().unwrap()["type"],
+            "response.failed",
+            "case {case}"
+        );
+        assert!(frames
+            .iter()
+            .any(|f| f["type"] == "response.output_text.delta" && f["delta"] == "Already visible"));
+        assert!(
+            !frames.iter().any(|f| f["type"] == "response.completed"
+                || f["type"] == "response.function_call_arguments.delta"
+                || f["item"]["type"] == "function_call"),
+            "case {case}"
+        );
+        assert_eq!(prompts.lock().unwrap().len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn chatgptweb_validates_tool_inventory_and_history_before_send() {
+    let _vars = common::env_lock().await;
+    for case in 0..6 {
+        let mut request = tool_request();
+        match case {
+            0 => request["tools"] = json!({}),
+            1 => { request["tools"] = json!([]); request["tool_choice"] = json!("required"); },
+            2 => request["tools"].as_array_mut().unwrap().push(json!({"type":"tool_search","name":"tool_search"})),
+            3 => request["input"].as_array_mut().unwrap().push(json!({"type":"function_call_output","call_id":"unknown","output":"BEFORE"})),
+            4 => request["tool_choice"] = json!({"type":"function","name":"undeclared"}),
+            _ => request["input"].as_array_mut().unwrap().push(json!({"type":"function_call","name":"exec_command","call_id":"missing","arguments":"{\"cmd\":\"true\"}"})),
+        }
+        let (router, prompts) = tool_gateway(vec![]).await;
+        assert_eq!(
+            post(router, request, false).await.status(),
+            StatusCode::BAD_REQUEST,
+            "case {case}"
+        );
+        assert!(prompts.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn chatgptweb_tool_snapshots_match_stream_and_nonstream_with_bounded_long_transcript() {
+    let _vars = common::env_lock().await;
+    let start = std::time::Instant::now();
+    let call = json!({"type":"function_call","name":"exec_command","call_id":"stable","arguments":"{\"cmd\":\"true\"}"});
+    let answer = ToolAnswer {
+        text: "hello 🌍".into(),
+        records: vec![call, json!({"type":"done"})],
+        failure: false,
+    };
+    let (router, prompts) = tool_gateway(vec![answer.clone(), answer]).await;
+    let mut request = tool_request();
+    request["input"][0]["content"] = json!((0..28125)
+        .map(|_| uuid::Uuid::new_v4().simple().to_string())
+        .collect::<String>());
+    let stream = events(post(router.clone(), request.clone(), true).await).await;
+    let expected = stream.last().unwrap()["response"].clone();
+    assert_eq!(expected["status"], "completed");
+    request["stream"] = json!(false);
+    let response = post(router.clone(), request.clone(), false).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let actual: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    fn normalize(mut value: Value) -> Value {
+        value.as_object_mut().unwrap().remove("id");
+        value.as_object_mut().unwrap().remove("created_at");
+        for item in value["output"].as_array_mut().unwrap() {
+            item.as_object_mut().unwrap().remove("id");
+        }
+        value
+    }
+    assert_eq!(normalize(expected), normalize(actual));
+    request["input"][0]["content"] = json!("a".repeat(1024 * 1024));
+    assert_eq!(
+        post(router, request, false).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        prompts.lock().unwrap().len(),
+        2,
+        "over-limit request must not send"
+    );
+    println!("long transcript: 900000 bytes accepted, 1 MiB rejected, character-split frames; elapsed_ms={}",start.elapsed().as_millis());
 }

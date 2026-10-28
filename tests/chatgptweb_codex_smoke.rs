@@ -1,5 +1,9 @@
 //! Offline capture of the installed Codex shell/edit Responses surface.
 //! No credentials, user config, browser, or real model endpoint are used.
+mod common;
+#[path = "common/chatgptweb_smoke.rs"]
+mod smoke;
+
 use axum::{extract::State, http::header, routing::post, Json, Router};
 use serde_json::{json, Value};
 use std::{
@@ -174,6 +178,7 @@ impl Drop for Scratch {
 #[tokio::test]
 #[ignore = "requires installed Codex CLI; loopback only, never a live provider"]
 async fn capture_tool_surface() {
+    let _vars = common::env_lock().await;
     let version = std::process::Command::new("codex")
         .arg("--version")
         .output()
@@ -230,19 +235,19 @@ async fn capture_tool_surface() {
                 "-m",
                 model,
                 "-c",
-                "model_provider=\"offline\"",
+                "model_provider=\"shunt\"",
                 "-c",
-                "model_providers.offline.name=\"offline\"",
+                "model_providers.shunt.name=\"offline\"",
                 "-c",
             ])
             .arg(format!(
-                "model_providers.offline.base_url=\"http://{address}/v1\""
+                "model_providers.shunt.base_url=\"http://{address}/v1\""
             ))
             .args([
                 "-c",
-                "model_providers.offline.wire_api=\"responses\"",
+                "model_providers.shunt.wire_api=\"responses\"",
                 "-c",
-                "model_providers.offline.requires_openai_auth=false",
+                "model_providers.shunt.requires_openai_auth=false",
                 "-c",
                 "web_search=\"disabled\"",
                 "-c",
@@ -271,4 +276,20 @@ async fn capture_tool_surface() {
         assert_surface(&probe.requests.lock().unwrap(), code_mode, &fixture);
         println!("{model}: declarations, shell/edit calls, correlated continuation outputs, scratch edit verified");
     }
+}
+
+/// Executes real Codex against the injected scripted browser driver.
+#[tokio::test]
+#[ignore = "requires installed Codex CLI; no browser, account or external network"]
+async fn demo() {
+    let _vars = common::env_lock().await;
+    smoke::demo().await;
+}
+
+/// Explicit live gate; missing inputs fail rather than silently skip.
+#[tokio::test]
+#[ignore = "live Chat-only gate: requires explicit profile and owner Chrome CDP URL"]
+async fn live() {
+    let mut vars = common::env_lock().await;
+    smoke::live(&mut vars).await;
 }
