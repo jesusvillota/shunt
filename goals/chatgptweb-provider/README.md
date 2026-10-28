@@ -195,6 +195,7 @@ flowchart TD
   TASK_014 --> TASK_015
   TASK_005 --> TASK_015
   TASK_012 --> TASK_015
+  TASK_017 --> TASK_015
   TASK_014 --> TASK_017
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45

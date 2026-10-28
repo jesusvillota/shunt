@@ -3,7 +3,7 @@ id: TASK-015
 title: Live smoke a Codex shell and file-edit task in Chat mode
 milestone: M-2
 state: approved
-depends_on: [TASK-014, TASK-005, TASK-012]
+depends_on: [TASK-014, TASK-005, TASK-012, TASK-017]
 delivery: pr
 kind: run
 ---
