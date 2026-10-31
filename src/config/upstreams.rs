@@ -40,6 +40,9 @@ pub struct UpstreamConfig {
     /// On by default; only effective on the ChatGPT/Codex flavor.
     #[serde(default = "super::default_true")]
     pub request_compression: bool,
+    /// See [`ProviderConfig::upstream_ttfb_ms`]; unset inherits the global limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_ttfb_ms: Option<u64>,
     #[serde(default)]
     pub retry: RetryConfig,
     /// See [`ProviderConfig::workspace_roots`] (`kind = "antigravity"` only).
@@ -259,6 +262,7 @@ pub(super) fn normalize(
             websocket: upstream.websocket,
             tool_search: upstream.tool_search,
             request_compression: upstream.request_compression,
+            upstream_ttfb_ms: upstream.upstream_ttfb_ms,
             retry: upstream.retry,
             workspace_roots: upstream.workspace_roots.clone(),
             profile_dir: upstream.profile_dir.clone().map(|dir| expand_tilde(&dir)),

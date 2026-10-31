@@ -100,6 +100,7 @@ fn upstream_with(name: &str, base_url: String, auth: UpstreamAuth) -> UpstreamCo
         websocket: false,
         tool_search: None,
         request_compression: true,
+        upstream_ttfb_ms: None,
         retry: RetryConfig {
             max_retries: 0,
             ..RetryConfig::default()

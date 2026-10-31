@@ -60,6 +60,8 @@ This `trust_forwarded_for` switch is independent of `[server.gateway] trust_forw
 
 This timeout covers the Anthropic Messages transports, OpenAI Responses HTTP transport (including WebSocket fallback), Gemini HTTP transport, and inbound Codex Responses passthrough. It does not cover Codex WebSocket turns, Cursor transports, Antigravity processes, discovery, login/OAuth, usage polling, OIDC, or telemetry relay.
 
+Set `upstream_ttfb_ms` in `[providers.<name>]` or a `[[upstreams]]` entry to override `[server.timeouts]` for that provider. Unset inherits the global limit; `0` disables the timeout for that provider. The `timeout_error` message names the upstream model and the effective limit in milliseconds. Provider overrides also hot-reload.
+
 ## `[server.rate_limits]`
 
 | Table | `max` default | `window_seconds` default | Meaning |

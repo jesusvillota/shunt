@@ -162,6 +162,7 @@ fn judge_upstream(name: &str, base_url: String, kind: ProviderKind) -> UpstreamC
         websocket: false,
         tool_search: None,
         request_compression: true,
+        upstream_ttfb_ms: None,
         retry: RetryConfig {
             max_retries: 0,
             ..RetryConfig::default()

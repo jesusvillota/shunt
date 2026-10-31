@@ -74,6 +74,7 @@ fn zen_config(mock_base_url: String) -> Config {
         websocket: false,
         tool_search: None,
         request_compression: true,
+        upstream_ttfb_ms: None,
         retry: Default::default(),
         workspace_roots: Vec::new(),
         profile_dir: None,

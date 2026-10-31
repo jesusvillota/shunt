@@ -68,7 +68,8 @@ pub(crate) async fn forward_codex_routed(
         session_id.as_deref(),
     );
     let upstream = crate::upstream_timeout::wait(
-        state.config.server.timeouts.upstream_ttfb_ms,
+        &route.upstream_model,
+        state.config.upstream_ttfb_ms(&route.provider),
         request.body(body).send(),
     )
     .await

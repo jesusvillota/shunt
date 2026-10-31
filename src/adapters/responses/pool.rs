@@ -614,7 +614,7 @@ pub(super) fn pool_events_stream(
                             .await
                             {
                                 Ok(response) => response,
-                                Err(error @ crate::upstream_timeout::SendError::Timeout) => {
+                                Err(error @ crate::upstream_timeout::SendError::Timeout { .. }) => {
                                     let envelope =
                                         adapter_error_envelope(error.into_adapter_error(|error| {
                                             transport_error(error.without_url().to_string())
@@ -780,7 +780,9 @@ pub(super) fn pool_events_stream(
                                     {
                                         Ok(response) => response,
                                         Err(
-                                            error @ crate::upstream_timeout::SendError::Timeout,
+                                            error @ crate::upstream_timeout::SendError::Timeout {
+                                                ..
+                                            },
                                         ) => {
                                             let envelope = adapter_error_envelope(
                                                 error.into_adapter_error(|error| {
@@ -1204,7 +1206,7 @@ pub(super) async fn forward_chatgpt_oauth(
         .map_err(crate::adapters::idle_error)?
         {
             Ok(response) => response,
-            Err(error @ crate::upstream_timeout::SendError::Timeout) => {
+            Err(error @ crate::upstream_timeout::SendError::Timeout { .. }) => {
                 return Err(error.into_adapter_error(|error| transport_error(error.to_string())));
             }
             Err(crate::upstream_timeout::SendError::Transport(error)) => {
@@ -1312,7 +1314,7 @@ pub(super) async fn forward_chatgpt_oauth(
                 .map_err(crate::adapters::idle_error)?
                 {
                     Ok(response) => response,
-                    Err(error @ crate::upstream_timeout::SendError::Timeout) => {
+                    Err(error @ crate::upstream_timeout::SendError::Timeout { .. }) => {
                         return Err(
                             error.into_adapter_error(|error| transport_error(error.to_string()))
                         );

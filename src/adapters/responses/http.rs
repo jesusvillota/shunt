@@ -47,7 +47,8 @@ pub(super) async fn http_send(
     body: PreparedBody,
 ) -> Result<reqwest::Response, crate::upstream_timeout::SendError<reqwest::Error>> {
     crate::upstream_timeout::wait(
-        state.config.server.timeouts.upstream_ttfb_ms,
+        &route.upstream_model,
+        state.config.upstream_ttfb_ms(&route.provider),
         body.attach(request_builder(
             state, route, credential, session_id, delegation, window,
         ))

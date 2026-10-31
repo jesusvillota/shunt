@@ -63,6 +63,7 @@ fn test_config(upstream_base_url: &str, api_key_env: &'static str) -> Config {
             websocket: false,
             tool_search: None,
             request_compression: true,
+            upstream_ttfb_ms: None,
             accounts: Vec::new(),
             account_scope: Vec::new(),
             retry: shunt::config::RetryConfig::default(),

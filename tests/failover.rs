@@ -98,6 +98,7 @@ fn upstream(
         websocket: false,
         tool_search: None,
         request_compression: true,
+        upstream_ttfb_ms: None,
         retry: disabled_retry(),
         workspace_roots: Vec::new(),
         sandbox: true,

@@ -1841,6 +1841,9 @@ pub struct ProviderConfig {
     /// middlebox that mishandles a compressed request body).
     #[serde(default = "default_true")]
     pub request_compression: bool,
+    /// Override the global HTTP response-header timeout; zero disables it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_ttfb_ms: Option<u64>,
     /// Bounded upstream retry/backoff for transient failures (issue #48).
     /// Applies to this provider's single-credential upstream calls (the
     /// `passthrough`/`api_key` Anthropic path, the single-credential Responses
@@ -3190,6 +3193,7 @@ impl ProviderConfig {
             websocket: false,
             tool_search: None,
             request_compression: true,
+            upstream_ttfb_ms: None,
             retry: RetryConfig::default(),
             workspace_roots: Vec::new(),
             profile_dir: None,
@@ -3216,6 +3220,7 @@ impl ProviderConfig {
             websocket: false,
             tool_search: None,
             request_compression: true,
+            upstream_ttfb_ms: None,
             retry: RetryConfig::default(),
             workspace_roots: Vec::new(),
             profile_dir: None,
@@ -3242,6 +3247,7 @@ impl ProviderConfig {
             websocket: false,
             tool_search: None,
             request_compression: true,
+            upstream_ttfb_ms: None,
             retry: RetryConfig::default(),
             workspace_roots: Vec::new(),
             profile_dir: None,
@@ -3268,6 +3274,7 @@ impl ProviderConfig {
             websocket: false,
             tool_search: None,
             request_compression: true,
+            upstream_ttfb_ms: None,
             retry: RetryConfig::default(),
             workspace_roots: Vec::new(),
             profile_dir: None,
@@ -3316,6 +3323,7 @@ impl Default for Config {
                     websocket: false,
                     tool_search: None,
                     request_compression: true,
+                    upstream_ttfb_ms: None,
                     retry: RetryConfig::default(),
                     workspace_roots: Vec::new(),
                     profile_dir: None,
@@ -3390,6 +3398,7 @@ impl Default for Config {
                     websocket: false,
                     tool_search: None,
                     request_compression: true,
+                    upstream_ttfb_ms: None,
                     retry: RetryConfig::default(),
                     workspace_roots: Vec::new(),
                     profile_dir: None,

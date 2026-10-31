@@ -127,6 +127,7 @@ async fn a_metadata_only_client_reaches_the_upstream_with_matching_affinity_fiel
         tool_search: None,
         // The upstream must see the plain JSON body (the matcher reads it).
         request_compression: false,
+        upstream_ttfb_ms: None,
         retry: Default::default(),
         workspace_roots: Vec::new(),
         profile_dir: None,

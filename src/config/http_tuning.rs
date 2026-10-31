@@ -108,6 +108,14 @@ pub struct TimeoutsConfig {
     pub upstream_ttfb_ms: u64,
 }
 
+impl super::Config {
+    pub(crate) fn upstream_ttfb_ms(&self, provider: &str) -> u64 {
+        self.provider(provider)
+            .and_then(|config| config.upstream_ttfb_ms)
+            .unwrap_or(self.server.timeouts.upstream_ttfb_ms)
+    }
+}
+
 const fn default_upstream_ttfb_ms() -> u64 {
     120_000
 }
@@ -214,6 +222,30 @@ mod tests {
         timeouts: TimeoutsConfig,
         #[serde(default)]
         rate_limits: RateLimitsConfig,
+    }
+
+    #[test]
+    fn provider_header_timeout_overrides_global_limit() {
+        use super::super::{upstreams, Config, ProviderConfig, UpstreamConfig};
+
+        for value in [None, Some(300_000), Some(0)] {
+            let setting = value.map_or(String::new(), |ms| format!("upstream_ttfb_ms = {ms}"));
+            let provider: ProviderConfig = toml::from_str(&format!(
+                "kind = \"responses\"\nbase_url = \"https://example.com\"\n{setting}"
+            ))
+            .unwrap();
+            let upstream: UpstreamConfig = toml::from_str(&format!(
+                "name = \"slow\"\nprovider = \"openai\"\n{setting}"
+            ))
+            .unwrap();
+            let (ordered, _) = upstreams::normalize(&[upstream]).unwrap();
+            for provider in [provider, ordered["slow"].clone()] {
+                let mut config = Config::default();
+                config.server.timeouts.upstream_ttfb_ms = 900;
+                config.providers.insert("slow".into(), provider);
+                assert_eq!(config.upstream_ttfb_ms("slow"), value.unwrap_or(900));
+            }
+        }
     }
 
     #[test]

@@ -75,6 +75,7 @@ fn responses_config(base_url: String) -> Config {
         websocket: false,
         tool_search: None,
         request_compression: true,
+        upstream_ttfb_ms: None,
         retry: RetryConfig {
             max_retries: 0,
             ..Default::default()

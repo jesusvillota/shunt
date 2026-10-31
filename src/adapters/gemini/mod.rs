@@ -691,7 +691,7 @@ async fn forward_single(
         .then(crate::auth::antigravity::version::user_agent);
     let token = access_token.clone();
 
-    let ttfb_ms = state.config.server.timeouts.upstream_ttfb_ms;
+    let ttfb_ms = state.config.upstream_ttfb_ms(&route.provider);
     let retry_safety = retry_safety_for_auth(provider.auth);
     let send =
         crate::retry::send_with_retry_with_safety(policy, &route.provider, retry_safety, || {
@@ -715,7 +715,12 @@ async fn forward_single(
                     req = req.header("x-goog-api-key", &token);
                 }
 
-                crate::upstream_timeout::wait(ttfb_ms, req.json(&payload).send()).await
+                crate::upstream_timeout::wait(
+                    &route.upstream_model,
+                    ttfb_ms,
+                    req.json(&payload).send(),
+                )
+                .await
             }
         });
     let response = match account {
