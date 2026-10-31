@@ -231,11 +231,11 @@ mod tests {
         for value in [None, Some(300_000), Some(0)] {
             let setting = value.map_or(String::new(), |ms| format!("upstream_ttfb_ms = {ms}"));
             let provider: ProviderConfig = toml::from_str(&format!(
-                "kind = \"gemini\"\nbase_url = \"https://example.com\"\n{setting}"
+                "kind = \"responses\"\nbase_url = \"https://example.com\"\n{setting}"
             ))
             .unwrap();
             let upstream: UpstreamConfig = toml::from_str(&format!(
-                "name = \"slow\"\nprovider = \"gemini\"\n{setting}"
+                "name = \"slow\"\nprovider = \"openai\"\n{setting}"
             ))
             .unwrap();
             let (ordered, _) = upstreams::normalize(&[upstream]).unwrap();

@@ -91,7 +91,7 @@ for that provider, even when the global limit is enabled. Both
 ```toml
 [[upstreams]]
 name = "slow-thinking"
-provider = "antigravity"
+provider = "openai"
 upstream_ttfb_ms = 300000
 ```
 
