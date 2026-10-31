@@ -468,6 +468,8 @@ mod tests {
     };
     use tower::ServiceExt;
 
+    use crate::testutil::capture_logs;
+
     use super::{
         event_touches_path, reload, sentry_changed, spawn_reload_watchers, RuntimeState,
         SharedState,
@@ -567,39 +569,6 @@ mod tests {
         Arc::new(ArcSwap::from_pointee(
             RuntimeState::from_config(config).expect("valid initial config"),
         ))
-    }
-
-    /// Capture tracing output for a closure, so warn-path assertions can inspect
-    /// the emitted logs (mirrors config.rs's log-capture test).
-    fn capture_logs(run: impl FnOnce()) -> String {
-        use std::io::{self, Write};
-        use std::sync::Mutex;
-
-        struct BufferWriter {
-            buffer: Arc<Mutex<Vec<u8>>>,
-        }
-        impl Write for BufferWriter {
-            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-                self.buffer.lock().unwrap().extend_from_slice(bytes);
-                Ok(bytes.len())
-            }
-            fn flush(&mut self) -> io::Result<()> {
-                Ok(())
-            }
-        }
-
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let writer_output = Arc::clone(&output);
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || BufferWriter {
-                buffer: Arc::clone(&writer_output),
-            })
-            .with_ansi(false)
-            .without_time()
-            .finish();
-        tracing::subscriber::with_default(subscriber, run);
-        let bytes = output.lock().unwrap().clone();
-        String::from_utf8(bytes).unwrap()
     }
 
     #[test]
@@ -1002,7 +971,7 @@ mod tests {
         let mut next = previous.clone();
         next.server.spend = Some(spend_config(None));
 
-        let logs = capture_logs(|| super::warn_on_restart_only_changes(&previous, &next));
+        let (_, logs) = capture_logs(|| super::warn_on_restart_only_changes(&previous, &next));
         assert!(
             logs.contains("[server.spend] was enabled or disabled"),
             "{logs}"
@@ -1017,7 +986,7 @@ mod tests {
         let mut next = previous.clone();
         next.server.spend.as_mut().unwrap().state_path = Some("/tmp/spend-after.json".into());
 
-        let logs = capture_logs(|| super::warn_on_restart_only_changes(&previous, &next));
+        let (_, logs) = capture_logs(|| super::warn_on_restart_only_changes(&previous, &next));
         assert!(logs.contains("[server.spend].state_path changed"), "{logs}");
         assert!(logs.contains("requires a restart"), "{logs}");
     }
@@ -1032,7 +1001,7 @@ mod tests {
         let shared = shared_from(Config::load(Some(&path)).unwrap());
 
         std::fs::write(&path, "[server]\nbind = \"127.0.0.1:4002\"\n").unwrap();
-        let logs = capture_logs(|| {
+        let (_, logs) = capture_logs(|| {
             reload(&shared, Some(&path)).expect("reload succeeds despite bind change");
         });
 
@@ -1065,7 +1034,7 @@ mod tests {
         );
 
         std::fs::write(&path, "[server]\nmax_concurrent_requests = 2\n").unwrap();
-        let logs = capture_logs(|| {
+        let (_, logs) = capture_logs(|| {
             reload(&shared, Some(&path)).expect("reload succeeds despite limit change");
         });
 
@@ -1105,7 +1074,7 @@ mod tests {
             "[server]\ndefault_provider = \"anthropic\"\n\n[server.oauth_usage]\n",
         )
         .unwrap();
-        let logs = capture_logs(|| {
+        let (_, logs) = capture_logs(|| {
             reload(&shared, Some(&path)).expect("reload succeeds despite oauth_usage toggle");
         });
 
@@ -1131,7 +1100,7 @@ mod tests {
             "[server]\ndefault_provider = \"anthropic\"\n\n[sentry]\ndsn = \"\"\n",
         )
         .unwrap();
-        let logs = capture_logs(|| {
+        let (_, logs) = capture_logs(|| {
             reload(&shared, Some(&path)).expect("reload succeeds despite sentry change");
         });
 
@@ -1265,7 +1234,7 @@ mod tests {
         let shared = shared_from(Config::load(Some(&path)).unwrap());
 
         std::fs::write(&path, "[server]\nshutdown_timeout_seconds = 45\n").unwrap();
-        let logs = capture_logs(|| {
+        let (_, logs) = capture_logs(|| {
             reload(&shared, Some(&path)).expect("reload succeeds despite timeout change");
         });
 

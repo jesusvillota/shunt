@@ -5582,13 +5582,11 @@ pub(crate) static CONFIG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::BTreeMap,
-        io::{self, Write},
-        sync::{Arc, Mutex},
-    };
+    use std::collections::BTreeMap;
 
     use figment::providers::Format;
+
+    use crate::testutil::capture_logs;
 
     use super::{
         config_file_candidates, default_auth_header, host_is_chatgpt, host_is_kimi,
@@ -6206,39 +6204,6 @@ mod tests {
         ));
 
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    struct BufferWriter {
-        buffer: Arc<Mutex<Vec<u8>>>,
-    }
-
-    impl Write for BufferWriter {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            self.buffer.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    fn capture_logs<F, T>(operation: F) -> (T, String)
-    where
-        F: FnOnce() -> T,
-    {
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let writer_output = Arc::clone(&output);
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || BufferWriter {
-                buffer: Arc::clone(&writer_output),
-            })
-            .with_ansi(false)
-            .without_time()
-            .finish();
-        let result = tracing::subscriber::with_default(subscriber, operation);
-        let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
-        (result, logs)
     }
 
     fn account(name: &str) -> AccountConfig {
@@ -7617,21 +7582,12 @@ provider = "deepseek"
         std::env::set_var(&tokens_env, "ops:short");
         let admin = admin_config_with_keys(&tokens_env, Vec::new(), Vec::new());
 
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let writer_output = Arc::clone(&output);
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || BufferWriter {
-                buffer: Arc::clone(&writer_output),
-            })
-            .with_ansi(false)
-            .without_time()
-            .finish();
-        tracing::subscriber::with_default(subscriber, || {
+        let (_, logs) = capture_logs(|| {
             admin
                 .resolve()
                 .expect("a short legacy token must not fail startup");
         });
-        let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+
         assert!(logs.contains("shorter than 32 characters"), "{logs}");
         assert!(logs.contains("ops"), "{logs}");
         assert!(
@@ -10468,15 +10424,6 @@ target = "judge-alias"
 
     #[test]
     fn validate_warns_when_discovery_model_has_no_matching_route() {
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let writer_output = Arc::clone(&output);
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || BufferWriter {
-                buffer: Arc::clone(&writer_output),
-            })
-            .with_ansi(false)
-            .without_time()
-            .finish();
         let config = Config {
             models: vec![ModelConfig {
                 id: "claude-opus-via-codex".to_string(),
@@ -10489,10 +10436,9 @@ target = "judge-alias"
             ..Config::default()
         };
 
-        tracing::subscriber::with_default(subscriber, || {
+        let (_, logs) = capture_logs(|| {
             config.validate().unwrap();
         });
-        let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
 
         assert!(logs.contains("configured discovery model has no matching route"));
         assert!(logs.contains("claude-opus-via-codex"));
@@ -10500,15 +10446,6 @@ target = "judge-alias"
 
     #[test]
     fn validate_does_not_warn_for_routable_model_upstream_map() {
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let writer_output = Arc::clone(&output);
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || BufferWriter {
-                buffer: Arc::clone(&writer_output),
-            })
-            .with_ansi(false)
-            .without_time()
-            .finish();
         let config = Config {
             models: vec![model_config(
                 "claude-opus-via-codex",
@@ -10517,10 +10454,9 @@ target = "judge-alias"
             ..Config::default()
         };
 
-        tracing::subscriber::with_default(subscriber, || {
+        let (_, logs) = capture_logs(|| {
             config.validate().unwrap();
         });
-        let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
 
         assert!(!logs.contains("configured discovery model has no matching route"));
         assert!(!logs.contains("claude-opus-via-codex"));
@@ -10528,21 +10464,11 @@ target = "judge-alias"
 
     #[test]
     fn validate_warns_when_service_tier_is_withheld_for_xai_flavor() {
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let writer_output = Arc::clone(&output);
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || BufferWriter {
-                buffer: Arc::clone(&writer_output),
-            })
-            .with_ansi(false)
-            .without_time()
-            .finish();
         let mut config = Config::default();
         config.providers.get_mut("xai").unwrap().service_tier = Some("priority".to_string());
 
-        let config = tracing::subscriber::with_default(subscriber, || config.validate().unwrap());
+        let (config, logs) = capture_logs(|| config.validate().unwrap());
         assert_eq!(config.responses_flavor("xai"), ResponsesFlavor::Xai);
-        let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
 
         assert!(logs
             .contains("service_tier is configured but withheld on the xai/grok Responses flavor"));
@@ -10551,43 +10477,23 @@ target = "judge-alias"
 
     #[test]
     fn validate_does_not_warn_when_service_tier_is_configured_for_openai_flavor() {
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let writer_output = Arc::clone(&output);
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || BufferWriter {
-                buffer: Arc::clone(&writer_output),
-            })
-            .with_ansi(false)
-            .without_time()
-            .finish();
         let mut config = Config::default();
         config.providers.get_mut("openai").unwrap().service_tier = Some("priority".to_string());
 
-        tracing::subscriber::with_default(subscriber, || {
+        let (_, logs) = capture_logs(|| {
             config.validate().unwrap();
         });
-        let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
 
         assert!(!logs.contains("service_tier is configured but withheld"));
     }
 
     #[test]
     fn validate_does_not_warn_when_service_tier_is_default_sentinel_for_xai_flavor() {
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let writer_output = Arc::clone(&output);
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || BufferWriter {
-                buffer: Arc::clone(&writer_output),
-            })
-            .with_ansi(false)
-            .without_time()
-            .finish();
         let mut config = Config::default();
         config.providers.get_mut("xai").unwrap().service_tier = Some("default".to_string());
 
-        let config = tracing::subscriber::with_default(subscriber, || config.validate().unwrap());
+        let (config, logs) = capture_logs(|| config.validate().unwrap());
         assert_eq!(config.responses_flavor("xai"), ResponsesFlavor::Xai);
-        let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
 
         // "default" is a client-only sentinel stripped unconditionally at wire
         // emission on every flavor, so it is never actually withheld -- warning
@@ -12207,18 +12113,9 @@ provider = "kimi"
         )
         .unwrap();
 
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let writer_output = Arc::clone(&output);
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || BufferWriter {
-                buffer: Arc::clone(&writer_output),
-            })
-            .with_ansi(false)
-            .without_time()
-            .finish();
-        let config = tracing::subscriber::with_default(subscriber, || Config::load(Some(&path)));
+        let (config, logs) = capture_logs(|| Config::load(Some(&path)));
         assert!(config.is_ok());
-        let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+
         assert!(logs.contains("[sentry].dsn"), "{logs}");
 
         let _ = std::fs::remove_dir_all(dir);
@@ -12255,19 +12152,9 @@ provider = "kimi"
         )
         .unwrap();
 
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let writer_output = Arc::clone(&output);
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || BufferWriter {
-                buffer: Arc::clone(&writer_output),
-            })
-            .with_ansi(false)
-            .without_time()
-            .finish();
-        let config =
-            tracing::subscriber::with_default(subscriber, || Config::load(Some(&path)).unwrap());
+        let (config, logs) = capture_logs(|| Config::load(Some(&path)).unwrap());
         assert_eq!(config.sentry.as_ref().unwrap().dsn.expose(), dsn);
-        let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+
         // `Config::load` always emits an unconditional "loaded config" INFO
         // line, so asserting `logs.is_empty()` would be wrong here; what must
         // be absent is the literal-secret WARN.
@@ -12306,19 +12193,9 @@ provider = "kimi"
         )
         .unwrap();
 
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let writer_output = Arc::clone(&output);
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || BufferWriter {
-                buffer: Arc::clone(&writer_output),
-            })
-            .with_ansi(false)
-            .without_time()
-            .finish();
-        tracing::subscriber::with_default(subscriber, || {
+        let (_, logs) = capture_logs(|| {
             Config::load(Some(&path)).unwrap();
         });
-        let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
 
         assert!(logs.contains("[sentry].dsn"), "{logs}");
         assert!(!logs.contains("[otel].endpoint"), "{logs}");
@@ -12368,22 +12245,11 @@ provider = "kimi"
         )
         .unwrap();
 
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let writer_output = Arc::clone(&output);
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || BufferWriter {
-                buffer: Arc::clone(&writer_output),
-            })
-            .with_ansi(false)
-            .without_time()
-            .finish();
-        let config =
-            tracing::subscriber::with_default(subscriber, || Config::load(Some(&path)).unwrap());
+        let (config, logs) = capture_logs(|| Config::load(Some(&path)).unwrap());
         // Advisory only: a literal secret at an ambiguous path must never
         // fail the load, and the value itself still resolves normally.
         assert_eq!(config.sentry.as_ref().unwrap().dsn.expose(), shared);
 
-        let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         assert!(
             logs.contains(
                 "2 config value(s) are written literally in the config file but \
@@ -12423,19 +12289,10 @@ provider = "kimi"
         )
         .unwrap();
 
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let writer_output = Arc::clone(&output);
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || BufferWriter {
-                buffer: Arc::clone(&writer_output),
-            })
-            .with_ansi(false)
-            .without_time()
-            .finish();
-        tracing::subscriber::with_default(subscriber, || {
+        let (_, logs) = capture_logs(|| {
             Config::load(Some(&path)).unwrap();
         });
-        let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+
         // `Config::load` always emits an unconditional "loaded config" INFO
         // line, so asserting `logs.is_empty()` would be wrong here; what must
         // be absent is the literal-secret WARN.
@@ -12495,20 +12352,11 @@ provider = "kimi"
             )
             .unwrap();
 
-            let output = Arc::new(Mutex::new(Vec::new()));
-            let writer_output = Arc::clone(&output);
-            let subscriber = tracing_subscriber::fmt()
-                .with_writer(move || BufferWriter {
-                    buffer: Arc::clone(&writer_output),
-                })
-                .with_ansi(false)
-                .without_time()
-                .finish();
-            tracing::subscriber::with_default(subscriber, || {
+            let (_, logs) = capture_logs(|| {
                 Config::load(Some(&path)).unwrap();
             });
             let _ = std::fs::remove_dir_all(dir);
-            let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+
             logs
         };
 
