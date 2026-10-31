@@ -1,9 +1,8 @@
-use std::sync::{Arc, Mutex};
-
 use serde_json::json;
 
 use super::*;
 use crate::gateway::spend::store::{Period, Scope, SpendStore};
+use crate::testutil::capture_logs;
 
 mod audit_cap;
 
@@ -20,34 +19,22 @@ fn temp_file(label: &str) -> std::path::PathBuf {
     directory.join("state.json")
 }
 
-fn capture_logs<T>(run: impl FnOnce() -> T) -> (T, String) {
-    use std::io::{self, Write};
-
-    struct BufferWriter {
-        buffer: Arc<Mutex<Vec<u8>>>,
-    }
-    impl Write for BufferWriter {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            self.buffer.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
+#[test]
+fn capture_logs_sees_callsite_first_used_on_another_thread() {
+    fn emit_warning(message: &str) {
+        tracing::warn!("{message}");
     }
 
-    let output = Arc::new(Mutex::new(Vec::new()));
-    let writer_output = Arc::clone(&output);
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(move || BufferWriter {
-            buffer: Arc::clone(&writer_output),
-        })
-        .with_ansi(false)
-        .without_time()
-        .finish();
-    let result = tracing::subscriber::with_default(subscriber, run);
-    let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
-    (result, logs)
+    let (result, logs) = capture_logs(|| {
+        std::thread::spawn(|| emit_warning("background warning"))
+            .join()
+            .unwrap();
+        emit_warning("captured warning");
+        42
+    });
+    assert_eq!(result, 42);
+    assert!(logs.contains("captured warning"), "{logs}");
+    assert!(!logs.contains("background warning"), "{logs}");
 }
 
 /// `[server.admin]` + `[server.spend]` with no `[server.gateway]`: spend
