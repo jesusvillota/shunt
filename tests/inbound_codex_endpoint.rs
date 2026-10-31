@@ -1249,7 +1249,8 @@ async fn pooled_ttfb_timeout_returns_504_without_replaying() {
             account("account-b", "SHUNT_TEST_INBOUND_TIMEOUT_B"),
         ],
     );
-    config.server.timeouts.upstream_ttfb_ms = 25;
+    config.server.timeouts.upstream_ttfb_ms = 5_000;
+    config.providers.get_mut("codex").unwrap().upstream_ttfb_ms = Some(25);
     let gateway = start_gateway_with(config).await;
     let session_id = session_id_for_account(0, 2);
 
@@ -1257,6 +1258,9 @@ async fn pooled_ttfb_timeout_returns_504_without_replaying() {
     assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["error"]["type"], "timeout_error");
+    let message = body["error"]["message"].as_str().unwrap();
+    assert!(message.contains("gpt-5.6-sol"), "{message}");
+    assert!(message.contains("25 ms"), "{message}");
     upstream.verify().await;
 }
 

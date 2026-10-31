@@ -212,12 +212,12 @@ pub(super) async fn send_classified(context: &HttpSendContext) -> SendClassified
     let upstream = match outcome {
         Ok(response) => response,
         Err(error) => {
-            let status = if matches!(error, crate::upstream_timeout::SendError::Timeout) {
+            let status = if matches!(error, crate::upstream_timeout::SendError::Timeout { .. }) {
                 StatusCode::GATEWAY_TIMEOUT
             } else {
                 StatusCode::BAD_GATEWAY
             };
-            let advance = !matches!(error, crate::upstream_timeout::SendError::Timeout);
+            let advance = !matches!(error, crate::upstream_timeout::SendError::Timeout { .. });
             let envelope =
                 LazyEnvelope::Ready(
                     adapter_error_envelope(error.into_adapter_error(|error| {

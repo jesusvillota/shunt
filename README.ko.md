@@ -216,7 +216,7 @@ OpenCode 순위 에이전트는 가장 좋은 모델부터 나열한 순서 하�
 | Claude Code CLI 네이티브 사용량 막대 — `GET /api/oauth/usage` 제공 | `[server.oauth_usage]`, 루프백이 아닌 bind에서는 `[server.auth]`(`tokens_env`에 클라이언트 토큰 필요, 기본값 `SHUNT_CLIENT_TOKENS`) 또는 `[server.gateway]` 추가 필요 | [레퍼런스(영문)](https://shunt.sh/reference/configuration/#serveroauth_usage-optional) |
 | 업스트림 상태 폴링 — Statuspage 지표를 메트릭으로, 그리고 `--features ui` 빌드에서는 대시보드에도 노출 | `[[server.status.sources]]` 항목이 하나 이상 있는 `[server.status]` | [레퍼런스](https://shunt.sh/ko/reference/configuration/#serverstatus-선택) |
 | 제한된 업스트림 재시도 — **기본 활성**, 보수적이며 스트림 도중에는 재시도하지 않음 | `[providers.<name>.retry]` | [레퍼런스(영문)](https://shunt.sh/reference/configuration/#providersnameretry) |
-| 공유 배포 제한 — **기본 활성**(동시 1024, 본문 32 MiB, TTFB 120초, device-flow 레이트 리밋), CIDR·헤더·URL 제한은 선택 | `[server] max_concurrent_requests`, `[server.access_control]`, `[server.limits]`, `[server.timeouts]`, `[server.rate_limits]` | [가이드](https://shunt.sh/ko/guides/shared-gateway/) |
+| 공유 배포 제한 — **기본 활성**(동시 1024, 본문 32 MiB, TTFB 120초(공급자별 재정의 가능), device-flow 레이트 리밋), CIDR·헤더·URL 제한은 선택 | `[server] max_concurrent_requests`, `[server.access_control]`, `[server.limits]`, `[server.timeouts]`, `[server.rate_limits]` | [가이드](https://shunt.sh/ko/guides/shared-gateway/) |
 | 시크릿 참조 — 모든 문자열 값에 `${VAR}` 또는 `${file:/abs/path}`, 핫 리로드마다 다시 확인(`[sentry]`·`[otel]` 제외 — 기동 시 1회 구성이라 재시작 필요) | 구성의 모든 문자열(**항상 활성**) | [레퍼런스](https://shunt.sh/ko/reference/configuration/) |
 | OpenTelemetry 메트릭과 트레이스 | `endpoint`가 비어 있지 않은 `[otel]` | [가이드](https://shunt.sh/ko/guides/opentelemetry/) |
 

@@ -213,7 +213,7 @@ OpenCode 排名代理只返回一个从最佳模型开始的顺序：`{"order": 
 | Claude Code CLI 原生用量条 —— 提供 `GET /api/oauth/usage` | `[server.oauth_usage]`;非回环 bind 还需 `[server.auth]`（必须在 `tokens_env` 中提供客户端令牌,默认 `SHUNT_CLIENT_TOKENS`）或 `[server.gateway]` | [参考(英文)](https://shunt.sh/reference/configuration/#serveroauth_usage-optional) |
 | 上游状态轮询 —— 将 Statuspage 指示灯作为指标展示,在 `--features ui` 构建中还会出现在看板上 | 至少含一个 `[[server.status.sources]]` 条目的 `[server.status]` | [参考(英文)](https://shunt.sh/reference/configuration/#serverstatus-optional) |
 | 有界的上游重试 —— **默认开启**,保守,且绝不在流中途重试 | `[providers.<name>.retry]` | [参考(英文)](https://shunt.sh/reference/configuration/#providersnameretry) |
-| 共享部署限制 —— **默认启用**(并发 1024、请求体 32 MiB、TTFB 120 秒、设备流限速),CIDR、请求头与 URL 限制需显式配置 | `[server] max_concurrent_requests`、`[server.access_control]`、`[server.limits]`、`[server.timeouts]`、`[server.rate_limits]` | [指南](https://shunt.sh/zh-cn/guides/shared-gateway/) |
+| 共享部署限制 —— **默认启用**(并发 1024、请求体 32 MiB、TTFB 120 秒（可按提供商覆盖）、设备流限速),CIDR、请求头与 URL 限制需显式配置 | `[server] max_concurrent_requests`、`[server.access_control]`、`[server.limits]`、`[server.timeouts]`、`[server.rate_limits]` | [指南](https://shunt.sh/zh-cn/guides/shared-gateway/) |
 | 密钥引用 —— 任意字符串值可写成 `${VAR}` 或 `${file:/abs/path}`,每次热重载重新解析(`[sentry]`/`[otel]` 除外,启动时构建一次,需重启) | 配置中的任意字符串(**始终启用**) | [参考](https://shunt.sh/zh-cn/reference/configuration/) |
 | OpenTelemetry 指标与链路追踪 | `endpoint` 非空的 `[otel]` | [指南](https://shunt.sh/zh-cn/guides/opentelemetry/) |
 

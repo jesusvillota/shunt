@@ -33,6 +33,8 @@ description: 모든 shunt.toml 키 — server, providers, routes, models.
 
 `[server.timeouts] upstream_ttfb_ms` 기본값은 `120000`이며 `0`으로 비활성화합니다. 추론 업스트림 HTTP 응답 헤더를 기다리는 시간만 제한하므로 응답 본문과 긴 SSE 스트림에는 전체 시간 제한이 없습니다. SSE 응답을 아직 커밋하지 않은 요청은 `504 timeout_error`를 반환하고, 커밋된 스트리밍 요청은 동일한 엔벨로프를 담은 하나의 터미널 SSE `error` 이벤트로 타임아웃을 표시합니다 — 타임아웃이 체인을 진행시키는 일은 없습니다. Anthropic Messages, OpenAI Responses HTTP(웹소켓 폴백 포함), Gemini HTTP, 인바운드 Codex Responses 패스스루를 포함하며 Codex 웹소켓, Cursor, Antigravity와 보조 HTTP 호출은 포함하지 않습니다.
 
+`[providers.<name>]` 또는 `[[upstreams]]` 항목에 `upstream_ttfb_ms`를 설정하면 해당 공급자의 `[server.timeouts]` 값을 재정의합니다. 미설정 시 전역 제한을 상속하며, `0`은 해당 공급자의 시간 제한을 비활성화합니다. `timeout_error` 메시지에는 업스트림 모델과 적용된 제한(밀리초)이 표시됩니다. 공급자별 설정도 재시작 없이 다시 로드됩니다.
+
 `[server.rate_limits.device_authorization]` 기본값은 `max = 30`, `window_seconds = 600`이고 `[server.rate_limits.device_verify]`는 `max = 10`, `window_seconds = 600`입니다. 두 per-IP 제한은 서로 독립적이며 `[server.gateway]`가 없으면 비활성 상태입니다. 변경 후 재시작해야 합니다.
 
 ## `[server.auth]` (선택)

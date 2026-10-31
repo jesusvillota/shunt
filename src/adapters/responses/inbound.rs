@@ -188,7 +188,7 @@ async fn forward_codex_passthrough(
         .await
         {
             Ok(response) => response,
-            Err(error @ SendError::Timeout) => return Err(send_error(error)),
+            Err(error @ SendError::Timeout { .. }) => return Err(send_error(error)),
             Err(SendError::Transport(error)) => {
                 state.accounts.cooldown(
                     &route.provider,
@@ -262,7 +262,7 @@ async fn forward_codex_passthrough(
                 .await
                 {
                     Ok(response) => response,
-                    Err(error @ SendError::Timeout) => return Err(send_error(error)),
+                    Err(error @ SendError::Timeout { .. }) => return Err(send_error(error)),
                     Err(SendError::Transport(error)) => {
                         state.accounts.cooldown(
                             &route.provider,
@@ -448,7 +448,8 @@ async fn passthrough_send(
         .post(responses_url(&state.config, &route.provider))
         .headers(passthrough_headers.clone());
     crate::upstream_timeout::wait(
-        state.config.server.timeouts.upstream_ttfb_ms,
+        &route.upstream_model,
+        state.config.upstream_ttfb_ms(&route.provider),
         apply_credential(request, credential)
             .body(body.clone())
             .send(),

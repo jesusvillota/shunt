@@ -383,6 +383,7 @@ mod tests {
                 websocket: false,
                 tool_search: None,
                 request_compression: true,
+                upstream_ttfb_ms: None,
                 retry: Default::default(),
                 workspace_roots: Vec::new(),
                 sandbox: true,

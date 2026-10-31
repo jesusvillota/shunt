@@ -74,6 +74,7 @@ fn upstream(name: &str, base_url: String) -> UpstreamConfig {
         websocket: false,
         tool_search: None,
         request_compression: true,
+        upstream_ttfb_ms: None,
         retry: RetryConfig {
             max_retries: 0,
             ..RetryConfig::default()

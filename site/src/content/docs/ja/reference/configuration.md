@@ -33,6 +33,8 @@ description: すべての shunt.toml キー — server、providers、routes、mo
 
 `[server.timeouts] upstream_ttfb_ms` はデフォルト `120000` で、`0` で無効化します。推論アップストリームの HTTP レスポンスヘッダー待ちだけを制限するため、レスポンスボディと長時間の SSE ストリームには全体時間制限を設定しません。SSE レスポンスをまだコミットしていないリクエストは `504 timeout_error` を返し、コミット済みストリーミングリクエストは同じエンベロープを持つ 1 つのターミナル SSE `error` イベントとしてタイムアウトを通知します — タイムアウトがチェーンを進めることは決してありません。Anthropic Messages、OpenAI Responses HTTP（WebSocket フォールバックを含む）、Gemini HTTP、インバウンド Codex Responses パススルーを対象とし、Codex WebSocket、Cursor、Antigravity、補助 HTTP 呼び出しは対象外です。
 
+`[providers.<name>]` または `[[upstreams]]` エントリに `upstream_ttfb_ms` を設定すると、そのプロバイダーの `[server.timeouts]` を上書きします。未設定ならグローバル制限を継承し、`0` はそのプロバイダーのタイムアウトを無効にします。`timeout_error` メッセージにはアップストリームモデルと適用された制限（ミリ秒）が含まれます。プロバイダー別の設定も再起動なしで再読み込みされます。
+
 `[server.rate_limits.device_authorization]` のデフォルトは `max = 30`、`window_seconds = 600`、`[server.rate_limits.device_verify]` は `max = 10`、`window_seconds = 600` です。2 つの per-IP 制限は独立し、`[server.gateway]` がなければ無効です。変更には再起動が必要です。
 
 ## `[server.auth]`（オプション）

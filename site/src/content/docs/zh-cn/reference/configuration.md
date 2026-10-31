@@ -33,6 +33,8 @@ description: 每一个 shunt.toml 键 —— server、providers、routes、model
 
 `[server.timeouts] upstream_ttfb_ms` 默认为 `120000`，设为 `0` 可禁用。它只限制等待推理上游 HTTP 响应头的时间，因此不会对响应正文和长时间 SSE 流施加总时限。尚未提交 SSE 响应的请求返回 `504 timeout_error`；已提交的流式请求会将超时显示为一条终端 SSE `error` 事件，携带相同的信封——超时永远不会推进链路。覆盖 Anthropic Messages、OpenAI Responses HTTP（包括 WebSocket 回退）、Gemini HTTP 和入站 Codex Responses 透传；不覆盖 Codex WebSocket、Cursor、Antigravity 或辅助 HTTP 请求。
 
+在 `[providers.<name>]` 或 `[[upstreams]]` 条目中设置 `upstream_ttfb_ms`，可覆盖该提供商的 `[server.timeouts]` 值。未设置时继承全局限制；`0` 禁用该提供商的超时。`timeout_error` 消息包含上游模型和实际生效的限制（毫秒）。提供商级别的设置也支持热重载。
+
 `[server.rate_limits.device_authorization]` 默认为 `max = 30`、`window_seconds = 600`，`[server.rate_limits.device_verify]` 默认为 `max = 10`、`window_seconds = 600`。两个 per-IP 限制彼此独立；未配置 `[server.gateway]` 时不生效。更改后需要重启。
 
 ## `[server.auth]`(可选)

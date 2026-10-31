@@ -4,7 +4,7 @@
 
 The `[server]` HTTP tuning tables control inbound admission, request sizes,
 upstream response-header waits, and the two unauthenticated device-flow rate
-limits. They apply independently of provider routing.
+limits. Admission and request-size limits apply independently of provider routing.
 
 The default inference request-body limit changes from the previous hardcoded 64
 MiB cap to 32 MiB. Anthropic Messages and inbound Codex Responses requests
@@ -83,6 +83,18 @@ only the wait for the upstream HTTP response headers. After headers arrive, the
 response body has no wall-clock cap, so a long-running SSE response continues to
 stream.
 
+A provider's optional `upstream_ttfb_ms` overrides `[server.timeouts]` for that
+provider. An unset value inherits the global limit; `0` disables the timeout
+for that provider, even when the global limit is enabled. Both
+`[providers.<name>]` and ordered `[[upstreams]]` entries accept the key:
+
+```toml
+[[upstreams]]
+name = "slow-thinking"
+provider = "antigravity"
+upstream_ttfb_ms = 300000
+```
+
 The timeout covers these inference HTTP sends:
 
 - Anthropic Messages, including its single-credential and pooled Claude OAuth
@@ -95,7 +107,8 @@ The timeout covers these inference HTTP sends:
 It does not cover the Codex WebSocket handshake or turn, Cursor's HTTP/Connect
 transports, Antigravity local-process execution, discovery probes, OAuth/login
 requests, usage polling, OIDC calls, or telemetry relay. A timeout returns a
-shunt-owned `504 timeout_error` and is not currently retried.
+shunt-owned `504 timeout_error` whose message names the upstream model and the
+effective limit in milliseconds. It is not currently retried.
 
 This key is read per request and hot-applies after reload.
 

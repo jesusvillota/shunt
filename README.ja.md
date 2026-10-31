@@ -215,7 +215,7 @@ OpenCode の再ランキングでは、エージェントが最良のモデル�
 | Claude Code CLI ネイティブ使用量バー — `GET /api/oauth/usage` を提供 | `[server.oauth_usage]`。ループバック以外の bind では `[server.auth]`（`tokens_env` にクライアントトークンが必須、既定値 `SHUNT_CLIENT_TOKENS`）または `[server.gateway]` も必要 | [リファレンス（英語）](https://shunt.sh/reference/configuration/#serveroauth_usage-optional) |
 | アップストリームのステータスポーリング — Statuspage の指標をメトリクスとして、また `--features ui` ビルドではダッシュボードにも表示 | `[[server.status.sources]]` を 1 つ以上含む `[server.status]` | [リファレンス（英語）](https://shunt.sh/reference/configuration/#serverstatus-optional) |
 | 上限付きのアップストリームリトライ — **デフォルトで有効**、保守的で、ストリーム途中では決してリトライしません | `[providers.<name>.retry]` | [リファレンス（英語）](https://shunt.sh/reference/configuration/#providersnameretry) |
-| 共有デプロイの制限 — **デフォルトで有効**（同時 1024、ボディ 32 MiB、TTFB 120 秒、デバイスフローのレートリミット）。CIDR・ヘッダー・URL 制限はオプトイン | `[server] max_concurrent_requests`、`[server.access_control]`、`[server.limits]`、`[server.timeouts]`、`[server.rate_limits]` | [ガイド](https://shunt.sh/ja/guides/shared-gateway/) |
+| 共有デプロイの制限 — **デフォルトで有効**（同時 1024、ボディ 32 MiB、TTFB 120 秒（プロバイダー別に上書き可能）、デバイスフローのレートリミット）。CIDR・ヘッダー・URL 制限はオプトイン | `[server] max_concurrent_requests`、`[server.access_control]`、`[server.limits]`、`[server.timeouts]`、`[server.rate_limits]` | [ガイド](https://shunt.sh/ja/guides/shared-gateway/) |
 | シークレット参照 — 任意の文字列値で `${VAR}` または `${file:/abs/path}` を使え、ホットリロードごとに再解決（`[sentry]`・`[otel]` を除く。起動時に一度だけ構築されるため再起動が必要） | 設定内の任意の文字列（**常に有効**） | [リファレンス](https://shunt.sh/ja/reference/configuration/) |
 | OpenTelemetry のメトリクスとトレース | `endpoint` が空でない `[otel]` | [ガイド](https://shunt.sh/ja/guides/opentelemetry/) |
 

@@ -117,7 +117,8 @@ async fn forward(
         crate::retry::RetrySafety::NonIdempotentPost,
         || {
             crate::upstream_timeout::wait(
-                state.config.server.timeouts.upstream_ttfb_ms,
+                &route.upstream_model,
+                state.config.upstream_ttfb_ms(&route.provider),
                 client
                     .post(url.as_str())
                     .headers(request_headers.clone())
@@ -289,13 +290,19 @@ async fn forward_claude_oauth(
         }
         let request_body = request_body.into_raw();
 
-        let send = post_upstream(&state, &url, request_headers.clone(), request_body.clone());
+        let send = post_upstream(
+            &state,
+            &route,
+            &url,
+            request_headers.clone(),
+            request_body.clone(),
+        );
         let upstream = match send
             .count_attempt(&state.accounts, &route.provider, account)
             .await
         {
             Ok(response) => response,
-            Err(error @ crate::upstream_timeout::SendError::Timeout) => {
+            Err(error @ crate::upstream_timeout::SendError::Timeout { .. }) => {
                 return Err(error.into_adapter_error(upstream_error));
             }
             Err(crate::upstream_timeout::SendError::Transport(error)) => {
@@ -911,12 +918,12 @@ async fn forward_kimi_oauth(
         safeguards::strip_safeguard_betas(&mut request_headers, &provider.base_url);
         let request_body = base_body.clone().into_raw();
 
-        let upstream = match post_upstream(&state, &url, request_headers, request_body)
+        let upstream = match post_upstream(&state, &route, &url, request_headers, request_body)
             .count_attempt(&state.accounts, &route.provider, account)
             .await
         {
             Ok(response) => response,
-            Err(error @ crate::upstream_timeout::SendError::Timeout) => {
+            Err(error @ crate::upstream_timeout::SendError::Timeout { .. }) => {
                 return Err(error.into_adapter_error(upstream_error));
             }
             Err(crate::upstream_timeout::SendError::Transport(error)) => {
@@ -1047,12 +1054,14 @@ fn account_is_static_store_token(account: &crate::config::AccountConfig) -> bool
 
 async fn post_upstream(
     state: &AppState,
+    route: &Route,
     url: &str,
     headers: HeaderMap,
     body: Vec<u8>,
 ) -> Result<reqwest::Response, crate::upstream_timeout::SendError<reqwest::Error>> {
     crate::upstream_timeout::wait(
-        state.config.server.timeouts.upstream_ttfb_ms,
+        &route.upstream_model,
+        state.config.upstream_ttfb_ms(&route.provider),
         state
             .http_client
             .post(url)
@@ -1077,7 +1086,7 @@ async fn retry_upstream(
     body: Vec<u8>,
     fail_msg: &str,
 ) -> Result<Option<reqwest::Response>, AdapterError> {
-    match post_upstream(state, url, headers, body)
+    match post_upstream(state, route, url, headers, body)
         .count_attempt(&state.accounts, &route.provider, account)
         .await
     {
@@ -1087,7 +1096,7 @@ async fn retry_upstream(
                 .note_quota(&route.provider, account, response.headers());
             Ok(Some(response))
         }
-        Err(error @ crate::upstream_timeout::SendError::Timeout) => {
+        Err(error @ crate::upstream_timeout::SendError::Timeout { .. }) => {
             Err(error.into_adapter_error(upstream_error))
         }
         Err(crate::upstream_timeout::SendError::Transport(error)) => {
@@ -1564,7 +1573,8 @@ pub(crate) async fn chain_attempt(
         crate::retry::RetrySafety::NonIdempotentPost,
         || {
             crate::upstream_timeout::wait(
-                state.config.server.timeouts.upstream_ttfb_ms,
+                &route.upstream_model,
+                state.config.upstream_ttfb_ms(&route.provider),
                 client
                     .post(url.as_str())
                     .headers(request_headers.clone())
@@ -1580,7 +1590,7 @@ pub(crate) async fn chain_attempt(
         // header-latency sample the chain records.
         Ok(response) => (response, Instant::now()),
         Err(error) => {
-            let is_timeout = matches!(error, crate::upstream_timeout::SendError::Timeout);
+            let is_timeout = matches!(error, crate::upstream_timeout::SendError::Timeout { .. });
             let envelope = crate::error::error_body_value(
                 *error
                     .into_adapter_error(|error| upstream_error(error.without_url()))
