@@ -327,6 +327,7 @@ async fn streaming_ws_fallback_still_seeds_message_start_estimate() {
     if !can_bind_loopback() {
         return;
     }
+    common::warm_token_encoder();
     let mut vars = common::env_lock().await;
     let _accounts_dir = pin_empty_accounts_dir(&mut vars);
 
