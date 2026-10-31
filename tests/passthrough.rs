@@ -992,6 +992,7 @@ async fn message_start_seeds_tiktoken_estimate_for_streaming_responses_model() {
     if !can_bind_loopback() {
         return;
     }
+    common::warm_token_encoder();
     // The forward-level wiring: with count_tokens = "tiktoken" (the default for
     // mapped providers), a *streaming* responses turn seeds message_start's
     // usage.input_tokens with the local tiktoken estimate — so Claude Code's
