@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use super::{Config, ConfigError, ProviderConfig};
 
 /// One `[server.auth.clients.<name>]` entry. The key is the client name: a
-/// static token's name from the tokens env var, or a verified JWT email.
+/// static token's name from the tokens env var, a verified JWT email, or a
+/// gateway login's email.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ClientPolicy {
     /// Provider name → the account names this client may use on it. A pooled

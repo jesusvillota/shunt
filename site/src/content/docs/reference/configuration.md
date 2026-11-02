@@ -136,7 +136,7 @@ accounts.codex = ["work"]
 | :-- | :-- | :-- |
 | `accounts.<provider>` | all accounts | Names of the accounts this client may use on `<provider>` |
 
-The table key is the client name: a static token's name from `tokens_env`, or the verified email of a [`[[server.auth.jwt]]`](#serverauthjwt-optional) token. A client without an entry, and a provider not listed in an entry, use every account. The provider must have an account pool: `auth = "claude_oauth"`, `"chatgpt_oauth"`, `"kimi_oauth"`, or `"antigravity_oauth"`.
+The table key is the client name: a static token's name from `tokens_env`, the verified email of a [`[[server.auth.jwt]]`](#serverauthjwt-optional) token, or the email of a [gateway login](/guides/gateway-login/). A client without an entry, and a provider not listed in an entry, use every account. The provider must have an account pool: `auth = "claude_oauth"`, `"chatgpt_oauth"`, `"kimi_oauth"`, or `"antigravity_oauth"`.
 
 A pinned client never draws from other accounts. When every account of its subset rejects the request, shunt relays the last upstream `429` with its `Retry-After`; when none of them is selectable (all disabled or paused, or no name in the pool), it returns `503 api_error`. A `[[routes]]` fallback to another provider still applies, with that provider's subset.
 
