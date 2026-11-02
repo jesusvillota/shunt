@@ -25,6 +25,7 @@ flowchart TD
     TASK_004["TASK-004 Give each goal session its goal's shunt client token"]
     TASK_005["TASK-005 Keeper reads the goal's own account subset for rate-limit resets"]
     TASK_006["TASK-006 Gate: Codex end-to-end test and run-shunt smoke test per goal"]
+    TASK_007["TASK-007 Turn on per-goal pinning on this Mac"]
   end
   TASK_001 --> TASK_002
   TASK_001 --> TASK_003
@@ -32,6 +33,9 @@ flowchart TD
   TASK_001 --> TASK_006
   TASK_002 --> TASK_006
   TASK_003 --> TASK_006
+  TASK_004 --> TASK_007
+  TASK_005 --> TASK_007
+  TASK_006 --> TASK_007
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
