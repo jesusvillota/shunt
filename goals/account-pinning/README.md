@@ -19,6 +19,7 @@ Let each goal draw only from a configured subset of a platform's accounts (overl
 ```mermaid
 flowchart TD
   subgraph M_1["M-1 · Per-goal account pinning end to end"]
+    TASK_001["TASK-001 Pin clients to account subsets: config, validation and filter on every pooled adapter"]
   end
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
