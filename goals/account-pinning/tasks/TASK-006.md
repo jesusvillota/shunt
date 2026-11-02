@@ -3,7 +3,7 @@ id: TASK-006
 title: 'Gate: Codex end-to-end test and run-shunt smoke test per goal'
 milestone: M-1
 state: approved
-depends_on: [TASK-001, TASK-002, TASK-003]
+depends_on: [TASK-002, TASK-003]
 delivery: pr
 kind: gate
 repo: shunt
