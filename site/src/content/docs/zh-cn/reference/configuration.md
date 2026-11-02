@@ -100,7 +100,7 @@ accounts.codex = ["work"]
 | :-- | :-- | :-- |
 | `accounts.<provider>` | 所有账户 | 该客户端在 `<provider>` 上可以使用的账户名称 |
 
-表的键是客户端名称:`tokens_env` 中静态 token 的名称,或 [`[[server.auth.jwt]]`](#serverauthjwt可选) token 验证通过的邮箱。没有条目的客户端,以及条目中未列出的提供方,都使用所有账户。提供方必须有账户池:`auth = "claude_oauth"`、`"chatgpt_oauth"`、`"kimi_oauth"` 或 `"antigravity_oauth"`。
+表的键是客户端名称:`tokens_env` 中静态 token 的名称,[`[[server.auth.jwt]]`](#serverauthjwt可选) token 验证通过的邮箱,或[网关登录](/zh-cn/guides/gateway-login/)的邮箱。没有条目的客户端,以及条目中未列出的提供方,都使用所有账户。提供方必须有账户池:`auth = "claude_oauth"`、`"chatgpt_oauth"`、`"kimi_oauth"` 或 `"antigravity_oauth"`。
 
 被固定的客户端从不使用其他账户。当子集中的每个账户都拒绝请求时,shunt 会转发最后一个上游 `429` 及其 `Retry-After`;当子集中没有任何账户可选(全部被禁用或暂停,或者池中没有该名称)时,返回 `503 api_error`。转到其他提供方的 `[[routes]]` 回退仍然适用,并使用那个提供方的子集。
 

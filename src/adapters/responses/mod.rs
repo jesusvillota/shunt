@@ -130,7 +130,7 @@ impl Adapter for ResponsesAdapter {
                 pool_key,
                 session_id,
                 TurnHints {
-                    client: crate::accounts::inbound_client(headers).map(str::to_string),
+                    client: crate::accounts::account_scope(headers).map(str::to_string),
                     compact,
                     delegation,
                 },
@@ -648,7 +648,7 @@ pub(crate) async fn chain_attempt(
             );
             if let Err(error) = crate::accounts::retain_client_accounts(
                 &state.config,
-                crate::accounts::inbound_client(headers),
+                crate::accounts::account_scope(headers),
                 &route.provider,
                 &accounts,
                 &mut order,

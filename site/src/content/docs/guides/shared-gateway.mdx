@@ -99,7 +99,7 @@ accounts.anthropic = ["c"]
 export SHUNT_CLIENT_TOKENS="goal-x:$(openssl rand -hex 32),goal-y:$(openssl rand -hex 32),default:$(openssl rand -hex 32)"
 ```
 
-Each table key is a client name from `SHUNT_CLIENT_TOKENS` (or the verified email of a JWT). Each `accounts.<provider>` list names that provider's accounts. Here `goal-x` uses accounts `a` and `b`, `goal-y` uses only `c`, and `default`, which has no entry, uses all three. Subsets may overlap; an account's cooldown and quota state are shared by every client that uses it. Pinning works on every pooled provider: Claude, Codex/ChatGPT (including the [inbound Codex endpoint](/guides/inbound-codex-endpoint/)), Kimi, and Antigravity.
+Each table key is a client name from `SHUNT_CLIENT_TOKENS` (or the verified email of a JWT or a [gateway login](/guides/gateway-login/)). Each `accounts.<provider>` list names that provider's accounts. Here `goal-x` uses accounts `a` and `b`, `goal-y` uses only `c`, and `default`, which has no entry, uses all three. Subsets may overlap; an account's cooldown and quota state are shared by every client that uses it. Pinning works on every pooled provider: Claude, Codex/ChatGPT (including the [inbound Codex endpoint](/guides/inbound-codex-endpoint/)), Kimi, and Antigravity.
 
 A pinned client never spills over to other accounts. When all of its accounts are rate-limited, it gets the upstream `429` with `Retry-After`, so the client waits for its own accounts to reset. When none of its accounts can be selected (all disabled or paused), it gets a `503` that names the client, the provider, and the accounts. A [`[[routes]]`](/reference/configuration/) fallback to another provider still applies.
 

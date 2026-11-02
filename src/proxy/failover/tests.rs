@@ -231,6 +231,45 @@ fn off_origin_failover_strips_both_slots_without_a_gateway_jwt() {
     assert!(result.get("x-api-key").is_none());
 }
 
+/// The account scope follows every verified client. Attribution names only a
+/// caller that presented a gate credential, so a gateway login and a router
+/// side call carry the scope but no `x-shunt-inbound-client`.
+#[test]
+fn the_account_scope_is_stamped_for_every_verified_client() {
+    let state = state();
+    let client = |name: &str, static_client| InboundContext {
+        gateway_claims: None,
+        client: Some(name.to_string()),
+        static_client,
+    };
+    let static_token = client("goal-x", true);
+    for (inbound, attributed) in [
+        (static_token.side_call(), None),
+        (static_token, Some("goal-x")),
+        (client("ana@example.com", false), None),
+    ] {
+        let result = headers_for_route(
+            &state,
+            &injecting_fallback_route(),
+            &HeaderMap::new(),
+            &inbound,
+            true,
+            None,
+        );
+
+        assert_eq!(
+            result.get("x-shunt-account-scope").unwrap(),
+            inbound.client.as_deref().unwrap()
+        );
+        assert_eq!(
+            result
+                .get("x-shunt-inbound-client")
+                .map(|value| value.to_str().unwrap()),
+            attributed
+        );
+    }
+}
+
 #[tokio::test]
 async fn ungated_passthrough_chain_still_strips_only_the_gateway_jwt_slot() {
     // `check_inbound_auth`'s `!injects_credential` early return (a pure

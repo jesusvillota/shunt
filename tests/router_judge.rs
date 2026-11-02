@@ -17,12 +17,13 @@
 mod common;
 mod judge_harness;
 
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 use shunt::config::{
-    AuthMode, PassthroughSubagentsConfig, RouterConfig, SubagentsConfig, UpstreamAuth,
+    AccountConfig, AccountSelection, AuthMap, AuthMode, ClientPolicy, PassthroughSubagentsConfig,
+    RouterConfig, SubagentsConfig, UpstreamAuth,
 };
 use wiremock::{
     matchers::{method, path},
@@ -34,6 +35,7 @@ use judge_harness::{
     judge_mock, post, post_to, quiet_messages, stall_mock, start_gateway, tier_mock,
     undecided_messages, upstream_with, verdict, ModelIs, Stall, CAPABLE_UPSTREAM_MODEL,
     CLIENT_TOKEN, EFFICIENT_UPSTREAM_MODEL, JUDGE_KEY, JUDGE_UPSTREAM_MODEL, ROUTER_ID, SESSION,
+    TOKENS_ENV,
 };
 
 /// Clause 1: the whole point of the lane. A turn the signals leave undecided
@@ -440,6 +442,96 @@ async fn the_judge_runs_on_its_own_provider() {
 
     capable.verify().await;
     efficient.verify().await;
+    judge.verify().await;
+}
+
+/// The judge call keeps the caller's `[server.auth.clients]` subset: with the
+/// judge on a pool of accounts a, b and c, every judge call made for goal-y
+/// (pinned to c) runs on c. The scope header itself never reaches the judge,
+/// and the call is not attributed to the caller. Non-vacuity: build the judge
+/// call's context without the caller's client and the calls rotate over a, b
+/// and c.
+#[tokio::test]
+async fn a_judge_call_keeps_the_callers_account_subset() {
+    if !can_bind_loopback() {
+        return;
+    }
+    const POOL: [&str; 3] = ["a", "b", "c"];
+    let token = |name: &str| format!("judge-oauth-{name}");
+    let mut vars = env().await;
+    vars.set(TOKENS_ENV, format!("client:{CLIENT_TOKEN},goal-y:tok-y"));
+    for name in POOL {
+        vars.set(&format!("SHUNT_TEST_JUDGE_POOL_{name}"), token(name));
+    }
+    let capable = MockServer::start().await;
+    let efficient = MockServer::start().await;
+    let judge = MockServer::start().await;
+    tier_mock(CAPABLE_UPSTREAM_MODEL, 6).mount(&capable).await;
+    judge_mock(0.1, 6).mount(&judge).await;
+    let config = driven_config_with(&capable, &efficient, judge.uri(), |config| {
+        let upstream = config
+            .upstreams
+            .iter_mut()
+            .find(|upstream| upstream.name == "judge")
+            .unwrap();
+        upstream.auth = Some(UpstreamAuth::Map(AuthMap::ClaudeOauth {
+            account: None,
+            accounts: Some(
+                POOL.map(|name| {
+                    AccountSelection::Inline(AccountConfig {
+                        name: name.to_string(),
+                        token_env: Some(format!("SHUNT_TEST_JUDGE_POOL_{name}")),
+                        uuid: Some(format!("uuid-{name}")),
+                        ..Default::default()
+                    })
+                })
+                .to_vec(),
+            ),
+        }));
+        let policy = ClientPolicy {
+            accounts: BTreeMap::from([("judge".to_string(), vec!["c".to_string()])]),
+        };
+        config.server.auth.as_mut().unwrap().clients =
+            BTreeMap::from([("goal-y".to_string(), policy)]);
+    });
+    let gateway = start_gateway(config).await;
+
+    // One session per turn: `max_judge_calls` is a per-session budget.
+    for turn in 0..6 {
+        let response = client()
+            .post(format!("{}/v1/messages", gateway.base_url))
+            .header("content-type", "application/json")
+            .header(
+                "x-claude-code-session-id",
+                format!("0199a0f2-2f4b-7c3e-9d61-4f1a2b3c4d5{turn}"),
+            )
+            .header("x-shunt-token", "tok-y")
+            .body(
+                json!({"model": ROUTER_ID, "max_tokens": 16, "messages": undecided_messages()})
+                    .to_string(),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let received = judge.received_requests().await.unwrap();
+    assert_eq!(received.len(), 6, "every turn consulted the judge");
+    for request in &received {
+        assert_eq!(
+            request.headers["authorization"],
+            format!("Bearer {}", token("c")).as_str(),
+            "goal-y's judge call runs on its pinned account"
+        );
+        for absent in ["x-shunt-account-scope", "x-shunt-inbound-client"] {
+            assert!(
+                !request.headers.contains_key(absent),
+                "{absent} must not reach the judge"
+            );
+        }
+    }
+    capable.verify().await;
     judge.verify().await;
 }
 

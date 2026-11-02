@@ -99,7 +99,7 @@ accounts.anthropic = ["c"]
 export SHUNT_CLIENT_TOKENS="goal-x:$(openssl rand -hex 32),goal-y:$(openssl rand -hex 32),default:$(openssl rand -hex 32)"
 ```
 
-每个表的键是 `SHUNT_CLIENT_TOKENS` 中的一个客户端名称(或 JWT 验证通过的邮箱)。每个 `accounts.<provider>` 列表列出该提供方的账户名称。这里 `goal-x` 使用账户 `a` 和 `b`,`goal-y` 只使用 `c`,而没有条目的 `default` 使用全部三个。子集可以重叠;账户的冷却和配额状态由使用它的所有客户端共享。固定适用于所有池化的提供方:Claude、Codex/ChatGPT(包括[入站 Codex 端点](/zh-cn/guides/inbound-codex-endpoint/))、Kimi 和 Antigravity。
+每个表的键是 `SHUNT_CLIENT_TOKENS` 中的一个客户端名称(或 JWT 或[网关登录](/zh-cn/guides/gateway-login/)验证通过的邮箱)。每个 `accounts.<provider>` 列表列出该提供方的账户名称。这里 `goal-x` 使用账户 `a` 和 `b`,`goal-y` 只使用 `c`,而没有条目的 `default` 使用全部三个。子集可以重叠;账户的冷却和配额状态由使用它的所有客户端共享。固定适用于所有池化的提供方:Claude、Codex/ChatGPT(包括[入站 Codex 端点](/zh-cn/guides/inbound-codex-endpoint/))、Kimi 和 Antigravity。
 
 被固定的客户端从不溢出到其他账户。当它的所有账户都被限流时,它会收到带 `Retry-After` 的上游 `429`,于是客户端会等待自己的账户重置。当它的账户中没有任何一个可选(全部被禁用或暂停)时,它会收到一个指明客户端、提供方和账户的 `503`。转到其他提供方的 [`[[routes]]`](/zh-cn/reference/configuration/) 回退仍然适用。
 

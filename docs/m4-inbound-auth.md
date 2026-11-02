@@ -205,11 +205,11 @@ two remain decoupled from `SHARED_SLOTS`.
 Four behavior changes came with the consolidation:
 
 - **The reserved names are now stripped unconditionally.** `x-shunt-token`,
-  `x-shunt-admin-token`, and `x-shunt-inbound-client` are removed on every forward, whether or
-  not the corresponding `[server.auth]`/`[server.admin]` table is configured and whether or not
-  the endpoint is gated. None of them is ever a legitimate upstream header, so removing a name
-  a client sent cannot break a legitimate relay — the argument the Codex strip list already made
-  for `x-shunt-token` alone.
+  `x-shunt-admin-token`, `x-shunt-inbound-client`, and `x-shunt-account-scope` are removed on
+  every forward, whether or not the corresponding `[server.auth]`/`[server.admin]` table is
+  configured and whether or not the endpoint is gated. None of them is ever a legitimate
+  upstream header, so removing a name a client sent cannot break a legitimate relay — the
+  argument the Codex strip list already made for `x-shunt-token` alone.
 - **The `cookie` header is now stripped outright on every forward.** `admin::authenticate`
   falls back to `session_cookie`, which reads an accepted `shunt_admin_session` out of `cookie`
   at whatever tier minted it, making it an accept slot the first version of this enumeration
@@ -356,13 +356,20 @@ accounts.codex = ["work"]
 accounts.anthropic = ["c"]
 ```
 
-- **Key.** The client name: a static token's name from `tokens_env`, or the verified email of a
-  `[[server.auth.jwt]]` token. A client without an entry, and a provider not listed in an entry,
-  use every account. Without the table nothing changes.
+- **Key.** The client name: a static token's name from `tokens_env`, the verified email of a
+  `[[server.auth.jwt]]` token, or the email of a gateway login. A client without an entry, and a
+  provider not listed in an entry, use every account. Without the table nothing changes.
 - **Scope.** Every pooled provider: `claude_oauth`, `kimi_oauth`, `antigravity_oauth`, and
-  `chatgpt_oauth` on every transport, including the inbound Codex endpoint.
-- **Trust.** Adapters read the client name from `x-shunt-inbound-client`. The gate strips any
-  caller-sent `x-shunt-*` header (§2.1) and stamps this one only after authentication.
+  `chatgpt_oauth` on every transport, including the inbound Codex endpoint. A router's judge
+  call made for a client draws only from that client's subset of the judge's pool.
+- **Trust.** The subset follows the verified token, never a header the caller sends. Adapters
+  read the client from `x-shunt-account-scope`. The gate strips any caller-sent copy of it and of
+  every other reserved `x-shunt-*` header (§2.1), and stamps it only after authentication. The
+  stamp is separate from the `x-shunt-inbound-client` attribution: a judge call carries the
+  caller's scope but is not attributed to the caller. The scope header never reaches an
+  upstream. The boundary is the shunt process, its config, and its token env var. Agents that
+  run as one OS user can still read each other's tokens, so pinning guards against mistakes,
+  not against a hostile agent.
 - **Selection.** The adapter filters the order that `AccountPool::select_order*` returns; the
   pool itself still sees every account. Health, cooldown, and quota state are kept per account,
   so clients that share an account share its state. The round-robin start position is computed
@@ -379,5 +386,6 @@ accounts.anthropic = ["c"]
   `account_scope`), only `shunt check` reads the store, offline; at run time an unknown name
   gets the `503` above.
 
-Tests: `tests/client_account_pinning.rs` (per-client account sets, the exhausted subset, the
-`503`) and `tests/check_cli.rs` (each rejected entry).
+Tests: `tests/client_account_pinning.rs` (per-client account sets, forged `x-shunt-*` headers,
+the exhausted subset, the `503`), `tests/router_judge.rs` (a judge call keeps the caller's
+subset), and `tests/check_cli.rs` (each rejected entry).

@@ -100,7 +100,7 @@ accounts.codex = ["work"]
 | :-- | :-- | :-- |
 | `accounts.<provider>` | 모든 계정 | 이 클라이언트가 `<provider>`에서 사용할 수 있는 계정 이름 |
 
-테이블 키는 클라이언트 이름입니다: `tokens_env`에 있는 정적 토큰의 이름, 또는 [`[[server.auth.jwt]]`](#serverauthjwt-선택) 토큰의 검증된 이메일입니다. 항목이 없는 클라이언트와 항목에 나열되지 않은 프로바이더는 모든 계정을 사용합니다. 프로바이더에는 계정 풀이 있어야 합니다: `auth = "claude_oauth"`, `"chatgpt_oauth"`, `"kimi_oauth"`, 또는 `"antigravity_oauth"`.
+테이블 키는 클라이언트 이름입니다: `tokens_env`에 있는 정적 토큰의 이름, [`[[server.auth.jwt]]`](#serverauthjwt-선택) 토큰의 검증된 이메일, 또는 [게이트웨이 로그인](/ko/guides/gateway-login/)의 이메일입니다. 항목이 없는 클라이언트와 항목에 나열되지 않은 프로바이더는 모든 계정을 사용합니다. 프로바이더에는 계정 풀이 있어야 합니다: `auth = "claude_oauth"`, `"chatgpt_oauth"`, `"kimi_oauth"`, 또는 `"antigravity_oauth"`.
 
 고정된 클라이언트는 다른 계정에서 절대 가져다 쓰지 않습니다. 지정된 계정이 모두 요청을 거부하면 shunt는 마지막 업스트림 `429`를 그 `Retry-After`와 함께 전달합니다. 선택할 수 있는 계정이 하나도 없으면(모두 비활성화 또는 일시 중지되었거나, 풀에 그 이름이 없을 때) `503 api_error`를 반환합니다. 다른 프로바이더로 가는 `[[routes]]` 폴백은 그대로 적용되며, 그 프로바이더의 계정 부분집합을 사용합니다.
 

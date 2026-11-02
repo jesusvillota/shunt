@@ -99,7 +99,7 @@ accounts.anthropic = ["c"]
 export SHUNT_CLIENT_TOKENS="goal-x:$(openssl rand -hex 32),goal-y:$(openssl rand -hex 32),default:$(openssl rand -hex 32)"
 ```
 
-각 테이블 키는 `SHUNT_CLIENT_TOKENS`에 있는 클라이언트 이름(또는 JWT의 검증된 이메일)입니다. 각 `accounts.<provider>` 목록은 그 프로바이더의 계정 이름을 나열합니다. 여기서 `goal-x`는 계정 `a`와 `b`를, `goal-y`는 `c`만 사용하고, 항목이 없는 `default`는 세 계정을 모두 사용합니다. 부분집합은 겹쳐도 됩니다. 계정의 쿨다운과 쿼터 상태는 그 계정을 쓰는 모든 클라이언트가 공유합니다. 고정은 풀링되는 모든 프로바이더에서 동작합니다: Claude, Codex/ChatGPT([인바운드 Codex 엔드포인트](/ko/guides/inbound-codex-endpoint/) 포함), Kimi, Antigravity.
+각 테이블 키는 `SHUNT_CLIENT_TOKENS`에 있는 클라이언트 이름(또는 JWT나 [게이트웨이 로그인](/ko/guides/gateway-login/)의 검증된 이메일)입니다. 각 `accounts.<provider>` 목록은 그 프로바이더의 계정 이름을 나열합니다. 여기서 `goal-x`는 계정 `a`와 `b`를, `goal-y`는 `c`만 사용하고, 항목이 없는 `default`는 세 계정을 모두 사용합니다. 부분집합은 겹쳐도 됩니다. 계정의 쿨다운과 쿼터 상태는 그 계정을 쓰는 모든 클라이언트가 공유합니다. 고정은 풀링되는 모든 프로바이더에서 동작합니다: Claude, Codex/ChatGPT([인바운드 Codex 엔드포인트](/ko/guides/inbound-codex-endpoint/) 포함), Kimi, Antigravity.
 
 고정된 클라이언트는 다른 계정으로 절대 넘어가지 않습니다. 자기 계정이 모두 rate limit에 걸리면 업스트림 `429`를 `Retry-After`와 함께 받으므로, 클라이언트는 자기 계정이 리셋될 때까지 기다립니다. 자기 계정 중 선택할 수 있는 것이 하나도 없으면(모두 비활성화 또는 일시 중지) 클라이언트, 프로바이더, 계정을 명시한 `503`을 받습니다. 다른 프로바이더로 가는 [`[[routes]]`](/ko/reference/configuration/) 폴백은 그대로 적용됩니다.
 

@@ -11,12 +11,17 @@ use crate::{
     error::ShuntError,
 };
 
-/// The verified inbound client name. `check_inbound_auth` strips any
-/// caller-sent copy of this header and `headers_for_route` stamps the
-/// authenticated name, so adapters can trust it.
-pub(crate) fn inbound_client(headers: &HeaderMap) -> Option<&str> {
+/// The header that carries the client whose account subset a request draws
+/// from. Reserved (`auth::slots::RESERVED_SLOTS`), so a caller-sent copy is
+/// stripped on entry; `headers_for_route` stamps the verified client, router
+/// side calls included; the Anthropic adapter removes it before the request
+/// leaves, and no other adapter copies inbound headers upstream.
+pub(crate) const ACCOUNT_SCOPE_HEADER: &str = "x-shunt-account-scope";
+
+/// The verified client whose account subset this request draws from.
+pub(crate) fn account_scope(headers: &HeaderMap) -> Option<&str> {
     headers
-        .get("x-shunt-inbound-client")
+        .get(ACCOUNT_SCOPE_HEADER)
         .and_then(|value| value.to_str().ok())
 }
 

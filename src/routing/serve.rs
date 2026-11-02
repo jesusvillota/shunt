@@ -100,8 +100,10 @@ pub(crate) struct AdmittedContext<'a> {
     /// The caller's headers, stripped of every credential slot before they are
     /// sent (see [`judge_headers`]).
     headers: &'a HeaderMap,
-    /// Kept so the borrow cannot outlive the admission that produced it.
-    _inbound: &'a InboundContext,
+    /// The caller's admission. Its client scopes the judge call to the
+    /// caller's `[server.auth.clients]` accounts
+    /// ([`InboundContext::side_call`]).
+    inbound: &'a InboundContext,
 }
 
 impl<'a> AdmittedContext<'a> {
@@ -115,7 +117,7 @@ impl<'a> AdmittedContext<'a> {
         Self {
             router_id,
             headers,
-            _inbound: inbound,
+            inbound,
         }
     }
 
@@ -175,7 +177,7 @@ async fn dispatch(
     // codec emits that shape and the adapters route on this path exactly as
     // they do for a client turn.
     let uri = Uri::from_static("/v1/messages");
-    let inbound = InboundContext::internal();
+    let inbound = admitted.inbound.side_call();
     // The deadline wraps dispatch *and* collection. Awaited in place, never
     // spawned: dropping this future on elapse is what cancels the upstream
     // request, and a spawned task would keep running with nothing to answer.

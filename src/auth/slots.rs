@@ -20,7 +20,7 @@
 //! | --- | --- | --- |
 //! | `authorization` | shared with the caller's own upstream credential | **by value** ([`ShuntCredentials::strip_consumed_slots`]) |
 //! | `x-api-key` | shared with the caller's own upstream credential | **by value** ([`ShuntCredentials::strip_consumed_slots`]) |
-//! | `x-shunt-token`, `x-shunt-admin-token`, `x-shunt-inbound-client`, `cookie`, plus whatever `[server.auth] header` / `[server.admin] header` name | reserved by shunt | **by name** ([`ShuntCredentials::strip_reserved_slots`]) |
+//! | `x-shunt-token`, `x-shunt-admin-token`, `x-shunt-inbound-client`, `x-shunt-account-scope`, `cookie`, plus whatever `[server.auth] header` / `[server.admin] header` name | reserved by shunt | **by name** ([`ShuntCredentials::strip_reserved_slots`]) |
 //!
 //! ## Accept sites
 //!
@@ -174,10 +174,11 @@ pub(crate) const SHARED_SLOTS: [&str; 2] = [AUTHORIZATION, API_KEY];
 /// reintroduce precisely the accept/strip drift this module exists to
 /// eliminate. The cost is that a benign `cookie: theme=dark` is dropped too;
 /// that over-strip is intended and is asserted explicitly in the tests.
-pub(crate) const RESERVED_SLOTS: [&str; 4] = [
+pub(crate) const RESERVED_SLOTS: [&str; 5] = [
     "x-shunt-token",
     "x-shunt-admin-token",
     "x-shunt-inbound-client",
+    crate::accounts::ACCOUNT_SCOPE_HEADER,
     "cookie",
 ];
 
@@ -244,7 +245,7 @@ impl<'a> ShuntCredentials<'a> {
         }
     }
 
-    /// Clear every slot shunt reserves by *name*: the three fixed
+    /// Clear every slot shunt reserves by *name*: the fixed
     /// [`RESERVED_SLOTS`], the configured `[server.auth] header`, and the
     /// configured `[server.admin] header`.
     ///
