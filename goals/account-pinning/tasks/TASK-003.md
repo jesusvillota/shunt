@@ -6,6 +6,7 @@ state: approved
 depends_on: [TASK-001]
 delivery: pr
 repo: shunt
+route: {platform: codex, model: gpt-6.1-sol, effort: xhigh}
 ---
 
 ## Why
