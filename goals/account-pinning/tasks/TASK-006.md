@@ -7,6 +7,7 @@ depends_on: [TASK-001, TASK-002, TASK-003]
 delivery: pr
 kind: gate
 repo: shunt
+route: {platform: codex, model: gpt-6.1-sol, effort: xhigh}
 ---
 
 ## Why
