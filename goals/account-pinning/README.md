@@ -22,6 +22,7 @@ flowchart TD
     TASK_001["TASK-001 Pin clients to account subsets: config, validation and filter on every pooled adapter"]
     TASK_002["TASK-002 Keep the client's account subset on router side calls and block forged scope headers"]
     TASK_003["TASK-003 shunt pool --client: show only a client's accounts"]
+    TASK_004["TASK-004 Give each goal session its goal's shunt client token"]
   end
   TASK_001 --> TASK_002
   TASK_001 --> TASK_003
