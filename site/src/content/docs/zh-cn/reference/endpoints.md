@@ -54,6 +54,8 @@ description: shunt 作为 Claude Code LLM 网关所提供的端点。
 | `POST` | `/codex/analytics-events/events` | Codex CLI 分析 sink —— 根路径式 `chatgpt_base_url` 形式 |
 | `GET` | `/usage` | 面向客户端的净化池用量 —— 返回共享账户池按窗口的剩余余量和重置时间,以及每个参与池化的提供方的同样聚合,绝不返回账户身份或容量 |
 
+`GET /admin/api/pool?client=goal-y` 按提供商仅列出 `[server.auth.clients.goal-y].accounts.<provider>` 中配置的账户。未配置该客户端账户子集的提供商保留全部账户。客户端未知或省略 `client` 查询参数时列出全部账户。仅账户列表发生变化，JSON 结构和管理员认证保持不变。
+
 `/admin*` 路由仅在配置了 [`[server.admin]`](/zh-cn/reference/configuration/#serveradmin可选) 时存在;没有该表时,它们一个都不会注册。管理员凭据可通过配置的头部或 `x-api-key` 提交,`read_keys` 凭据可以通过上面的所有 GET,但在所有修改操作上会被 `403` 拒绝。它可以登录:`POST /admin/login` 会接受它并铸造一个 read 级别的会话,该会话的修改操作同样会被 `403` 拒绝。 该登录 POST 受 same-origin 保护:跨站表单提交会在检查凭据之前就被 `403` 拒绝,因此任何凭据持有者都无法用自己的会话 cookie 替换已登录运维人员的会话。脚本登录不受影响 —— 当 `Sec-Fetch-Site` 和 `Origin` 都不存在时,该检查会通过。但 SPA 外壳与前端包文件是例外:`GET /admin`(两种写法)、`GET /admin/{*path}` 与 `GET /admin/assets/{*path}` 无需管理员认证即可获取。这样是安全的,因为它们不包含任何运维数据,而 SPA 读取的一切都在 `/admin/api/*` 之后,后者对每个请求都做认证;其中两个通配符路由同样仅在配置了 `[server.admin]` 且二进制使用 `--features ui` 构建时才存在。`GET /admin/api/observed` 会自动发现网关主机上受支持的 Claude Code、Codex CLI、Gemini CLI、Kimi Code、Grok CLI 与 Cursor.app 凭据,且从不刷新或写入这些来源。设置 [`[server.admin].hide_observed`](/zh-cn/reference/configuration/#serveradmin可选) 即可跳过这一发现:该路由仍会认证并返回 `{ "accounts": [] }`,`GET /admin/api/session` 报告 `hide_observed: true`,仪表盘则跳过该请求,只列出托管的池账户。
 
 ### 管理 SPA 包(`--features ui`)

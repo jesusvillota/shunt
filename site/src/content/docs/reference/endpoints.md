@@ -64,6 +64,8 @@ description: The endpoints shunt serves as a Claude Code LLM gateway.
 | `POST` | `/device/authorize` | Start OIDC approval after explicit same-origin browser confirmation |
 | `GET` | `/device/callback` | Complete the OIDC authorization-code callback |
 
+`GET /admin/api/pool?client=goal-y` lists only the accounts in `[server.auth.clients.goal-y].accounts.<provider>` for each provider. Providers without an entry for that client keep all accounts. An unknown client, or no `client` query parameter, lists all accounts. Only the account lists change; the JSON shape and admin authentication stay the same.
+
 The gateway discovery, device, token, and browser routes exist only when [`[server.gateway]`](/reference/configuration/#servergateway-optional) is configured at startup. `POST /device/authorize` and `GET /device/callback` additionally require [`[server.gateway.oidc]`](/reference/configuration/#servergatewayoidc-optional); without OIDC configuration they return a browser error page rather than starting an external sign-in. Adding or removing `[server.gateway]` requires a restart because route registration is fixed at boot, while changes to its resolved credentials and OIDC configuration hot-apply.
 
 The `/managed/settings` route exists only when [`[server.gateway]`](/reference/configuration/#servergateway-optional) was enabled at boot. A valid gateway bearer JWT is required; static `[server.auth]` tokens do not authenticate this endpoint. When `[[server.gateway.policies]]` is configured, the response is:

@@ -10,11 +10,14 @@ description: shunt 命令行 —— run、check、init、add、import、token、
 ```bash
 shunt pool --config /path/to/shunt.toml
 shunt pool --url http://127.0.0.1:3001 --json
+shunt pool --json --client goal-y
 ```
 
 文本按提供商分组，每个账户占一行，显示名称、可用状态、5h/7d 使用率和重置倒计时，以及当前冷却时间。Antigravity 显示每个已报告 `quota_buckets` 的标签、剩余百分比和重置倒计时。仅有每周配额时不会增加其他窗口。缺失值显示为破折号。
 
 `--json` 原样输出网关快照，包括未知字段。`--url` 覆盖从配置 bind 推导的 URL。令牌依次取自 `--token`、`SHUNT_ADMIN_TOKEN`、`SHUNT_ADMIN_TOKENS` 的首项和 `~/.shunt/admin-token`。`--header` 默认为 `x-shunt-admin-token`。令牌缺失、被拒绝或网关无法连接时，在 stderr 输出单行错误并以非零状态退出。
+
+`--client goal-y` 仅列出 `[server.auth.clients.goal-y].accounts.<provider>` 为该客户端配置的账户。未配置该客户端账户子集的提供商仍列出全部账户。客户端未知或省略 `--client` 时列出全部账户。此筛选适用于文本和 JSON 输出，JSON 结构保持不变。
 
 ## `shunt models`
 

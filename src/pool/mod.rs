@@ -6,6 +6,7 @@ use model::{AccountDto, PoolResponse, QuotaBucketDto};
 use std::{fmt::Write as _, path::PathBuf, time::Duration};
 
 pub struct Options {
+    pub client: Option<String>,
     pub url: Option<String>,
     pub token: Option<String>,
     pub header: String,
@@ -96,6 +97,7 @@ pub async fn run(options: Options) -> anyhow::Result<String> {
         .context("building HTTP client")?;
     let response = http
         .get(format!("{}/admin/api/pool", base.trim_end_matches('/')))
+        .query(&[("client", options.client)])
         .header(options.header, token)
         .send()
         .await
