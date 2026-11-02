@@ -36,7 +36,7 @@ use std::{collections::HashSet, io, sync::Arc, time::Duration};
 #[cfg(feature = "ui")]
 use axum::routing::any;
 use axum::{
-    extract::{rejection::JsonRejection, Path, State},
+    extract::{rejection::JsonRejection, Path, Query, State},
     http::{header, HeaderMap, HeaderName, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post},
@@ -1145,7 +1145,16 @@ async fn build_grok_observed_row(
     }
 }
 
-async fn pool(State(state): State<AppState>, headers: HeaderMap) -> Response {
+#[derive(Deserialize)]
+struct PoolQuery {
+    client: Option<String>,
+}
+
+async fn pool(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<PoolQuery>,
+) -> Response {
     let state = state.refreshed();
     if authenticate(&state, &headers).is_none() {
         return unauthorized();
@@ -1217,13 +1226,20 @@ async fn pool(State(state): State<AppState>, headers: HeaderMap) -> Response {
             }
             _ => unreachable!("provider auth filtered above"),
         };
-        let resolved = match resolved {
+        let mut resolved = match resolved {
             Ok(resolved) => resolved,
             Err(error) => {
                 tracing::error!(provider = %name, %error, "admin: failed to resolve account scope");
                 return internal("failed to read pool state");
             }
         };
+        if let Some(allowed) = query
+            .client
+            .as_deref()
+            .and_then(|client| state.config.client_accounts(client, name))
+        {
+            resolved.retain(|account| allowed.contains(&account.name));
+        }
         let snapshots =
             state
                 .accounts

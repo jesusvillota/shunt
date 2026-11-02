@@ -1,11 +1,13 @@
 //! Exercise the default-build CLI, including its stdout and exit status.
 use shunt::pool::{model::PoolResponse, render};
 use wiremock::{
-    matchers::{header, method, path},
+    matchers::{header, method, path, query_param},
     Mock, MockServer, ResponseTemplate,
 };
 
 mod common;
+#[path = "common/pool.rs"]
+mod pool_fixture;
 
 fn snapshot() -> &'static str {
     r#"{"future_field": {"precise": 0.1234567890123456789}, "providers": [
@@ -67,18 +69,96 @@ fn clean_error(output: std::process::Output, expected: &str) {
 }
 
 #[tokio::test]
+async fn client_lists_only_its_accounts_from_the_gateway() {
+    let _env = common::set_env(pool_fixture::ENV).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let (app, _shared, _state) = shunt::server::build_router(pool_fixture::config()).unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    for (client, expected) in [
+        (Some("goal-y"), vec!["c"]),
+        (None, vec!["a", "b", "c"]),
+        (Some("unknown"), vec!["a", "b", "c"]),
+    ] {
+        for json in [true, false] {
+            let mut cmd = command();
+            cmd.args(["--url", &url]).env(
+                "SHUNT_ADMIN_TOKEN",
+                std::env::var("SHUNT_TEST_POOL_ADMIN_TOKEN").unwrap(),
+            );
+            if let Some(client) = client {
+                cmd.args(["--client", client]);
+            }
+            if json {
+                cmd.arg("--json");
+            }
+            let output = cmd.output().await.unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(output.stderr.is_empty());
+            let body = String::from_utf8(output.stdout).unwrap();
+            if json {
+                let pool: PoolResponse = serde_json::from_str(&body).unwrap();
+                let anthropic = pool
+                    .providers
+                    .iter()
+                    .find(|p| p.provider == "anthropic")
+                    .unwrap();
+                assert_eq!(
+                    anthropic
+                        .accounts
+                        .iter()
+                        .map(|a| a.name.as_str())
+                        .collect::<Vec<_>>(),
+                    expected
+                );
+                let codex = pool
+                    .providers
+                    .iter()
+                    .find(|p| p.provider == "codex")
+                    .unwrap();
+                assert_eq!(codex.accounts.len(), 1);
+                assert_eq!(codex.accounts[0].name, "code");
+            } else {
+                for name in ["a", "b", "c"] {
+                    assert_eq!(
+                        body.contains(&format!("  {name} |")),
+                        expected.contains(&name)
+                    );
+                }
+                assert!(body.contains("codex:\n  code |"));
+            }
+        }
+    }
+    task.abort();
+}
+
+#[tokio::test]
 async fn json_preserves_snapshot_bytes_and_uses_read_request() {
     let _env = common::set_env(&[]).await;
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/admin/api/pool"))
+        .and(query_param("client", "goal+y &z"))
         .and(header("x-shunt-admin-token", "read-token"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(snapshot(), "application/json"))
         .expect(1)
         .mount(&server)
         .await;
     let output = command()
-        .args(["--url", &server.uri(), "--token", "read-token", "--json"])
+        .args([
+            "--url",
+            &server.uri(),
+            "--token",
+            "read-token",
+            "--json",
+            "--client",
+            "goal+y &z",
+        ])
         .output()
         .await
         .unwrap();

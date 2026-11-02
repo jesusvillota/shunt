@@ -54,6 +54,8 @@ description: shunt が Claude Code LLM ゲートウェイとして提供する�
 | `POST` | `/codex/analytics-events/events` | Codex CLI analytics sink — ルート形式の `chatgpt_base_url` |
 | `GET` | `/usage` | クライアント向けのサニタイズ済みプール使用量 — 共有アカウントプールのウィンドウごとの残り余裕とリセットに加え、プールされるプロバイダーごとの同じ集計。アカウントの身元や容量は返さない |
 
+`GET /admin/api/pool?client=goal-y` は、各プロバイダーの `[server.auth.clients.goal-y].accounts.<provider>` に設定されたアカウントだけを返します。そのクライアントの設定がないプロバイダーは全アカウントを返します。未知のクライアント名を指定した場合や `client` クエリパラメーターを省略した場合も全アカウントを返します。変更されるのはアカウント一覧だけで、JSON の構造と管理者認証は変わりません。
+
 `/admin*` ルートは [`[server.admin]`](/ja/reference/configuration/#serveradminオプション) が設定されている場合にのみ存在します。そのテーブルがなければ、いずれも登録されません。管理認証情報は設定されたヘッダーまたは `x-api-key` で受け付け、`read_keys` の認証情報は上記のすべての GET を通過しますが、すべての変更操作では `403` で拒否されます。サインインは可能です: `POST /admin/login` はこれを受け入れて read 階層のセッションを発行し、そのセッションの変更操作も同じ `403` で拒否されます。 このログイン POST には same-origin ガードがあります: クロスサイトのフォーム送信は認証情報を検査する前に `403` で拒否されるため、どの認証情報の保持者も、サインイン済みの運用者のセッション Cookie を自分のものへ差し替えることはできません。スクリプトからのログインは影響を受けません — `Sec-Fetch-Site` と `Origin` のどちらも無い場合、このチェックは通過します。ただし SPA シェルとバンドルファイルは例外で、`GET /admin`(2 つの綴りとも)、`GET /admin/{*path}`、`GET /admin/assets/{*path}` は管理認証なしで配信されます。これらは運用者のデータを含まず、SPA が読み取る値はすべて、リクエストごとに認証する `/admin/api/*` の背後にあるため安全です。ワイルドカードの 2 つのルートは、`[server.admin]` が設定され、かつ `--features ui` でビルドしたバイナリでのみ存在します。`GET /admin/api/observed` は、ゲートウェイホスト上のサポート対象の Claude Code、Codex CLI、Gemini CLI、Kimi Code、Grok CLI、Cursor.app の認証情報を自動検出します。これらのソースをリフレッシュしたり書き込んだりすることはありません。その検出を省くには [`[server.admin].hide_observed`](/ja/reference/configuration/#serveradminオプション) を設定します: ルートは引き続き認証したうえで `{ "accounts": [] }` を返し、`GET /admin/api/session` は `hide_observed: true` を報告し、ダッシュボードはそのリクエストを省いて管理対象のプールアカウントのみを一覧表示します。
 
 ### 管理 SPA バンドル（`--features ui`）

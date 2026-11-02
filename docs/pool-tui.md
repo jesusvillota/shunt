@@ -18,11 +18,14 @@ Print one snapshot from `GET /admin/api/pool`. This read-only command is include
 ```bash
 shunt pool --config /path/to/shunt.toml
 shunt pool --url http://127.0.0.1:3001 --json
+shunt pool --json --client goal-y
 ```
 
 Text output has one section per provider and one line per account: name, availability, 5h/7d utilization and reset countdowns, and active cooldowns. Antigravity shows each reported `quota_buckets` label, remaining percentage, and reset countdown. Weekly-only quota stays weekly-only. Missing readings show a dash.
 
 `--json` prints the gateway snapshot unchanged, including unknown fields. `--url` overrides the URL derived from the configured bind. Token lookup uses `--token`, then `SHUNT_ADMIN_TOKEN`, the first entry of `SHUNT_ADMIN_TOKENS`, and `~/.shunt/admin-token`. `--header` defaults to `x-shunt-admin-token`. Missing or refused tokens and unreachable gateways print a one-line error to stderr and exit non-zero.
+
+`--client goal-y` lists only the accounts configured for `goal-y` in `[server.auth.clients.goal-y].accounts.<provider>`. A provider without an entry for that client lists all accounts. An unknown client, or no `--client`, lists all accounts. This applies to text and JSON output; the JSON shape stays the same.
 
 The CLI and TUI share token resolution, wire types, and quota formatting. The CLI performs one GET and exits; it does not change accounts or config.
 

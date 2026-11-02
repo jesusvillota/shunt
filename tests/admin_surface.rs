@@ -23,6 +23,8 @@ use wiremock::{
 };
 
 mod common;
+#[path = "common/pool.rs"]
+mod pool_fixture;
 
 struct Gateway {
     base_url: String,
@@ -566,6 +568,48 @@ async fn admin_routes_are_absent_without_the_block() {
             StatusCode::NOT_FOUND,
             "{route} must 404 when admin is disabled"
         );
+    }
+}
+
+#[tokio::test]
+async fn admin_pool_filters_client_accounts_and_keeps_unpinned_providers() {
+    let _env = common::set_env(pool_fixture::ENV).await;
+    let gateway = start(pool_fixture::config()).await;
+    let http = reqwest::Client::new();
+    for (query, expected) in [
+        ("?client=goal-y", vec!["c"]),
+        ("", vec!["a", "b", "c"]),
+        ("?client=unknown", vec!["a", "b", "c"]),
+    ] {
+        let response = http
+            .get(format!("{}/admin/api/pool{query}", gateway.base_url))
+            .header(
+                "x-shunt-admin-token",
+                std::env::var("SHUNT_TEST_POOL_ADMIN_TOKEN").unwrap(),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let pool: serde_json::Value = response.json().await.unwrap();
+        let providers = pool["providers"].as_array().unwrap();
+        assert_eq!(providers.len(), 2);
+        let anthropic = providers
+            .iter()
+            .find(|p| p["provider"] == "anthropic")
+            .unwrap();
+        assert_eq!(
+            anthropic["accounts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| a["name"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        let codex = providers.iter().find(|p| p["provider"] == "codex").unwrap();
+        assert_eq!(codex["accounts"].as_array().unwrap().len(), 1);
+        assert_eq!(codex["accounts"][0]["name"], "code");
     }
 }
 

@@ -76,6 +76,9 @@ enum Command {
     },
     /// Print the managed account pool from a running gateway (read-tier admin token is enough).
     Pool {
+        /// Show only this client's configured account subsets.
+        #[arg(long)]
+        client: Option<String>,
         /// Gateway URL. Default: configured `[server].bind`.
         #[arg(long)]
         url: Option<String>,
@@ -264,12 +267,14 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Some(Command::Pool {
+            client,
             url,
             token,
             header,
             json,
         }) => {
             let result = runtime()?.block_on(shunt::pool::run(shunt::pool::Options {
+                client,
                 url,
                 token,
                 header,
