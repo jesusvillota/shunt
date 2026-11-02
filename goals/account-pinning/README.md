@@ -7,11 +7,29 @@ Let each goal draw only from a configured subset of a platform's accounts (overl
 
 ## Context, scope and non-goals
 
-<what exists today, what is included, what is explicitly out of scope>
+**Today.** shunt pools several accounts per platform (for example Claude accounts A, B, C) and every request draws from all of them. The owner's gateway runs without `[server.auth]`, so shunt cannot tell one goal from another. The `goal` CLI sets no gateway token or header on the sessions it starts.
+
+**Design (agreed with the owner on 2026-11-02).**
+
+- *Identity.* Each pinned goal gets its own shunt client token (`[server.auth]`, `SHUNT_CLIENT_TOKENS="<slug>:<token>,…"`). The client name is the goal slug. Claude Code sessions send it as `ANTHROPIC_CUSTOM_HEADERS="x-shunt-token: <token>"`. That header wins over the `apiKeyHelper` Bearer token, so ordinary sessions keep using the owner's token, registered as client `default`. Codex sessions send it through `env_http_headers`. The token lives in the macOS Keychain as `shunt-goal-<slug>`.
+- *Config.* `[server.auth.clients.<slug>]` with `accounts.<provider> = [names]`. A goal with no entry uses all accounts. One table covers every pooled platform (Claude, Kimi, Codex/ChatGPT, Antigravity, the inbound Codex endpoint).
+- *Selection.* Adapters filter the order from `AccountPool::select_order*` to the subset. Health is keyed per account, so overlapping goals (X and Z both on A) share A's quota and cooldown state.
+- *Exhausted subset.* Fail, never spill over: shunt relays the upstream 429 with `Retry-After`, and the goal keeper sleeps until the goal's own subset resets (`shunt pool --json --client <slug>`). An operator-configured `[[routes]]` fallback to another provider still applies.
+- *Trust boundary.* The shunt process, its config and its token env var. Clients present only a secret; forged `x-shunt-*` headers are stripped on entry. All agents run as one macOS user and can read the Keychain, so this guards against mistakes, not a hostile agent.
+
+**In scope.** shunt config, validation, selection filter, router side calls, `shunt pool --client`, docs in README/docs/site (4 languages); goal CLI token hand-off and keeper subset reads; owner setup on this Mac.
+
+**Out of scope.** Changes to Claude Code or Codex; spill-over to other accounts; per-OS-user isolation; credential writeback; `wiki/` (generated).
 
 ## Risks and open questions
 
-<risks, assumptions, and unknowns; material unknowns become discovery tasks or DEC nodes>
+- *Turning on `[server.auth]` makes every credential-injecting request need a token.* Mitigated by registering the `apiKeyHelper` token as `default` (TASK-007) and by fixing goal's agy discovery, which sends `x-api-key: local` (TASK-004).
+- *Cold-start skew.* The round-robin start position is computed over all accounts, so before quota headers arrive, a goal on A/B can hit A about twice as often as B. Accepted; headroom ordering takes over once quota signals exist.
+- *Token leakage through launch commands.* TASK-004 must resolve the token in the launched shell, never write it into command text, logs or the clipboard.
+- *Older shunt binary.* TASK-005 falls back to `shunt pool --json` without `--client` if the flag is unknown.
+- *Assumption.* The client name equals the goal slug; Keychain service `shunt-goal-<slug>`.
+
+Model routing (owner's choice): the critical shunt tasks (TASK-001 core feature, TASK-002 security) run on `claude:opus:high`; the others run on `codex:gpt-6.1-sol:xhigh`.
 
 ## Plan structure
 

@@ -9,16 +9,22 @@ delivery: manual
 
 ## Why
 
-<the success criterion or milestone this serves>
+Serves the milestone exit. The feature only acts once the owner's gateway has `[server.auth]`, client tokens and subsets. This touches live config and secrets, so the owner does it (an interactive copilot may help).
 
 ## Scope
 
-<included work, touched areas and interfaces, explicitly out of scope>
+1. Install the new shunt and goal builds.
+2. Put the token that `~/.local/bin/claude-shunt-token` (the Claude `apiKeyHelper`) prints into `SHUNT_CLIENT_TOKENS` as client `default`, so ordinary sessions keep working.
+3. For each pinned goal, create a token, add `<slug>:<token>` to `SHUNT_CLIENT_TOKENS`, and store it in the Keychain as service `shunt-goal-<slug>`.
+4. Add `[server.auth]` and `[server.auth.clients.<slug>].accounts.<provider>` to `~/.config/shunt/shunt.toml`, and `env_http_headers` for Codex in `~/.codex/config.toml`.
+5. Run `shunt check`, restart shunt, and dispatch one task of a pinned goal.
 
 ## Acceptance
 
-- <observable criterion, provable by command output>
+- `shunt check` prints `config ok`.
+- An ordinary Claude Code session still works.
+- A pinned goal's session responses carry `x-shunt-account` values only from its subset (checked in the shunt log or with `shunt pool --client <slug>`).
 
 ## Verify
 
-<commands that prove the acceptance criteria>
+`shunt check`, then `shunt pool --json --client <slug>` while a pinned goal runs.
