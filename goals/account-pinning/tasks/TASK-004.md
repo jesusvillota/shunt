@@ -6,6 +6,7 @@ state: approved
 depends_on: []
 delivery: pr
 repo: goal
+route: {platform: codex, model: gpt-6.1-sol, effort: xhigh}
 ---
 
 ## Why
