@@ -20,7 +20,9 @@ Let each goal draw only from a configured subset of a platform's accounts (overl
 flowchart TD
   subgraph M_1["M-1 · Per-goal account pinning end to end"]
     TASK_001["TASK-001 Pin clients to account subsets: config, validation and filter on every pooled adapter"]
+    TASK_002["TASK-002 Keep the client's account subset on router side calls and block forged scope headers"]
   end
+  TASK_001 --> TASK_002
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
