@@ -563,7 +563,7 @@ mod caller_attribution {
         let stage = judge_fixture::stage();
         let state = judge_fixture::state(ROUTER_ID, judge.uri(), &stage);
 
-        let inbound = InboundContext::internal();
+        let inbound = InboundContext::default();
         let headers = HeaderMap::new();
         let admitted = AdmittedContext::mint(&inbound, &headers, ROUTER_ID);
         let request = json!({
@@ -721,7 +721,7 @@ mod internal_calls_do_not_force_encrypted_reasoning {
         let state = crate::server::AppState::new(config, reqwest::Client::new())
             .expect("the config is valid");
 
-        let inbound = InboundContext::internal();
+        let inbound = InboundContext::default();
         let headers = HeaderMap::new();
         let admitted = AdmittedContext::mint(&inbound, &headers, ROUTER_ID);
         let request = json!({
@@ -857,7 +857,7 @@ mod oversized_reply {
             .as_ref()
             .expect("the fixture names a judge");
 
-        let inbound = InboundContext::internal();
+        let inbound = InboundContext::default();
         let headers = HeaderMap::new();
         let admitted = AdmittedContext::mint(&inbound, &headers, ROUTER_ID);
         let request = json!({
@@ -925,7 +925,7 @@ mod oversized_reply {
             .as_ref()
             .expect("the fixture names a judge");
 
-        let inbound = InboundContext::internal();
+        let inbound = InboundContext::default();
         let headers = HeaderMap::new();
         let admitted = AdmittedContext::mint(&inbound, &headers, ROUTER_ID);
         let request = json!({

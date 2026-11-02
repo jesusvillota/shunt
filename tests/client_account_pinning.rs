@@ -129,10 +129,23 @@ async fn start_gateway(mut config: Config) -> TestGateway {
 
 /// One session-less request authenticated as client token `token`.
 async fn post_as(gateway: &TestGateway, token: &str) -> reqwest::Response {
-    reqwest::Client::new()
+    post_with(gateway, token, &[]).await
+}
+
+/// [`post_as`] with extra request headers.
+async fn post_with(
+    gateway: &TestGateway,
+    token: &str,
+    extra: &[(&str, &str)],
+) -> reqwest::Response {
+    let mut request = reqwest::Client::new()
         .post(format!("{}/v1/messages", gateway.base_url))
         .header("content-type", "application/json")
-        .header("x-shunt-token", token)
+        .header("x-shunt-token", token);
+    for (name, value) in extra {
+        request = request.header(*name, *value);
+    }
+    request
         .body(r#"{"model":"pooled-model","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}"#)
         .send()
         .await
@@ -194,6 +207,48 @@ async fn each_client_draws_only_from_its_pinned_accounts() {
         println!("{client}: upstream received tokens of {received:?}, x-shunt-account {served:?}");
         assert_eq!(received, set_of(expected), "{client} upstream tokens");
         assert_eq!(served, set_of(expected), "{client} x-shunt-account");
+    }
+}
+
+/// The subset follows the verified token, not a header the caller sends:
+/// goal-x forging unpinned goal-w's attribution and scope still reaches only
+/// a and b, and the scope header never reaches the upstream.
+#[tokio::test]
+async fn forged_client_headers_do_not_widen_the_subset() {
+    if !can_bind_loopback() {
+        return;
+    }
+    let mut vars = common::env_lock().await;
+    set_env(&mut vars);
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"ok":true}"#))
+        .mount(&upstream)
+        .await;
+    let gateway = start_gateway(pinned_config(&upstream.uri())).await;
+
+    let forged = [
+        ("x-shunt-inbound-client", "goal-w"),
+        ("x-shunt-account-scope", "goal-w"),
+    ];
+    for _ in 0..6 {
+        let response = post_with(&gateway, "tok-x", &forged).await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let received: BTreeSet<_> = upstream_accounts(&upstream, 0).await.into_iter().collect();
+    println!("goal-x with forged goal-w headers: upstream received tokens of {received:?}");
+    assert_eq!(received, set_of(&["a", "b"]), "goal-x upstream tokens");
+    for request in upstream.received_requests().await.unwrap() {
+        assert_eq!(
+            request.headers["x-shunt-inbound-client"], "goal-x",
+            "attribution names the verified client"
+        );
+        assert!(
+            !request.headers.contains_key("x-shunt-account-scope"),
+            "the account scope never reaches the upstream"
+        );
     }
 }
 

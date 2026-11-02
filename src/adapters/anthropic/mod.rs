@@ -203,7 +203,7 @@ async fn forward_claude_oauth(
     );
     accounts::retain_client_accounts(
         &state.config,
-        accounts::inbound_client(headers),
+        accounts::account_scope(headers),
         &route.provider,
         &accounts,
         &mut order,
@@ -872,7 +872,7 @@ async fn forward_kimi_oauth(
     );
     accounts::retain_client_accounts(
         &state.config,
-        accounts::inbound_client(headers),
+        accounts::account_scope(headers),
         &route.provider,
         &accounts,
         &mut order,
@@ -1379,6 +1379,8 @@ fn rewrite_account_uuid(body: Vec<u8>, account_uuid: Option<&str>) -> Vec<u8> {
 /// stripped and replaced with the provider's key in its configured header.
 fn outbound_headers(headers: &HeaderMap, credential: &Credential) -> HeaderMap {
     let mut out = headers::filtered(headers);
+    // Read by the account filter; never an upstream header.
+    out.remove(accounts::ACCOUNT_SCOPE_HEADER);
     match credential {
         Credential::ApiKey { value, header } => {
             out.remove("authorization");

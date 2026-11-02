@@ -114,7 +114,7 @@ async fn consult_judge(completed: bool) -> JudgeOutcome {
         )
     };
     let state = state(&stage, judge.uri());
-    let inbound = InboundContext::internal();
+    let inbound = InboundContext::default();
     let headers = HeaderMap::new();
     let admitted = AdmittedContext::mint(&inbound, &headers, ROUTER_ID);
     let request = json!({

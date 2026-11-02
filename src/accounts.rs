@@ -19,7 +19,7 @@ mod antigravity_quota;
 mod pinning;
 mod request_stats;
 
-pub(crate) use pinning::{inbound_client, retain_client_accounts};
+pub(crate) use pinning::{account_scope, retain_client_accounts, ACCOUNT_SCOPE_HEADER};
 pub use request_stats::AttemptOutcome;
 pub(crate) use request_stats::CountAttempt;
 use request_stats::RequestStats;

@@ -795,6 +795,7 @@ fn enforce_managed_model_policy(
 }
 
 #[derive(Clone)]
+#[cfg_attr(test, derive(Default))]
 pub(crate) struct InboundContext {
     gateway_claims: Option<crate::gateway::jwt::Claims>,
     client: Option<String>,
@@ -802,21 +803,24 @@ pub(crate) struct InboundContext {
 }
 
 impl InboundContext {
-    /// The context a gateway-internal call rides on: no gateway claims, no
-    /// client, not a static client.
+    /// The context a gateway-internal side call made for this caller rides on
+    /// (a router's judge call): the caller's client for account scope only,
+    /// no gateway claims, not a static client.
     ///
     /// The judge's own admission is the caller's — it was decided by
     /// [`check_inbound_auth`] against the dependency envelope before the drive
     /// was entered — and the headers this rides carry no caller credential at
-    /// all (`routing::serve::judge_headers`). So there is nothing here to
-    /// inherit: an inherited `static_client` would stamp
-    /// `x-shunt-inbound-client` with the caller's identity on a call the caller
-    /// did not make, and inherited claims would re-run a policy that has
-    /// already been enforced on the advertised id.
-    pub(crate) fn internal() -> Self {
+    /// all (`routing::serve::judge_headers`). So nothing else is inherited: an
+    /// inherited `static_client` would stamp `x-shunt-inbound-client` with the
+    /// caller's identity on a call the caller did not make, and inherited
+    /// claims would re-run a policy that has already been enforced on the
+    /// advertised id. The client is kept so [`headers_for_route`] stamps the
+    /// account scope, and the call draws only from the caller's
+    /// `[server.auth.clients]` subset.
+    pub(crate) fn side_call(&self) -> Self {
         Self {
             gateway_claims: None,
-            client: None,
+            client: self.client.clone(),
             static_client: false,
         }
     }
@@ -1000,14 +1004,18 @@ pub(crate) fn headers_for_route(
     let mut headers = base.clone();
     headers.remove("authorization");
     headers.remove("x-api-key");
-    if inbound.static_client {
-        if let Some(client) = inbound
-            .client
-            .as_deref()
-            .and_then(|value| value.parse().ok())
-        {
-            headers.insert("x-shunt-inbound-client", client);
+    let client = inbound
+        .client
+        .as_deref()
+        .and_then(|value| HeaderValue::from_str(value).ok());
+    if let Some(client) = client {
+        // Attribution names a caller that presented a gate credential; the
+        // account scope follows every verified client, gateway login and
+        // router side calls included.
+        if inbound.static_client {
+            headers.insert("x-shunt-inbound-client", client.clone());
         }
+        headers.insert(crate::accounts::ACCOUNT_SCOPE_HEADER, client);
     }
     headers
 }

@@ -215,7 +215,7 @@ async fn forward(
     );
     crate::accounts::retain_client_accounts(
         &state.config,
-        crate::accounts::inbound_client(headers),
+        crate::accounts::account_scope(headers),
         &route.provider,
         &accounts,
         &mut order,
