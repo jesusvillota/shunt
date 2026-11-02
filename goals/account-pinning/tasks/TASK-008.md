@@ -7,7 +7,7 @@ depends_on: []
 delivery: pr
 repo: shunt
 route: {platform: chatgptweb}
-blocked: stale running state after route change; no worker alive
+blocked: null
 ---
 
 ## Why

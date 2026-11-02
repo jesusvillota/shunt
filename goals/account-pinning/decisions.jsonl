@@ -36,3 +36,4 @@
 {"at":"2026-11-02T21:29:32.078745Z","node":"TASK-009","action":"route","actor":"human:jesusvillota","summary":"Set route chatgptweb","rationale":"","refs":{"route":{"platform":"chatgptweb"}}}
 {"at":"2026-11-02T21:29:36.452779Z","node":"TASK-010","action":"route","actor":"human:jesusvillota","summary":"Set route chatgptweb","rationale":"","refs":{"route":{"platform":"chatgptweb"}}}
 {"at":"2026-11-02T21:35:11.323599Z","node":"TASK-008","action":"block","actor":"human:jesusvillota","summary":"block TASK-008: stale running state after route change; no worker alive","rationale":"stale running state after route change; no worker alive","refs":{}}
+{"at":"2026-11-02T21:35:15.845634Z","node":"TASK-008","action":"unblock","actor":"human:jesusvillota","summary":"unblock TASK-008","rationale":"","refs":{}}
