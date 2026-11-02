@@ -47,6 +47,7 @@ flowchart TD
     TASK_007["TASK-007 Turn on per-goal pinning on this Mac"]
     TASK_008["TASK-008 shunt reads client tokens from a file on reload"]
     TASK_009["TASK-009 goal pins accounts: token, Keychain and shunt.toml writer"]
+    TASK_010["TASK-010 Policy tab: toggle shunt accounts per goal"]
   end
   TASK_001 --> TASK_002
   TASK_001 --> TASK_003
@@ -58,6 +59,7 @@ flowchart TD
   TASK_005 --> TASK_007
   TASK_006 --> TASK_007
   TASK_005 --> TASK_009
+  TASK_009 --> TASK_010
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
   classDef decision fill:#f3e8ff,stroke:#7c3aed
