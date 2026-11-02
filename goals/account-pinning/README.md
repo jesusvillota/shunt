@@ -45,6 +45,7 @@ flowchart TD
     TASK_005["TASK-005 Keeper reads the goal's own account subset for rate-limit resets"]
     TASK_006["TASK-006 Gate: Codex end-to-end test and run-shunt smoke test per goal"]
     TASK_007["TASK-007 Turn on per-goal pinning on this Mac"]
+    TASK_008["TASK-008 shunt reads client tokens from a file on reload"]
   end
   TASK_001 --> TASK_002
   TASK_001 --> TASK_003
