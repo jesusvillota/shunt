@@ -929,6 +929,11 @@ fn check(config_path: Option<PathBuf>) -> anyhow::Result<()> {
     if let Some(message) = routed_antigravity_credential_error(&config) {
         anyhow::bail!(message);
     }
+    // `validate` checks pinned account names only where the config lists the
+    // pool; a store-backed pool is read here, offline like the probe above.
+    config
+        .validate_client_accounts(shunt::config::ProviderConfig::pool_account_names)
+        .context("config check failed")?;
     // Same production-pin warning the serve path emits, so `check` reports the
     // config a run would actually get.
     warn_if_antigravity_pinned_to_production(&config);

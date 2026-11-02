@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 mod admin_keys;
+mod clients;
 mod http_tuning;
 mod presets;
 mod router;
@@ -22,6 +23,7 @@ mod subagents;
 mod upstreams;
 
 pub use admin_keys::{AdminAccess, AdminCredential, AdminKey, AdminKeyring};
+pub use clients::ClientPolicy;
 pub use http_tuning::{
     AccessControlConfig, LimitsConfig, RateLimitConfig, RateLimitsConfig, TimeoutsConfig,
 };
@@ -88,6 +90,9 @@ fn default_auto_include_builtin_models() -> bool {
 /// a partial `[providers.codex]` in shunt.toml overrides only the fields it sets
 /// while the built-in defaults (anthropic/openai/codex) fill the rest.
 pub type ProvidersConfig = BTreeMap<String, ProviderConfig>;
+
+/// Lists a pooled provider's account store (`ProviderConfig::account_store`).
+pub(crate) type AccountStoreScan = fn() -> std::io::Result<Vec<AccountConfig>>;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerConfig {
@@ -406,6 +411,10 @@ pub struct InboundAuthConfig {
     /// use different claim vocabularies.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub jwt: Vec<InboundJwtConfig>,
+    /// `[server.auth.clients.<name>]` — pins a client to a subset of each
+    /// pooled provider's accounts. A client without an entry uses them all.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub clients: BTreeMap<String, ClientPolicy>,
 }
 
 /// One `[[server.auth.jwt]]` entry: an external issuer whose JWTs shunt
@@ -3065,6 +3074,8 @@ pub enum ConfigError {
     InvalidClientTokens { env: String, message: String },
     #[error("[[server.auth.jwt]] entry {index}: {message}")]
     InvalidInboundJwt { index: usize, message: String },
+    #[error("[server.auth.clients.{client}]: {message}")]
+    InvalidClientAccounts { client: String, message: String },
     #[error("[[server.auth.jwt]] entry {index} uses issuer {issuer}, which is also [server.gateway] public_url: the gateway's own session tokens and this issuer's tokens would be indistinguishable")]
     InboundJwtCollidesWithGateway { index: usize, issuer: String },
     #[error("sentry.dsn is not a valid DSN: {message}")]
@@ -3136,36 +3147,42 @@ impl ProviderConfig {
         }
     }
 
-    pub async fn resolve_pool_accounts(&self) -> Result<Vec<AccountConfig>, String> {
+    /// The pooled provider's account store: its log label, directory, and
+    /// scanner. `None` for a provider without an account pool.
+    pub(crate) fn account_store(&self) -> Option<(&'static str, PathBuf, AccountStoreScan)> {
         use crate::auth::{antigravity, claude, codex, kimi};
 
-        let Some(family) = self.store_family() else {
+        let scan: (_, _, AccountStoreScan) = match self.auth {
+            AuthMode::ClaudeOauth => (
+                "Claude",
+                claude::store::default_accounts_dir(),
+                claude::store::scan_accounts,
+            ),
+            AuthMode::ChatgptOauth => (
+                "codex",
+                codex::store::default_accounts_dir(),
+                codex::store::scan_accounts,
+            ),
+            AuthMode::KimiOauth => (
+                "Kimi",
+                kimi::store::default_accounts_dir(),
+                kimi::store::scan_accounts,
+            ),
+            AuthMode::AntigravityOauth => (
+                "Antigravity",
+                antigravity::store::default_accounts_dir(),
+                antigravity::store::scan_accounts,
+            ),
+            _ => return None,
+        };
+        Some(scan)
+    }
+
+    pub async fn resolve_pool_accounts(&self) -> Result<Vec<AccountConfig>, String> {
+        let (Some(family), Some((label, dir, scan))) = (self.store_family(), self.account_store())
+        else {
             return Ok(Vec::new());
         };
-        let (label, dir, scan): (_, _, fn() -> std::io::Result<Vec<AccountConfig>>) =
-            match self.auth {
-                AuthMode::ClaudeOauth => (
-                    "Claude",
-                    claude::store::default_accounts_dir(),
-                    claude::store::scan_accounts,
-                ),
-                AuthMode::ChatgptOauth => (
-                    "codex",
-                    codex::store::default_accounts_dir(),
-                    codex::store::scan_accounts,
-                ),
-                AuthMode::KimiOauth => (
-                    "Kimi",
-                    kimi::store::default_accounts_dir(),
-                    kimi::store::scan_accounts,
-                ),
-                AuthMode::AntigravityOauth => (
-                    "Antigravity",
-                    antigravity::store::default_accounts_dir(),
-                    antigravity::store::scan_accounts,
-                ),
-                _ => unreachable!(),
-            };
         crate::auth::shared::resolve_pool_accounts(
             label,
             &self.accounts,
@@ -4064,6 +4081,8 @@ impl Config {
                 }
             }
         }
+        // Store-scanned pools are named by `shunt check`, which scans offline.
+        self.validate_client_accounts(ProviderConfig::configured_account_names)?;
         // Fail closed at boot: [server.admin] without resolvable credentials
         // would be an unauthenticated admin surface. Reject it rather than run
         // open. This also runs the admin key arrays' shape and cross-set
@@ -8239,6 +8258,7 @@ provider = "deepseek"
             jwt: Vec::new(),
             header: default_auth_header(),
             tokens_env: env.clone(),
+            clients: Default::default(),
         });
         let result = config.validate();
         std::env::remove_var(&env);
@@ -8333,6 +8353,7 @@ provider = "deepseek"
             jwt: Vec::new(),
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),
+            clients: Default::default(),
         });
         let anthropic = config.providers.get_mut("anthropic").unwrap();
         anthropic.auth = AuthMode::ClaudeOauth;
@@ -8359,6 +8380,7 @@ provider = "deepseek"
             jwt: Vec::new(),
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),
+            clients: Default::default(),
         });
         let anthropic = config.providers.get_mut("anthropic").unwrap();
         anthropic.auth = AuthMode::ClaudeOauth;
@@ -8382,6 +8404,7 @@ provider = "deepseek"
             jwt: Vec::new(),
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),
+            clients: Default::default(),
         });
         let anthropic = config.providers.get_mut("anthropic").unwrap();
         anthropic.auth = AuthMode::ClaudeOauth;
@@ -12686,6 +12709,7 @@ routes:
             header: default_auth_header(),
             tokens_env: tokens_env.to_string(),
             jwt: entries,
+            clients: Default::default(),
         }
     }
 

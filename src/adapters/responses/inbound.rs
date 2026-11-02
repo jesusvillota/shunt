@@ -45,6 +45,7 @@ use super::{
 pub(crate) async fn forward_codex_inbound(
     state: AppState,
     route: Route,
+    client: Option<String>,
     pool_key: Option<String>,
     client_headers: HeaderMap,
     body: Bytes,
@@ -75,7 +76,16 @@ pub(crate) async fn forward_codex_inbound(
     if accounts.is_empty() {
         return forward_codex_passthrough_single(state, route, passthrough_headers, body).await;
     }
-    forward_codex_passthrough(state, route, accounts, pool_key, passthrough_headers, body).await
+    forward_codex_passthrough(
+        state,
+        route,
+        accounts,
+        client.as_deref(),
+        pool_key,
+        passthrough_headers,
+        body,
+    )
+    .await
 }
 
 /// Single-account inbound passthrough: no pool, no failover. Resolves the default
@@ -127,6 +137,7 @@ async fn forward_codex_passthrough(
     state: AppState,
     route: Route,
     accounts_config: Vec<AccountConfig>,
+    client: Option<&str>,
     pool_key: Option<String>,
     passthrough_headers: HeaderMap,
     body: Bytes,
@@ -149,13 +160,21 @@ async fn forward_codex_passthrough(
     // translating outbound path: near-quota accounts rotate proactively and
     // available accounts order by burn-rate headroom (issue #195). The
     // passthrough body's model is a label only (no fable-scoped Codex window).
-    let (order, mut reprobe_reservation) = state.accounts.select_order_deferred(
+    let (mut order, mut reprobe_reservation) = state.accounts.select_order_deferred(
         &route.provider,
         &accounts_config,
         pool_key.as_deref(),
         Some(route.upstream_model.as_str()),
         state.config.server.pool.as_ref(),
     );
+    crate::accounts::retain_client_accounts(
+        &state.config,
+        client,
+        &route.provider,
+        &accounts_config,
+        &mut order,
+        &mut reprobe_reservation,
+    )?;
     let ramp_initial = state.config.storm_ramp_initial();
     let candidates = order.len();
     let mut last_response: Option<reqwest::Response> = None;

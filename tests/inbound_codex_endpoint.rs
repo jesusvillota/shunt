@@ -387,6 +387,7 @@ async fn analytics_sink_matches_inbound_auth_posture() {
         jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: tokens_env.clone(),
+        clients: Default::default(),
     });
     let gateway = start_gateway_with(config).await;
     let body = r#"{"events":[{"event_type":"codex.turn_started","event_params":{}}]}"#;
@@ -746,6 +747,7 @@ async fn inbound_auth_gates_the_endpoint() {
         jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: tokens_env.clone(),
+        clients: Default::default(),
     });
     let gateway = start_gateway_with(config).await;
 
@@ -793,6 +795,7 @@ async fn authorization_bearer_authenticates_the_endpoint() {
         jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: tokens_env.clone(),
+        clients: Default::default(),
     });
     let gateway = start_gateway_with(config).await;
 
@@ -871,6 +874,7 @@ async fn forwards_client_identity_headers_verbatim_and_strips_shunt_token() {
         jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: tokens_env.clone(),
+        clients: Default::default(),
     });
     let gateway = start_gateway_with(config).await;
 
@@ -1611,6 +1615,7 @@ async fn gateway_owned_401_body_is_openai_shaped() {
         jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: tokens_env.clone(),
+        clients: Default::default(),
     });
     let gateway = start_gateway_with(config).await;
 

@@ -161,6 +161,7 @@ fn auth_with(entries: Vec<InboundJwtConfig>, tokens_env: Option<&str>) -> Inboun
         header: "x-shunt-token".to_string(),
         tokens_env: env.to_string(),
         jwt: entries,
+        clients: Default::default(),
     }
     .resolve()
     .expect("test inbound auth resolves")
@@ -1158,6 +1159,7 @@ async fn a_gated_route_answers_401_for_a_bad_jwt_and_503_when_the_issuer_is_down
         header: "x-shunt-token".to_string(),
         tokens_env: env,
         jwt: vec![entry(&down.uri(), &format!("{}/jwks", down.uri()))],
+        clients: Default::default(),
     });
     let state = crate::server::AppState::new(config, reqwest::Client::new()).unwrap();
 
@@ -1199,6 +1201,7 @@ async fn a_reload_swaps_the_issuer_set_but_keeps_the_key_cache() {
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),
             jwt: vec![entry(&issuer.uri(), &format!("{}/jwks", issuer.uri()))],
+            clients: Default::default(),
         });
         config
     };

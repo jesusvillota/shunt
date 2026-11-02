@@ -419,6 +419,7 @@ mod tests {
             jwt: Vec::new(),
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),
+            clients: Default::default(),
         });
         config.server.usage = Some(UsageEndpointConfig::default());
         config

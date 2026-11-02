@@ -177,7 +177,7 @@ async fn forward(
     state: AppState,
     route: Route,
     _uri: &Uri,
-    _headers: &HeaderMap,
+    headers: &HeaderMap,
     body: RequestBody,
     bounds: crate::adapters::ResponseBounds,
 ) -> Result<(StatusCode, Response<Body>), AdapterError> {
@@ -206,13 +206,21 @@ async fn forward(
             "all Antigravity accounts are paused or disabled",
         ));
     }
-    let order = state.accounts.select_order(
+    let mut order = state.accounts.select_order(
         &route.provider,
         &accounts,
         None,
         Some(route.upstream_model.as_str()),
         state.config.server.pool.as_ref(),
     );
+    crate::accounts::retain_client_accounts(
+        &state.config,
+        crate::accounts::inbound_client(headers),
+        &route.provider,
+        &accounts,
+        &mut order,
+        &mut None,
+    )?;
     let candidates = order.len();
     let mut last_error = None;
     for (position, index) in order.into_iter().enumerate() {

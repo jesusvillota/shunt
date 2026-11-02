@@ -16,8 +16,10 @@ use crate::auth::antigravity::pool::ModelFamily;
 use crate::config::{AccountConfig, PoolConfig};
 
 mod antigravity_quota;
+mod pinning;
 mod request_stats;
 
+pub(crate) use pinning::{inbound_client, retain_client_accounts};
 pub use request_stats::AttemptOutcome;
 pub(crate) use request_stats::CountAttempt;
 use request_stats::RequestStats;

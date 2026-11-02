@@ -286,6 +286,7 @@ async fn all_surfaces_config(label: &str) -> (Config, common::EnvVars) {
         jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: client_env,
+        clients: Default::default(),
     });
 
     config.server.admin = Some(AdminConfig {

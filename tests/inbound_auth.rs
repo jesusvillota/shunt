@@ -87,6 +87,7 @@ fn with_inbound_auth(mut config: Config, tokens_env: &'static str) -> Config {
         jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: tokens_env.to_string(),
+        clients: Default::default(),
     });
     config
 }

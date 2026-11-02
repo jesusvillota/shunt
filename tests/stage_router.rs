@@ -448,6 +448,7 @@ async fn a_rejected_request_does_not_pin_the_session() {
         jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: "SHUNT_TEST_STAGE_TOKENS".to_string(),
+        clients: Default::default(),
     });
     let config = config.validate().expect("the gated router config is valid");
     let gateway = start_gateway(config).await;

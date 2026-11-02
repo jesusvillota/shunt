@@ -743,6 +743,7 @@ mod tests {
             jwt: Vec::new(),
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),
+            clients: Default::default(),
         });
         let (router, _, _) = server::build_router(config).unwrap();
 

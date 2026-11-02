@@ -129,6 +129,8 @@ pub(super) struct PoolStreamContext {
 /// single-credential fallback's deferred credential, and the shared
 /// translation inputs.
 pub(super) struct PoolForwardStream {
+    /// The verified inbound client, for `[server.auth.clients]` pinning.
+    pub client: Option<String>,
     pub session_id: Option<String>,
     /// The composed identity key the window counter keys on, so the HTTP
     /// transports read (and, on the mark's consumption, bump) the same
@@ -161,6 +163,7 @@ pub(super) async fn forward_chatgpt_oauth_stream(
     forward: PoolForwardStream,
 ) -> Result<(StatusCode, axum::response::Response), AdapterError> {
     let PoolForwardStream {
+        client,
         session_id,
         window_key,
         compact,
@@ -194,6 +197,7 @@ pub(super) async fn forward_chatgpt_oauth_stream(
         scan,
         state.clone(),
         route.clone(),
+        client,
         session_id,
         upstream_body,
         single,
@@ -220,6 +224,7 @@ pub(super) fn pool_or_single_events(
     >,
     state: AppState,
     route: Route,
+    client: Option<String>,
     session_id: Option<String>,
     upstream_body: std::sync::Arc<Value>,
     single: HttpSendContext,
@@ -232,6 +237,7 @@ pub(super) fn pool_or_single_events(
         >,
         state: AppState,
         route: Route,
+        client: Option<String>,
         session_id: Option<String>,
         window_key: Option<String>,
         compact: crate::request::CompactionMark,
@@ -250,6 +256,7 @@ pub(super) fn pool_or_single_events(
             scan,
             state,
             route,
+            client,
             session_id,
             window_key: single.window_key.clone(),
             compact: single.compact.clone(),
@@ -266,6 +273,7 @@ pub(super) fn pool_or_single_events(
                         scan,
                         state,
                         route,
+                        client,
                         session_id,
                         window_key,
                         compact,
@@ -320,13 +328,30 @@ pub(super) fn pool_or_single_events(
                         )
                     } else {
                         let accounts_config = std::sync::Arc::new(accounts);
-                        let (order, reprobe) = state.accounts.select_order_deferred(
+                        let (mut order, mut reprobe) = state.accounts.select_order_deferred(
                             &route.provider,
                             &accounts_config,
                             session_id.as_deref(),
                             Some(route.upstream_model.as_str()),
                             state.config.server.pool.as_ref(),
                         );
+                        if let Err(error) = crate::accounts::retain_client_accounts(
+                            &state.config,
+                            client.as_deref(),
+                            &route.provider,
+                            &accounts_config,
+                            &mut order,
+                            &mut reprobe,
+                        ) {
+                            crate::metrics::record_proxied_request(
+                                &route.provider,
+                                &route.model,
+                                StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+                                attempt_started.elapsed().as_secs_f64() * 1000.0,
+                            );
+                            let envelope = adapter_error_envelope(error).await;
+                            return Some((Err(envelope), Phase::Done));
+                        }
                         Box::pin(pool_events_stream(PoolStreamContext {
                             state,
                             route,
@@ -945,6 +970,7 @@ pub(super) async fn forward_chatgpt_oauth(
     forward: PoolForward,
 ) -> Result<(StatusCode, axum::response::Response), AdapterError> {
     let PoolForward {
+        client,
         pool_key,
         session_id,
         compact,
@@ -983,13 +1009,21 @@ pub(super) async fn forward_chatgpt_oauth(
         // loop-based paths do.
         let keepalive = Duration::from_secs(state.config.server.sse_keepalive_seconds);
         let route_for_start = route.clone();
-        let (order, reprobe) = state.accounts.select_order_deferred(
+        let (mut order, mut reprobe) = state.accounts.select_order_deferred(
             &route.provider,
             &accounts_config,
             session_id.as_deref(),
             Some(route.upstream_model.as_str()),
             state.config.server.pool.as_ref(),
         );
+        crate::accounts::retain_client_accounts(
+            &state.config,
+            client.as_deref(),
+            &route.provider,
+            &accounts_config,
+            &mut order,
+            &mut reprobe,
+        )?;
         let events = pool_events_stream(PoolStreamContext {
             state: state.clone(),
             route: route.clone(),
@@ -1015,7 +1049,7 @@ pub(super) async fn forward_chatgpt_oauth(
             ),
         ));
     }
-    let (order, mut reprobe_reservation) = if ws_enabled {
+    let (mut order, mut reprobe_reservation) = if ws_enabled {
         (
             select_pool_order(
                 &state,
@@ -1036,6 +1070,14 @@ pub(super) async fn forward_chatgpt_oauth(
             state.config.server.pool.as_ref(),
         )
     };
+    crate::accounts::retain_client_accounts(
+        &state.config,
+        client.as_deref(),
+        &route.provider,
+        &accounts_config,
+        &mut order,
+        &mut reprobe_reservation,
+    )?;
     let auth = AuthMode::ChatgptOauth;
     let ramp_initial = state.config.storm_ramp_initial();
     let candidates = order.len();
@@ -2458,6 +2500,7 @@ mod tests {
 
     fn pool_turn(accounts: Vec<AccountConfig>, stream: bool) -> PoolForward {
         PoolForward {
+            client: None,
             pool_key: None,
             session_id: None,
             compact: crate::request::CompactionMark::default(),
@@ -3747,6 +3790,7 @@ mod tests {
             state.clone(),
             route.clone(),
             None,
+            None,
             std::sync::Arc::new(json!({"input": []})),
             single,
             CredentialSource::Resolved(Credential::ApiKey {
@@ -3794,6 +3838,7 @@ mod tests {
             Box::pin(async { Ok(accounts) }),
             state.clone(),
             route.clone(),
+            None,
             None,
             std::sync::Arc::new(json!({"input": []})),
             single,
@@ -3848,6 +3893,7 @@ mod tests {
             }),
             state.clone(),
             route.clone(),
+            None,
             None,
             std::sync::Arc::new(json!({"input": []})),
             single,
@@ -3916,6 +3962,7 @@ mod tests {
             }),
             state.clone(),
             route.clone(),
+            None,
             None,
             std::sync::Arc::new(json!({"input": []})),
             single,

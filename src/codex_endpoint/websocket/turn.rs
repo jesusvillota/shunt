@@ -136,7 +136,14 @@ pub(super) async fn run_turn(context: TurnContext) {
     }
     let started_at = Instant::now();
     let dispatch_res = forward_turn(
-        state, model, pool_key, session_id, headers, body, started_at,
+        state,
+        model,
+        inbound_client,
+        pool_key,
+        session_id,
+        headers,
+        body,
+        started_at,
     )
     .await;
 
