@@ -216,7 +216,17 @@ async fn forward(
     // `adapters/responses/mod.rs`). The raw `session_id` is still what the tracing
     // span records above; only the pool key is namespaced.
     let pool_key = pool_sticky_key(inbound_client.as_deref(), session_id.clone());
-    forward_turn(state, None, pool_key, session_id, headers, body, started_at).await
+    forward_turn(
+        state,
+        None,
+        inbound_client,
+        pool_key,
+        session_id,
+        headers,
+        body,
+        started_at,
+    )
+    .await
 }
 
 pub(crate) fn extract_session_id(headers: &HeaderMap) -> Option<String> {
@@ -269,9 +279,11 @@ pub(crate) async fn authenticate_inbound(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn forward_turn(
     state: AppState,
     model: Option<String>,
+    client: Option<String>,
     pool_key: Option<String>,
     session_id: Option<String>,
     headers: HeaderMap,
@@ -338,6 +350,7 @@ pub(crate) async fn forward_turn(
                 state,
                 route,
                 model_name.clone(),
+                client,
                 pool_key,
                 session_id,
                 headers,
@@ -358,7 +371,8 @@ pub(crate) async fn forward_turn(
                 service_tier: None,
             };
             let result =
-                responses::forward_codex_inbound(state, route, pool_key, headers, body).await;
+                responses::forward_codex_inbound(state, route, client, pool_key, headers, body)
+                    .await;
             (default_provider, result)
         }
     };
@@ -386,6 +400,7 @@ async fn dispatch_routed(
     state: AppState,
     route_config: CodexRouteConfig,
     model: String,
+    client: Option<String>,
     pool_key: Option<String>,
     session_id: Option<String>,
     mut headers: HeaderMap,
@@ -448,7 +463,7 @@ async fn dispatch_routed(
     };
 
     let result = if chatgpt_backend {
-        responses::forward_codex_inbound(state, route, pool_key, headers, body).await
+        responses::forward_codex_inbound(state, route, client, pool_key, headers, body).await
     } else {
         responses::forward_codex_routed(state, route, headers, body, session_id).await
     };

@@ -86,6 +86,26 @@ key set은 issuer별로 최초 사용 시점에 lazy하게 가져오므로 IdP�
 
 shunt는 취소(revocation) 상태를 보관하지 않으므로 유효한 토큰은 만료될 때까지 동작합니다. 그 범위를 제한하는 것이 `max_token_age_seconds`이며, issuer는 분 단위 수명의 토큰을 발급해야 합니다. 허용 목록에서 도메인이나 주소를 제거하면 다음 요청부터 적용됩니다.
 
+### `[server.auth.clients]` (선택)
+
+클라이언트를 풀링된 각 프로바이더 계정의 일부로 고정합니다([상세](/ko/guides/shared-gateway/#클라이언트를-계정에-고정하기)):
+
+```toml
+[server.auth.clients.goal-x]
+accounts.anthropic = ["a", "b"]   # 프로바이더 이름 -> 계정 이름
+accounts.codex = ["work"]
+```
+
+| 키 | 기본값 | 의미 |
+| :-- | :-- | :-- |
+| `accounts.<provider>` | 모든 계정 | 이 클라이언트가 `<provider>`에서 사용할 수 있는 계정 이름 |
+
+테이블 키는 클라이언트 이름입니다: `tokens_env`에 있는 정적 토큰의 이름, 또는 [`[[server.auth.jwt]]`](#serverauthjwt-선택) 토큰의 검증된 이메일입니다. 항목이 없는 클라이언트와 항목에 나열되지 않은 프로바이더는 모든 계정을 사용합니다. 프로바이더에는 계정 풀이 있어야 합니다: `auth = "claude_oauth"`, `"chatgpt_oauth"`, `"kimi_oauth"`, 또는 `"antigravity_oauth"`.
+
+고정된 클라이언트는 다른 계정에서 절대 가져다 쓰지 않습니다. 지정된 계정이 모두 요청을 거부하면 shunt는 마지막 업스트림 `429`를 그 `Retry-After`와 함께 전달합니다. 선택할 수 있는 계정이 하나도 없으면(모두 비활성화 또는 일시 중지되었거나, 풀에 그 이름이 없을 때) `503 api_error`를 반환합니다. 다른 프로바이더로 가는 `[[routes]]` 폴백은 그대로 적용되며, 그 프로바이더의 계정 부분집합을 사용합니다.
+
+`shunt check`와 `shunt run`은 `accounts`가 없는 항목, 빈 목록(모든 계정을 허용하려면 목록을 삭제하세요), 알 수 없는 프로바이더, 계정 풀이 없는 프로바이더, 그리고 프로바이더의 풀에 없는 계정을 거부합니다 — 그 계정을 가진 프로바이더가 있으면 그 이름을 알려 줍니다. 계정 저장소에서 읽는 풀(인라인 `accounts`나 `account_scope`가 없는 경우)은 `shunt check`만 저장소를 읽습니다.
+
 ## `[server.admin]` (선택)
 
 이 테이블의 존재가 브라우저 계정 프로비저닝과 계정 풀 상태를 위한 관리자 웹 화면을 활성화합니다([상세](/ko/guides/admin-remote-provisioning/)). 테이블이 없으면 `/admin*` 라우트는 하나도 등록되지 않습니다. 같은 자격 증명이 [`[server.spend]`](#serverspend-선택) spend-limit API도 인증합니다.

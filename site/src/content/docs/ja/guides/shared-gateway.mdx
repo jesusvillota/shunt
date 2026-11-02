@@ -80,6 +80,31 @@ JWT は **`Authorization: Bearer` でのみ**受け付けます — 設定され
 
 エントリの設定が誤っている場合は起動が fail closed します。`audience` はあるが `email_domains` / `allowed_emails` のルールがない場合も同様です。JWT 認証が `api_error` ボディを伴う `503` を返す場合（後述の上限超過時の `overloaded_error` ではない場合）、shunt は issuer の key set を取得できていません — 認証情報ではなく issuer の URL とネットワーク到達性を確認してください。キーの一覧は[設定リファレンス](/ja/reference/configuration/)にあります。
 
+## クライアントをアカウントに固定する
+
+複数のクライアントが 1 つのアカウントプールを共有している場合、各クライアントに専用のアカウントの一部を割り当てられます。たとえば、2 つのエージェントにはそれぞれ自分の Claude アカウントだけを使わせ、3 つ目にはすべてのアカウントを使わせることができます:
+
+```toml
+[server.auth]
+tokens_env = "SHUNT_CLIENT_TOKENS"
+
+[server.auth.clients.goal-x]
+accounts.anthropic = ["a", "b"]
+
+[server.auth.clients.goal-y]
+accounts.anthropic = ["c"]
+```
+
+```bash
+export SHUNT_CLIENT_TOKENS="goal-x:$(openssl rand -hex 32),goal-y:$(openssl rand -hex 32),default:$(openssl rand -hex 32)"
+```
+
+各テーブルのキーは `SHUNT_CLIENT_TOKENS` のクライアント名（または JWT の検証済みメール）です。各 `accounts.<provider>` リストには、そのプロバイダーのアカウント名を列挙します。この例では `goal-x` はアカウント `a` と `b`、`goal-y` は `c` だけを使い、エントリのない `default` は 3 つすべてを使います。割り当ては重なっても構いません。アカウントのクールダウンとクォータの状態は、そのアカウントを使うすべてのクライアントで共有されます。固定は、プールされるすべてのプロバイダーで機能します: Claude、Codex/ChatGPT（[インバウンド Codex エンドポイント](/ja/guides/inbound-codex-endpoint/)を含む）、Kimi、Antigravity。
+
+固定されたクライアントがほかのアカウントへ流れることはありません。自分のアカウントがすべてレート制限に達すると、上流の `429` を `Retry-After` とともに受け取るので、クライアントは自分のアカウントがリセットされるまで待ちます。自分のアカウントのどれも選択できない場合（すべて無効化または一時停止）は、クライアント、プロバイダー、アカウントを示す `503` を受け取ります。別のプロバイダーへの [`[[routes]]`](/ja/reference/configuration/) フォールバックは引き続き適用されます。
+
+テーブルを編集したら `shunt check` を実行してください。空のエントリやリスト、未知のプロバイダーやアカウント、アカウントプールのないプロバイダーを拒否します。ルールの全体は[設定リファレンス](/ja/reference/configuration/#serverauthclientsオプション)にあります。
+
 ## SSE キープアライブ ping
 
 中間装置は静かなストリームを切断します — Cloudflare のプロキシは **1 バイトも来ないまま 100 秒で 524** を返し（Enterprise 未満では固定）、長い reasoning の合間はそれだけ静かになりえます。そのため shunt は、ストリーミングレスポンスがアイドルになるたびに、Anthropic プロトコル自身の `ping` イベント（`api.anthropic.com` 自身が発行し、すべてのクライアントが無視するもの）を注入します。

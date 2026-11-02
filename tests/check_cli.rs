@@ -8,6 +8,9 @@
 //! — exactly backwards for the CI and deploy scripts that gate a rollout on
 //! `check`.
 //!
+//! `check` also reads the account stores offline to confirm that every
+//! `[server.auth.clients]` pin names an account of its provider.
+//!
 //! Every case below drives the real binary, so the credential path is set on
 //! the *child* process. Writing `SHUNT_ANTIGRAVITY_AUTH_FILE` into this
 //! process would instead race — and leak into — every other test sharing it.
@@ -198,4 +201,113 @@ fn check_accepts_routing_to_the_antigravity_cli_transport_without_a_credential()
         stderr(&output)
     );
     assert!(stdout(&output).contains("config ok"), "{}", stdout(&output));
+}
+
+/// Run `shunt check` on a config that appends `clients` to a Claude pool with
+/// inline account `a` and a Codex pool read from an account store holding
+/// `k`. Every account store points into the temp directory, so the check never
+/// reads the real ones.
+fn check_clients(tag: &str, clients: &str) -> Output {
+    let dir = TempDir::new(tag);
+    for family in ["claude", "codex", "kimi", "antigravity"] {
+        std::fs::create_dir_all(dir.0.join(family)).expect("create account store");
+    }
+    std::fs::write(dir.0.join("codex").join("k.json"), "{}").expect("write store account");
+    let config = dir.config(&format!(
+        r#"[server.auth]
+tokens_env = "SHUNT_TEST_CHECK_CLIENT_TOKENS"
+
+[providers.claude]
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+auth = "claude_oauth"
+
+[[providers.claude.accounts]]
+name = "a"
+token_env = "SHUNT_TEST_CHECK_CLAUDE_TOKEN"
+
+[providers.codex]
+kind = "responses"
+base_url = "https://chatgpt.com/backend-api"
+auth = "chatgpt_oauth"
+
+{clients}"#
+    ));
+    Command::new(env!("CARGO_BIN_EXE_shunt"))
+        .arg("check")
+        .arg("--config")
+        .arg(config)
+        .env("SHUNT_TEST_CHECK_CLIENT_TOKENS", "goal-x:tok-x")
+        .env("SHUNT_CLAUDE_ACCOUNTS_DIR", dir.0.join("claude"))
+        .env("SHUNT_CODEX_ACCOUNTS_DIR", dir.0.join("codex"))
+        .env("SHUNT_KIMI_ACCOUNTS_DIR", dir.0.join("kimi"))
+        .env("SHUNT_ANTIGRAVITY_ACCOUNTS_DIR", dir.0.join("antigravity"))
+        .env("SHUNT_ANTIGRAVITY_AUTH_FILE", dir.credential_path())
+        .output()
+        .expect("shunt binary should run")
+}
+
+#[test]
+fn check_accepts_clients_pinned_to_inline_and_store_accounts() {
+    let output = check_clients(
+        "clients-ok",
+        "[server.auth.clients.goal-x]\naccounts.claude = [\"a\"]\naccounts.codex = [\"k\"]\n",
+    );
+
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert!(stdout(&output).contains("config ok"), "{}", stdout(&output));
+}
+
+#[test]
+fn check_refuses_a_client_entry_that_cannot_select_an_account() {
+    for (tag, accounts, expected) in [
+        (
+            "clients-empty-map",
+            "",
+            "remove the entry to allow all accounts",
+        ),
+        (
+            "clients-empty-list",
+            "accounts.claude = []",
+            "accounts.claude is empty; remove it to allow all accounts",
+        ),
+        (
+            "clients-unknown-provider",
+            "accounts.nope = [\"a\"]",
+            "unknown provider 'nope'",
+        ),
+        (
+            "clients-no-pool",
+            "accounts.anthropic = [\"a\"]",
+            "provider 'anthropic' has no account pool",
+        ),
+        (
+            "clients-unknown-account",
+            "accounts.claude = [\"zz\"]",
+            "provider 'claude' has no account 'zz'",
+        ),
+        (
+            "clients-inline-owner",
+            "accounts.codex = [\"a\"]",
+            "account 'a' belongs to provider 'claude', not 'codex'",
+        ),
+        (
+            "clients-store-owner",
+            "accounts.claude = [\"k\"]",
+            "account 'k' belongs to provider 'codex', not 'claude'",
+        ),
+    ] {
+        let output = check_clients(tag, &format!("[server.auth.clients.goal-x]\n{accounts}\n"));
+
+        assert!(
+            !output.status.success(),
+            "{tag} must fail the check; stdout: {}",
+            stdout(&output)
+        );
+        let message = stderr(&output);
+        assert!(
+            message.contains("[server.auth.clients.goal-x]") && message.contains(expected),
+            "{tag} must name the entry and say {expected:?}: {message}"
+        );
+    }
 }

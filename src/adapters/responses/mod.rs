@@ -130,6 +130,7 @@ impl Adapter for ResponsesAdapter {
                 pool_key,
                 session_id,
                 TurnHints {
+                    client: crate::accounts::inbound_client(headers).map(str::to_string),
                     compact,
                     delegation,
                 },
@@ -163,12 +164,15 @@ fn identity_key(
     })
 }
 
-/// The header-derived turn marks: the client's one-shot post-compaction hint
+/// The header-derived turn marks: the verified inbound client, the client's
+/// one-shot post-compaction hint
 /// (consumed by the first upstream-reaching dispatch, keys the window
 /// counter) and the delegated-turn subagent identity (child thread id +
 /// markers). Derived once per turn; every transport reads from the same
 /// instance.
 struct TurnHints {
+    /// The verified inbound client, for `[server.auth.clients]` pinning.
+    client: Option<String>,
     compact: crate::request::CompactionMark,
     delegation: Option<crate::adapters::responses::request::CodexDelegation>,
 }
@@ -338,6 +342,7 @@ async fn forward(
                 state,
                 route,
                 PoolForwardStream {
+                    client: hints.client,
                     session_id,
                     window_key: pool_key,
                     compact: hints.compact,
@@ -371,6 +376,7 @@ async fn forward(
                 state,
                 route,
                 PoolForward {
+                    client: hints.client,
                     pool_key,
                     session_id,
                     compact: hints.compact,
@@ -633,13 +639,31 @@ pub(crate) async fn chain_attempt(
                     retry_after: None,
                 };
             }
-            let (order, reprobe) = state.accounts.select_order_deferred(
+            let (mut order, mut reprobe) = state.accounts.select_order_deferred(
                 &route.provider,
                 &accounts,
                 session_id.as_deref(),
                 Some(route.upstream_model.as_str()),
                 state.config.server.pool.as_ref(),
             );
+            if let Err(error) = crate::accounts::retain_client_accounts(
+                &state.config,
+                crate::accounts::inbound_client(headers),
+                &route.provider,
+                &accounts,
+                &mut order,
+                &mut reprobe,
+            ) {
+                // Advance like the pre-commit loop, which sees the same 503.
+                let envelope = adapter_error_envelope(error).await;
+                return crate::proxy::chain_stream::Attempt::Failed {
+                    advance: true,
+                    remember: true,
+                    envelope: crate::proxy::chain_stream::LazyEnvelope::Ready(envelope),
+                    status: StatusCode::SERVICE_UNAVAILABLE,
+                    retry_after: None,
+                };
+            }
             let events = pool_events_stream(PoolStreamContext {
                 state: state.clone(),
                 route: route.clone(),

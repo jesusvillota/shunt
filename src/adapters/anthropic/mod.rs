@@ -194,13 +194,21 @@ async fn forward_claude_oauth(
         .get("x-claude-code-session-id")
         .and_then(|value| value.to_str().ok());
     let is_fable = accounts::is_fable_model(Some(route.upstream_model.as_str()));
-    let order = state.accounts.select_order(
+    let mut order = state.accounts.select_order(
         &route.provider,
         &accounts,
         session_id,
         Some(route.upstream_model.as_str()),
         state.config.server.pool.as_ref(),
     );
+    accounts::retain_client_accounts(
+        &state.config,
+        accounts::inbound_client(headers),
+        &route.provider,
+        &accounts,
+        &mut order,
+        &mut None,
+    )?;
     let url = upstream_url(&state, &route, uri);
     normalize_upstream_model_request(&mut body, &route.upstream_model);
     deferral::strip_unsupported_deferral(&mut body, &route.upstream_model);
@@ -855,13 +863,21 @@ async fn forward_kimi_oauth(
     let session_id = headers
         .get("x-claude-code-session-id")
         .and_then(|value| value.to_str().ok());
-    let order = state.accounts.select_order(
+    let mut order = state.accounts.select_order(
         &route.provider,
         &accounts,
         session_id,
         Some(route.upstream_model.as_str()),
         state.config.server.pool.as_ref(),
     );
+    accounts::retain_client_accounts(
+        &state.config,
+        accounts::inbound_client(headers),
+        &route.provider,
+        &accounts,
+        &mut order,
+        &mut None,
+    )?;
     let url = upstream_url(&state, &route, uri);
     normalize_upstream_model_request(&mut body, &route.upstream_model);
     deferral::strip_unsupported_deferral(&mut body, &route.upstream_model);

@@ -156,6 +156,8 @@ pub(super) struct ForwardOptions {
 /// into the pool vs. single-account dispatch.
 #[derive(Debug)]
 pub(super) struct PoolForward {
+    /// The verified inbound client, for `[server.auth.clients]` pinning.
+    pub client: Option<String>,
     /// The composed identity key: the connection-pool key on the websocket
     /// path and the window-counter key on both transports.
     pub pool_key: Option<String>,

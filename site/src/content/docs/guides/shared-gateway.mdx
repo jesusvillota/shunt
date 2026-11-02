@@ -80,6 +80,31 @@ Two things to get right when you set this up:
 
 Startup fails closed on a misconfigured entry, including one that carries an `audience` but no `email_domains`/`allowed_emails` rule. If JWT authentication returns `503` with an `api_error` body (not the `overloaded_error` that capacity shedding below returns), shunt could not fetch the issuer's key set — check the issuer URL and network reachability, not the credential. Full key list in the [configuration reference](/reference/configuration/#serverauthjwt-optional).
 
+## Pinning clients to accounts
+
+When several clients share one account pool, you can give each client its own subset of the accounts. For example, two agents can each keep to their own Claude accounts, while a third uses all of them:
+
+```toml
+[server.auth]
+tokens_env = "SHUNT_CLIENT_TOKENS"
+
+[server.auth.clients.goal-x]
+accounts.anthropic = ["a", "b"]
+
+[server.auth.clients.goal-y]
+accounts.anthropic = ["c"]
+```
+
+```bash
+export SHUNT_CLIENT_TOKENS="goal-x:$(openssl rand -hex 32),goal-y:$(openssl rand -hex 32),default:$(openssl rand -hex 32)"
+```
+
+Each table key is a client name from `SHUNT_CLIENT_TOKENS` (or the verified email of a JWT). Each `accounts.<provider>` list names that provider's accounts. Here `goal-x` uses accounts `a` and `b`, `goal-y` uses only `c`, and `default`, which has no entry, uses all three. Subsets may overlap; an account's cooldown and quota state are shared by every client that uses it. Pinning works on every pooled provider: Claude, Codex/ChatGPT (including the [inbound Codex endpoint](/guides/inbound-codex-endpoint/)), Kimi, and Antigravity.
+
+A pinned client never spills over to other accounts. When all of its accounts are rate-limited, it gets the upstream `429` with `Retry-After`, so the client waits for its own accounts to reset. When none of its accounts can be selected (all disabled or paused), it gets a `503` that names the client, the provider, and the accounts. A [`[[routes]]`](/reference/configuration/) fallback to another provider still applies.
+
+Run `shunt check` after you edit the table: it rejects an empty entry or list, an unknown provider or account, and a provider without an account pool. Full rules in the [configuration reference](/reference/configuration/#serverauthclients-optional).
+
 ## SSE keepalive pings
 
 Middleboxes kill quiet streams — Cloudflare's proxy returns **524 after 100 seconds without a byte** (fixed below Enterprise), and long reasoning stretches can be silent that long. shunt therefore injects the Anthropic protocol's own `ping` event (which `api.anthropic.com` itself emits and every client ignores) whenever a streaming response has been idle:

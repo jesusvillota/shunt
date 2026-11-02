@@ -86,6 +86,26 @@ key set 按 issuer 在首次使用时惰性拉取,因此 IdP 不可达不会阻�
 
 shunt 不保存吊销状态,所以有效的 token 会一直可用到过期:限制这一范围的是 `max_token_age_seconds`,issuer 应当签发分钟级寿命的 token。从允许列表中移除域名或地址会在下一次请求时生效。
 
+### `[server.auth.clients]`(可选)
+
+把客户端固定到每个池化提供方账户的一个子集([详情](/zh-cn/guides/shared-gateway/#将客户端固定到账户)):
+
+```toml
+[server.auth.clients.goal-x]
+accounts.anthropic = ["a", "b"]   # 提供方名称 -> 账户名称
+accounts.codex = ["work"]
+```
+
+| 键 | 默认值 | 含义 |
+| :-- | :-- | :-- |
+| `accounts.<provider>` | 所有账户 | 该客户端在 `<provider>` 上可以使用的账户名称 |
+
+表的键是客户端名称:`tokens_env` 中静态 token 的名称,或 [`[[server.auth.jwt]]`](#serverauthjwt可选) token 验证通过的邮箱。没有条目的客户端,以及条目中未列出的提供方,都使用所有账户。提供方必须有账户池:`auth = "claude_oauth"`、`"chatgpt_oauth"`、`"kimi_oauth"` 或 `"antigravity_oauth"`。
+
+被固定的客户端从不使用其他账户。当子集中的每个账户都拒绝请求时,shunt 会转发最后一个上游 `429` 及其 `Retry-After`;当子集中没有任何账户可选(全部被禁用或暂停,或者池中没有该名称)时,返回 `503 api_error`。转到其他提供方的 `[[routes]]` 回退仍然适用,并使用那个提供方的子集。
+
+`shunt check` 和 `shunt run` 会拒绝以下配置:没有 `accounts` 的条目、空列表(要允许所有账户,请删除该列表)、未知的提供方、没有账户池的提供方,以及不在该提供方池中的账户 —— 如果有提供方拥有该账户,会指出是哪一个。对于从账户存储读取的池(没有内联 `accounts` 或 `account_scope`),只有 `shunt check` 会读取存储。
+
 ## `[server.admin]`(可选)
 
 存在此表即启用管理 Web 界面,用于浏览器账户预配与账户池健康状况([详情](/zh-cn/guides/admin-remote-provisioning/))。此表不存在时,任何 `/admin*` 路由都不会注册。同一凭据也用于认证 [`[server.spend]`](#serverspend可选) 的 spend-limit API。

@@ -80,6 +80,31 @@ JWT는 **오직** `Authorization: Bearer`로만 받습니다 — 구성된 헤�
 
 항목이 잘못 구성되면 시작이 닫힌 채로 실패하며, `audience`만 있고 `email_domains`/`allowed_emails` 규칙이 없는 경우도 여기에 해당합니다. JWT 인증이 `api_error` 본문과 함께 `503`을 반환한다면(아래 용량 초과 거부의 `overloaded_error`가 아니라면) shunt가 issuer의 key set을 가져오지 못한 것입니다 — 자격 증명이 아니라 issuer URL과 네트워크 도달성을 확인하세요. 전체 키 목록은 [구성 레퍼런스](/ko/reference/configuration/)에 있습니다.
 
+## 클라이언트를 계정에 고정하기
+
+여러 클라이언트가 하나의 계정 풀을 공유할 때, 각 클라이언트에 자기만의 계정 부분집합을 줄 수 있습니다. 예를 들어 두 에이전트는 각자 자기 Claude 계정만 쓰고, 세 번째 에이전트는 모든 계정을 쓰게 할 수 있습니다:
+
+```toml
+[server.auth]
+tokens_env = "SHUNT_CLIENT_TOKENS"
+
+[server.auth.clients.goal-x]
+accounts.anthropic = ["a", "b"]
+
+[server.auth.clients.goal-y]
+accounts.anthropic = ["c"]
+```
+
+```bash
+export SHUNT_CLIENT_TOKENS="goal-x:$(openssl rand -hex 32),goal-y:$(openssl rand -hex 32),default:$(openssl rand -hex 32)"
+```
+
+각 테이블 키는 `SHUNT_CLIENT_TOKENS`에 있는 클라이언트 이름(또는 JWT의 검증된 이메일)입니다. 각 `accounts.<provider>` 목록은 그 프로바이더의 계정 이름을 나열합니다. 여기서 `goal-x`는 계정 `a`와 `b`를, `goal-y`는 `c`만 사용하고, 항목이 없는 `default`는 세 계정을 모두 사용합니다. 부분집합은 겹쳐도 됩니다. 계정의 쿨다운과 쿼터 상태는 그 계정을 쓰는 모든 클라이언트가 공유합니다. 고정은 풀링되는 모든 프로바이더에서 동작합니다: Claude, Codex/ChatGPT([인바운드 Codex 엔드포인트](/ko/guides/inbound-codex-endpoint/) 포함), Kimi, Antigravity.
+
+고정된 클라이언트는 다른 계정으로 절대 넘어가지 않습니다. 자기 계정이 모두 rate limit에 걸리면 업스트림 `429`를 `Retry-After`와 함께 받으므로, 클라이언트는 자기 계정이 리셋될 때까지 기다립니다. 자기 계정 중 선택할 수 있는 것이 하나도 없으면(모두 비활성화 또는 일시 중지) 클라이언트, 프로바이더, 계정을 명시한 `503`을 받습니다. 다른 프로바이더로 가는 [`[[routes]]`](/ko/reference/configuration/) 폴백은 그대로 적용됩니다.
+
+테이블을 수정한 뒤에는 `shunt check`를 실행하세요: 빈 항목이나 빈 목록, 알 수 없는 프로바이더나 계정, 계정 풀이 없는 프로바이더를 거부합니다. 전체 규칙은 [구성 레퍼런스](/ko/reference/configuration/#serverauthclients-선택)에 있습니다.
+
 ## SSE keepalive ping
 
 미들박스는 조용한 스트림을 끊습니다 — Cloudflare의 프록시는 **한 바이트도 없이 100초가 지나면 524를 반환**하며(Enterprise 미만에서는 고정), 긴 추론 구간은 그만큼 조용할 수 있습니다. 그래서 shunt는 스트리밍 응답이 유휴 상태일 때마다 Anthropic 프로토콜 자체의 `ping` 이벤트를 주입합니다(`api.anthropic.com`이 직접 방출하며 모든 클라이언트가 무시하는 것):

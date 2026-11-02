@@ -341,3 +341,43 @@ bulk-application idioms left both hand-rolled forward sites invisible.
 - Per-client rate limits or spend accounting (a possible M5; the `name` label in logs is the
   hook for it).
 - Interactive token minting — operators generate tokens themselves (e.g. `openssl rand -hex 32`).
+
+## 7. Client account pinning (`[server.auth.clients]`)
+
+A client can be pinned to a subset of each pooled provider's accounts, so that, for example,
+two agents sharing one gateway never draw from each other's Claude accounts:
+
+```toml
+[server.auth.clients.goal-x]
+accounts.anthropic = ["a", "b"]   # provider name -> account names
+accounts.codex = ["work"]
+
+[server.auth.clients.goal-y]
+accounts.anthropic = ["c"]
+```
+
+- **Key.** The client name: a static token's name from `tokens_env`, or the verified email of a
+  `[[server.auth.jwt]]` token. A client without an entry, and a provider not listed in an entry,
+  use every account. Without the table nothing changes.
+- **Scope.** Every pooled provider: `claude_oauth`, `kimi_oauth`, `antigravity_oauth`, and
+  `chatgpt_oauth` on every transport, including the inbound Codex endpoint.
+- **Trust.** Adapters read the client name from `x-shunt-inbound-client`. The gate strips any
+  caller-sent `x-shunt-*` header (§2.1) and stamps this one only after authentication.
+- **Selection.** The adapter filters the order that `AccountPool::select_order*` returns; the
+  pool itself still sees every account. Health, cooldown, and quota state are kept per account,
+  so clients that share an account share its state. The round-robin start position is computed
+  over all accounts, so until quota headers arrive a subset can favor one of its accounts.
+- **Exhausted subset: fail, never spill over.** Cooling accounts stay in the order and are tried.
+  When all of them reject, the last upstream `429` is relayed with its `Retry-After`. When no
+  account of the subset is selectable (all disabled or paused, or no name in the pool), shunt
+  returns `503 api_error` naming the client, the provider, and the accounts. A `[[routes]]`
+  fallback to another provider still applies, with that provider's subset.
+- **Validation.** `shunt check` and `shunt run` reject an entry without `accounts`, an empty list
+  (remove it to allow all accounts), an unknown provider, a provider without an account pool,
+  and an account that is not in the provider's pool; when another provider has that account,
+  the message names it. For a pool read from the account store (no inline `accounts` or
+  `account_scope`), only `shunt check` reads the store, offline; at run time an unknown name
+  gets the `503` above.
+
+Tests: `tests/client_account_pinning.rs` (per-client account sets, the exhausted subset, the
+`503`) and `tests/check_cli.rs` (each rejected entry).
