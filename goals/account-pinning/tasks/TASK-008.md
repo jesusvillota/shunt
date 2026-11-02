@@ -6,7 +6,7 @@ state: approved
 depends_on: []
 delivery: pr
 repo: shunt
-route: {platform: codex, model: gpt-6.1-sol, effort: xhigh}
+route: {platform: chatgptweb}
 ---
 
 ## Why
