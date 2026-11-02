@@ -3,7 +3,7 @@ id: TASK-005
 title: Keeper reads the goal's own account subset for rate-limit resets
 milestone: M-1
 state: approved
-depends_on: [TASK-003]
+depends_on: [TASK-003, DEC-001]
 delivery: pr
 repo: goal
 route: {platform: codex, model: gpt-6.1-sol, effort: xhigh}
