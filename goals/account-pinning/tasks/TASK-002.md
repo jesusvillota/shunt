@@ -6,6 +6,7 @@ state: approved
 depends_on: [TASK-001]
 delivery: pr
 repo: shunt
+route: {platform: claude, model: opus, effort: high}
 ---
 
 ## Why
