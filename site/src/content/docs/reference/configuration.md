@@ -122,6 +122,26 @@ Key sets are fetched lazily on first use per issuer, so an unreachable IdP does 
 
 shunt keeps no revocation state, so a valid token works until it expires: `max_token_age_seconds` is what bounds that, and issuers should mint minutes-scale tokens. Removing a domain or address from the allowlist does take effect on the next request.
 
+### `[server.auth.clients]` (optional)
+
+Pins a client to a subset of each pooled provider's accounts ([how-to](/guides/shared-gateway/#pinning-clients-to-accounts)):
+
+```toml
+[server.auth.clients.goal-x]
+accounts.anthropic = ["a", "b"]   # provider name -> account names
+accounts.codex = ["work"]
+```
+
+| Key | Default | Meaning |
+| :-- | :-- | :-- |
+| `accounts.<provider>` | all accounts | Names of the accounts this client may use on `<provider>` |
+
+The table key is the client name: a static token's name from `tokens_env`, or the verified email of a [`[[server.auth.jwt]]`](#serverauthjwt-optional) token. A client without an entry, and a provider not listed in an entry, use every account. The provider must have an account pool: `auth = "claude_oauth"`, `"chatgpt_oauth"`, `"kimi_oauth"`, or `"antigravity_oauth"`.
+
+A pinned client never draws from other accounts. When every account of its subset rejects the request, shunt relays the last upstream `429` with its `Retry-After`; when none of them is selectable (all disabled or paused, or no name in the pool), it returns `503 api_error`. A `[[routes]]` fallback to another provider still applies, with that provider's subset.
+
+`shunt check` and `shunt run` reject an entry without `accounts`, an empty list (remove it to allow all accounts), an unknown provider, a provider without an account pool, and an account that is not in the provider's pool — naming the provider that has it, if any. For a pool read from the account store (no inline `accounts` or `account_scope`), only `shunt check` reads the store.
+
 ## `[server.admin]` (optional)
 
 Presence of this table enables the admin web surface for browser account provisioning and account-pool health ([details](/guides/admin-remote-provisioning/)). When the table is absent, none of the `/admin*` routes are registered. The same credential also authenticates the [`[server.spend]`](#serverspend-optional) spend-limit API.

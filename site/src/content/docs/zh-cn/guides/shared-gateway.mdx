@@ -80,6 +80,31 @@ JWT **只**通过 `Authorization: Bearer` 接受 —— 配置的 header 和 `x-
 
 条目配置错误时启动会 fail closed,包括只有 `audience` 而没有 `email_domains` / `allowed_emails` 规则的情况。如果 JWT 认证返回带有 `api_error` 正文的 `503`(而不是下文容量上限拒绝时的 `overloaded_error`),说明 shunt 没能拉取到 issuer 的 key set —— 这时应该检查 issuer URL 和网络可达性,而不是凭据。完整的键列表见[配置参考](/zh-cn/reference/configuration/)。
 
+## 将客户端固定到账户
+
+当多个客户端共享同一个账户池时,你可以给每个客户端分配它自己的账户子集。例如,可以让两个 agent 各自只使用自己的 Claude 账户,而第三个使用全部账户:
+
+```toml
+[server.auth]
+tokens_env = "SHUNT_CLIENT_TOKENS"
+
+[server.auth.clients.goal-x]
+accounts.anthropic = ["a", "b"]
+
+[server.auth.clients.goal-y]
+accounts.anthropic = ["c"]
+```
+
+```bash
+export SHUNT_CLIENT_TOKENS="goal-x:$(openssl rand -hex 32),goal-y:$(openssl rand -hex 32),default:$(openssl rand -hex 32)"
+```
+
+每个表的键是 `SHUNT_CLIENT_TOKENS` 中的一个客户端名称(或 JWT 验证通过的邮箱)。每个 `accounts.<provider>` 列表列出该提供方的账户名称。这里 `goal-x` 使用账户 `a` 和 `b`,`goal-y` 只使用 `c`,而没有条目的 `default` 使用全部三个。子集可以重叠;账户的冷却和配额状态由使用它的所有客户端共享。固定适用于所有池化的提供方:Claude、Codex/ChatGPT(包括[入站 Codex 端点](/zh-cn/guides/inbound-codex-endpoint/))、Kimi 和 Antigravity。
+
+被固定的客户端从不溢出到其他账户。当它的所有账户都被限流时,它会收到带 `Retry-After` 的上游 `429`,于是客户端会等待自己的账户重置。当它的账户中没有任何一个可选(全部被禁用或暂停)时,它会收到一个指明客户端、提供方和账户的 `503`。转到其他提供方的 [`[[routes]]`](/zh-cn/reference/configuration/) 回退仍然适用。
+
+编辑该表后请运行 `shunt check`:它会拒绝空条目或空列表、未知的提供方或账户,以及没有账户池的提供方。完整规则见[配置参考](/zh-cn/reference/configuration/#serverauthclients可选)。
+
 ## SSE keepalive ping
 
 中间盒会中断安静的流 —— Cloudflare 的代理在**100 秒无字节后返回 524**(Enterprise 以下固定如此),而长时间的推理过程可能安静那么久。因此,每当一个流式响应闲置时,shunt 会注入 Anthropic 协议自身的 `ping` 事件(`api.anthropic.com` 自己也会发出它,而每个客户端都会忽略它):

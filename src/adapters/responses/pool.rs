@@ -218,6 +218,7 @@ pub(super) async fn forward_chatgpt_oauth_stream(
 /// and the pool itself all run inside the committed response, so neither a
 /// slow filesystem scan nor a saturated blocking pool can delay the commit
 /// (keepalive pings cover the wait).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn pool_or_single_events(
     scan: std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<Vec<AccountConfig>, String>> + Send>,

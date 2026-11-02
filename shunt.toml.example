@@ -41,6 +41,13 @@ default_provider = "anthropic" # provider for any model with no route -> pass-th
 # email_domains = ["example.com"]              # exact match after the final `@`
 # max_token_age_seconds = 3600                 # (default) reject `exp - iat` above this
 
+# --- Optional: pin a client (a token name above, or a verified JWT email) to a
+# subset of a pooled provider's accounts. A client or provider without an entry
+# uses every account; an exhausted subset fails rather than spilling over
+# (docs/m4-inbound-auth.md §7).
+# [server.auth.clients.alice]
+# accounts.anthropic = ["work-a", "work-b"]    # provider name -> account names
+
 # --- Optional: admin web surface for browser account provisioning and pool health.
 # Separate from client auth: admin credentials never live here as literals.
 # The name:token pairs come from the env as

@@ -279,6 +279,7 @@ pub(crate) async fn authenticate_inbound(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn forward_turn(
     state: AppState,
     model: Option<String>,
