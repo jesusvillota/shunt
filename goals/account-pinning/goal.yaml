@@ -4,9 +4,14 @@ title: Per-goal account pinning
 objective: Let each goal draw only from a configured subset of a platform's accounts (overlapping goals share accounts; goals without an entry use all), carried by a per-goal shunt client token that the goal CLI hands to each session, with the keeper waking on the goal's own subset reset.
 base: main
 success:
-  SC-1: <observable result and how it is verified>
+  SC-1: "A `[server.auth.clients.<client>].accounts.<provider>` table limits that client to the named accounts on every pooled platform (Claude, Kimi, Codex/ChatGPT, Antigravity, the inbound Codex endpoint); a client with no entry uses all accounts. Verified by `tests/client_account_pinning.rs`: with accounts A, B, C, the upstream receives only A/B for goal-x, only C for goal-y, only A/C for goal-z and all three for goal-w."
+  SC-2: "When every account in a client's subset is rate limited, shunt returns the upstream 429 with Retry-After and never spills to other accounts. Verified by an exhausted-subset test that asserts zero upstream requests on accounts outside the subset."
+  SC-3: "`shunt check` and `shunt run` reject an empty subset, an unknown provider, a provider without an account pool, and an account name not in that provider (naming the provider that has it). Verified by `tests/check_cli.rs` cases."
+  SC-4: "A client cannot widen its subset: forged `x-shunt-*` headers and router side calls (judge, advisor) keep the caller's subset. Verified by forgery and router tests."
+  SC-5: "`shunt pool --json --client <name>` shows only that client's accounts, and the goal keeper uses it, so a goal sleeps until its own subset resets. Verified by shunt and goal-repo tests."
+  SC-6: "A goal's agent sessions (Claude Code and Codex) send that goal's shunt client token without any change to Claude Code or Codex. Verified by goal-repo tests and a `/run-shunt` smoke test that prints the account chosen for each goal."
 milestones:
-  - {id: M-1, title: <first observable outcome>, success: [SC-1], exit: <verifiable evidence>}
+  - {id: M-1, title: Per-goal account pinning end to end, success: [SC-1, SC-2, SC-3, SC-4, SC-5, SC-6], exit: "All task PRs merged in shunt and goal; the gate task's smoke test shows each goal's chosen account inside its subset"}
 policy:
   decide: human         # human | experts (a committee answers worker decision requests)
   orchestrator: {platform: claude, model: sonnet, effort: medium}
@@ -16,3 +21,6 @@ policy:
   turn_budget: 40
   plan_commits: push    # push | commit | off
   worktree_setup: null  # shell run in each new task worktree, e.g. "uv sync"
+  repos:
+    shunt: {}                       # this repository (sibling path resolves to itself)
+    goal: {path: ~/GitHub/goal}     # the goal CLI; PRs target its main

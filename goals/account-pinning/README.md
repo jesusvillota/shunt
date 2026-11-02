@@ -18,7 +18,7 @@ Let each goal draw only from a configured subset of a platform's accounts (overl
 <!-- goal:graph:start -->
 ```mermaid
 flowchart TD
-  subgraph M_1["M-1 · <first observable outcome>"]
+  subgraph M_1["M-1 · Per-goal account pinning end to end"]
   end
   classDef draft stroke-dasharray: 4 3
   classDef cancelled opacity:0.45
