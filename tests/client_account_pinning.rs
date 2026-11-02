@@ -9,9 +9,13 @@ use std::{
     net::SocketAddr,
 };
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use reqwest::StatusCode;
 use shunt::{
-    config::{AccountConfig, AuthMode, ClientPolicy, Config, InboundAuthConfig, RouteConfig},
+    config::{
+        AccountConfig, AuthMode, ClientPolicy, CodexEndpointConfig, Config, InboundAuthConfig,
+        RouteConfig,
+    },
     server,
 };
 use tokio::task::JoinHandle;
@@ -169,6 +173,120 @@ async fn upstream_accounts(upstream: &MockServer, from: usize) -> Vec<String> {
 
 fn set_of(names: &[&str]) -> BTreeSet<String> {
     names.iter().map(|name| name.to_string()).collect()
+}
+
+#[tokio::test]
+async fn codex_pinning_uses_the_selected_credential_on_both_paths() {
+    if !can_bind_loopback() {
+        return;
+    }
+    let mut vars = common::env_lock().await;
+    vars.set(TOKENS_ENV, "goal-x:tok-x,goal-y:tok-y");
+    let mut config = Config::default();
+    let upstream = MockServer::start().await;
+    let provider = config.providers.get_mut("codex").unwrap();
+    assert_eq!(provider.auth, AuthMode::ChatgptOauth);
+    provider.base_url = upstream.uri();
+    let tokens: BTreeMap<_, _> = ["a", "b"]
+        .map(|name| {
+            let payload = serde_json::json!({
+                "exp": 4_102_444_800_u64,
+                "https://api.openai.com/auth": {"chatgpt_account_id": format!("acct-{name}")}
+            });
+            let token = format!("x.{}.y", URL_SAFE_NO_PAD.encode(payload.to_string()));
+            let token_env = format!("SHUNT_TEST_PIN_CODEX_{name}");
+            vars.set(&token_env, &token);
+            provider.accounts.push(AccountConfig {
+                name: name.to_string(),
+                token_env: Some(token_env),
+                ..Default::default()
+            });
+            (name, token)
+        })
+        .into();
+    config.routes.push(RouteConfig {
+        model: "pooled-model".to_string(),
+        provider: "codex".to_string(),
+        upstream_model: None,
+        effort: None,
+        service_tier: None,
+    });
+    config.server.codex_endpoint = Some(CodexEndpointConfig::default());
+    config.server.auth = Some(InboundAuthConfig {
+        jwt: Vec::new(),
+        header: "x-shunt-token".to_string(),
+        tokens_env: TOKENS_ENV.to_string(),
+        clients: [("goal-x", "b"), ("goal-y", "a")]
+            .map(|(client, account)| {
+                (
+                    client.to_string(),
+                    ClientPolicy {
+                        accounts: BTreeMap::from([(
+                            "codex".to_string(),
+                            vec![account.to_string()],
+                        )]),
+                    },
+                )
+            })
+            .into(),
+    });
+    let sse = "event: response.created\ndata: {\"response\":{\"id\":\"resp_pin\"}}\n\n\
+               event: response.output_item.added\ndata: {\"item\":{\"type\":\"message\"}}\n\n\
+               event: response.output_text.delta\ndata: {\"delta\":\"pinned codex served\"}\n\n\
+               event: response.output_text.done\ndata: {}\n\n\
+               event: response.completed\ndata: {\"response\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":4}}}\n\n";
+    Mock::given(method("POST"))
+        .and(path("/codex/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+        .expect(24)
+        .mount(&upstream)
+        .await;
+    let gateway = start_gateway(config).await;
+
+    for endpoint in ["/v1/messages", "/responses"] {
+        for (client, token, account) in [("goal-x", "tok-x", "b"), ("goal-y", "tok-y", "a")] {
+            let from = upstream.received_requests().await.unwrap().len();
+            for _ in 0..6 {
+                let response = if endpoint == "/v1/messages" {
+                    post_as(&gateway, token).await
+                } else {
+                    reqwest::Client::new()
+                        .post(format!("{}{endpoint}", gateway.base_url))
+                        .header("x-shunt-token", token)
+                        .json(&serde_json::json!({
+                            "model": "pooled-model", "input": "hi", "stream": false, "store": false
+                        }))
+                        .send()
+                        .await
+                        .unwrap()
+                };
+                assert_eq!(response.status(), StatusCode::OK, "{endpoint} {client}");
+                assert_eq!(response.headers()["x-shunt-account"], account);
+                if endpoint == "/v1/messages" {
+                    let body: serde_json::Value = response.json().await.unwrap();
+                    assert_eq!(body["content"][0]["text"], "pinned codex served");
+                } else {
+                    assert_eq!(response.text().await.unwrap(), sse);
+                }
+            }
+            let requests = upstream.received_requests().await.unwrap();
+            assert_eq!(requests.len() - from, 6, "{endpoint} {client}");
+            for request in &requests[from..] {
+                assert_eq!(
+                    request.headers["authorization"],
+                    format!("Bearer {}", tokens[account])
+                );
+                assert_eq!(
+                    request.headers["chatgpt-account-id"],
+                    format!("acct-{account}")
+                );
+            }
+            println!(
+                "{endpoint} {client}: all 6 upstream requests used account {account}'s credential"
+            );
+        }
+    }
+    upstream.verify().await;
 }
 
 #[tokio::test]
