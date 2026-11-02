@@ -3,7 +3,7 @@ id: TASK-007
 title: Turn on per-goal pinning on this Mac
 milestone: M-1
 state: approved
-depends_on: [TASK-004, TASK-005, TASK-006]
+depends_on: [TASK-004, TASK-005, TASK-006, TASK-008, TASK-009, TASK-010]
 delivery: manual
 ---
 

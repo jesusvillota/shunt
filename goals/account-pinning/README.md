@@ -58,6 +58,9 @@ flowchart TD
   TASK_004 --> TASK_007
   TASK_005 --> TASK_007
   TASK_006 --> TASK_007
+  TASK_008 --> TASK_007
+  TASK_009 --> TASK_007
+  TASK_010 --> TASK_007
   TASK_005 --> TASK_009
   TASK_009 --> TASK_010
   classDef draft stroke-dasharray: 4 3
