@@ -6,7 +6,7 @@ state: approved
 depends_on: [TASK-009]
 delivery: pr
 repo: goal
-route: {platform: chatgptweb}
+route: {platform: codex, model: gpt-6.1-sol, effort: high}
 ---
 
 ## Why
