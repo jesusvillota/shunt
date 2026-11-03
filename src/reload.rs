@@ -589,6 +589,39 @@ mod tests {
         ))
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn reload_accepts_new_token_without_restarting_gateway() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir("client-file");
+        let _guard = TempDirGuard(dir.clone());
+        let path = dir.join("shunt.toml");
+        let token_file = dir.join("tokens");
+        std::fs::write(&token_file, "alice:first\\n").unwrap();
+        std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                "[server.auth]\\ntokens_env = \\"SHUNT_RELOAD_FILE_TEST_UNSET\\"\\ntokens_file = {:?}\\n",
+                token_file.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let shared = shared_from(Config::load(Some(&path)).unwrap());
+        assert_eq!(
+            shared.load().inbound_auth.as_ref().unwrap().authenticate_value(b"second"),
+            None
+        );
+
+        std::fs::write(&token_file, "alice:first\\nbob:second\\n").unwrap();
+        reload(&shared, Some(&path)).expect("token file reload succeeds");
+        assert_eq!(
+            shared.load().inbound_auth.as_ref().unwrap().authenticate_value(b"second"),
+            Some("bob")
+        );
+    }
+
     #[test]
     fn reload_swaps_in_a_valid_new_config() {
         let dir = temp_dir("valid");
