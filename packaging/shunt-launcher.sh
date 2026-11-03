@@ -17,13 +17,16 @@ exe=$root/target/release/shunt
 
 stale() {
   [ -x "$exe" ] || return 0
+  # A build without the `tui` feature (a hand-run `cargo build --release`) can be newer
+  # than every source file; only that build contains this message.
+  grep -aq "this build has no terminal monitor" "$exe" && return 0
   [ -n "$(find "$root/src" "$root/blueprints" "$root/Cargo.toml" "$root/Cargo.lock" -type f -newer "$exe" -print -quit 2>/dev/null)" ]
 }
 
 case ${1-} in
   tui)
     if stale; then
-      echo "shunt: building the TUI (sources changed)…" >&2
+      echo "shunt: building the TUI (sources changed or binary lacks the tui feature)…" >&2
       PATH="$HOME/.cargo/bin:$PATH" cargo build --locked --release --features tui --quiet \
         --manifest-path "$root/Cargo.toml" --bin shunt \
         || echo "shunt: build failed; using the previous binary" >&2
