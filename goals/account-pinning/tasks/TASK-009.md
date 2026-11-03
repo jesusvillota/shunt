@@ -7,6 +7,7 @@ depends_on: [TASK-005]
 delivery: pr
 repo: goal
 route: {platform: claude, model: opus, effort: high}
+blocked: null
 ---
 
 ## Why
