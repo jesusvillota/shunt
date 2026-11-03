@@ -2,9 +2,10 @@
 id: TASK-007
 title: Turn on per-goal pinning on this Mac
 milestone: M-1
-state: approved
+state: done
 depends_on: [TASK-004, TASK-005, TASK-006, TASK-008, TASK-009, TASK-010]
 delivery: manual
+reason: 'one-time setup applied: [server.auth] with tokens_file, default client, Codex auth command, shunt check ok, restarted; pin/clear tested with pool --client'
 ---
 
 ## Why
