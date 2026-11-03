@@ -45,8 +45,11 @@ description: 每一个 shunt.toml 键 —— server、providers、routes、model
 | :-- | :-- | :-- |
 | `header` | `x-shunt-token` | 携带客户端 token 的头部 |
 | `tokens_env` | `SHUNT_CLIENT_TOKENS` | 保存逗号分隔的 `name:token` 对的环境变量 |
+| `tokens_file` | _(未设置)_ | 仅所有者可读的 `name:token` 行文件的路径(`~` 会被展开),与 `tokens_env` 合并 |
 
 指定的环境变量必须包含至少一个凭据,例如 `SHUNT_CLIENT_TOKENS="alice:<token>,bob:<token>"`。若此表存在但该变量未设置、为空或格式错误,启动会安全失败(fail closed)。被门控的路由(映射的 `/v1/messages` 推理和 `GET /v1/models` 发现)接受 token 出现在配置的头部、`Authorization: Bearer` 或 `x-api-key` 中 —— 当多个槽位携带有效 token 时,专用头部优先。
+
+`tokens_file` 每行保存一个 `name:token` 对。shunt 在每次配置重载时(SIGHUP、`shunt.toml` 变更或该文件自身变更)都会重新读取它,因此加入文件的 token 无需重启即可生效。文件不存在时视为空列表。其他用户可读的文件(权限宽于 `0600`)会使 `shunt check` 和重载失败。客户端名称或 token 在文件与 `tokens_env` 之间重复时同样失败,错误信息会同时指出两个来源。
 
 `tokens_env` 自身的值也和其他配置文件字符串一样,可以写成 `${VAR}` / `${file:...}`(见 [Secret 引用](#secret-引用))——它仍然指向 shunt 用来读取 token 的环境变量。
 

@@ -106,6 +106,7 @@ fn pinned_config(upstream: &str) -> Config {
         (client.to_string(), policy)
     });
     config.server.auth = Some(InboundAuthConfig {
+        tokens_file: None,
         jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: TOKENS_ENV.to_string(),
@@ -213,6 +214,7 @@ async fn codex_pinning_uses_the_selected_credential_on_both_paths() {
     });
     config.server.codex_endpoint = Some(CodexEndpointConfig::default());
     config.server.auth = Some(InboundAuthConfig {
+        tokens_file: None,
         jwt: Vec::new(),
         header: "x-shunt-token".to_string(),
         tokens_env: TOKENS_ENV.to_string(),

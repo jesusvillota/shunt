@@ -416,6 +416,7 @@ mod tests {
         std::env::set_var(&env, "tester:tok-secret");
         let mut config = Config::default();
         config.server.auth = Some(InboundAuthConfig {
+            tokens_file: None,
             jwt: Vec::new(),
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),

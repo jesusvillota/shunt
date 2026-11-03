@@ -20,6 +20,10 @@ Two triggers reload the config; both call the same fail-safe path.
   burst of writes coalesces into a single reload. Auto-reload is active only when
   the effective config path is known (a `--config` path or a discovered file);
   running on built-in defaults has nothing to watch.
+  When `[server.auth].tokens_file` is set, shunt also watches that file's
+  directory and reloads when the file changes, so a client token appended to it
+  takes effect without a restart. The watched path is fixed at startup; moving
+  `tokens_file` in the config needs a restart (SIGHUP still re-reads the file).
 
 If the file watcher fails to initialize, shunt logs a warning and keeps running
 with SIGHUP-only reload rather than aborting.

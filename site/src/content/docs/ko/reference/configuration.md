@@ -45,8 +45,11 @@ description: 모든 shunt.toml 키 — server, providers, routes, models.
 | :-- | :-- | :-- |
 | `header` | `x-shunt-token` | 클라이언트 토큰을 담는 헤더 |
 | `tokens_env` | `SHUNT_CLIENT_TOKENS` | 쉼표로 구분된 `name:token` 쌍을 담는 env 변수 |
+| `tokens_file` | _(설정 안 함)_ | 소유자 전용 `name:token` 줄 파일의 경로(`~`는 확장됩니다). `tokens_env`와 병합됩니다 |
 
 지정된 환경 변수에는 하나 이상의 자격 증명이 있어야 합니다. 예: `SHUNT_CLIENT_TOKENS="alice:<token>,bob:<token>"`. 테이블이 있는데 변수가 설정되지 않았거나, 비어 있거나, 형식이 잘못되면 시작은 닫힌 채로 실패(fail closed)합니다. 게이팅되는 라우트(매핑된 `/v1/messages` 추론과 `GET /v1/models` 디스커버리)는 구성된 헤더, `Authorization: Bearer`, `x-api-key`로 토큰을 받습니다 — 여러 슬롯에 유효한 토큰이 있으면 전용 헤더가 우선합니다.
+
+`tokens_file`에는 한 줄에 `name:token` 쌍 하나를 적습니다. shunt는 설정을 다시 불러올 때마다(SIGHUP, `shunt.toml` 변경, 파일 자체의 변경) 이 파일을 다시 읽으므로, 파일에 추가한 토큰은 재시작 없이 동작합니다. 파일이 없으면 빈 목록으로 취급합니다. 다른 사용자가 읽을 수 있는 파일(모드가 `0600`보다 넓음)은 `shunt check`와 재로드에서 실패합니다. 클라이언트 이름이나 토큰이 파일과 `tokens_env`에 걸쳐 중복되어도 실패하며, 오류는 두 출처를 모두 명시합니다.
 
 `tokens_env` 자신의 값도 다른 설정 파일 문자열과 마찬가지로 `${VAR}` / `${file:...}`로 쓸 수 있습니다([Secret 참조](#secret-참조) 참고) — shunt가 토큰을 읽어오는 환경 변수 이름을 가리키는 역할은 그대로입니다.
 

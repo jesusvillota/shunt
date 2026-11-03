@@ -79,8 +79,11 @@ Presence of this table enables inbound client-token auth ([details](/guides/shar
 | :-- | :-- | :-- |
 | `header` | `x-shunt-token` | Header carrying the client token |
 | `tokens_env` | `SHUNT_CLIENT_TOKENS` | Env var holding comma-separated `name:token` pairs |
+| `tokens_file` | _(unset)_ | Path to an owner-only file of `name:token` lines (`~` is expanded), merged with `tokens_env` |
 
 The named environment variable must contain one or more credentials, for example `SHUNT_CLIENT_TOKENS="alice:<token>,bob:<token>"`. Startup fails closed if the table is present but the variable is unset, empty, or malformed. Gated routes (mapped `/v1/messages` inference and `GET /v1/models` discovery) accept the token via the configured header, `Authorization: Bearer`, or `x-api-key` — the dedicated header wins when several carry valid tokens.
+
+`tokens_file` holds one `name:token` pair per line. Shunt re-reads it on every config reload — SIGHUP, a change to `shunt.toml`, or a change to the file itself — so a token added to the file works without a restart. A missing file is an empty list. A file that other users can read (mode wider than `0600`) fails `shunt check` and the reload. A client name or token that appears twice across the file and `tokens_env` also fails, and the error names both sources.
 
 `tokens_env`'s own value, like any config-file string, can also be written as `${VAR}` / `${file:...}` (see [Secret references](#secret-references)); it still names the environment variable shunt reads the tokens from.
 

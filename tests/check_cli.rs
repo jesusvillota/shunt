@@ -343,14 +343,22 @@ fn check_merges_token_file_and_env_and_rejects_collisions_and_wide_mode() {
     let duplicate_name = check_tokens("alice:secret-a");
     assert!(!duplicate_name.status.success());
     for source in ["tokens_file", "tokens_env"] {
-        assert!(stderr(&duplicate_name).contains(source), "{}", stderr(&duplicate_name));
+        assert!(
+            stderr(&duplicate_name).contains(source),
+            "{}",
+            stderr(&duplicate_name)
+        );
     }
 
     std::fs::write(&file, "bob:secret-a\n").expect("duplicate token");
     let duplicate_token = check_tokens("alice:secret-a");
     assert!(!duplicate_token.status.success());
     for source in ["tokens_file", "tokens_env"] {
-        assert!(stderr(&duplicate_token).contains(source), "{}", stderr(&duplicate_token));
+        assert!(
+            stderr(&duplicate_token).contains(source),
+            "{}",
+            stderr(&duplicate_token)
+        );
     }
 
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644))
