@@ -6,7 +6,7 @@ state: approved
 depends_on: []
 delivery: pr
 repo: shunt
-route: {platform: chatgptweb}
+route: {platform: claude, model: sonnet, effort: high}
 blocked: null
 ---
 
