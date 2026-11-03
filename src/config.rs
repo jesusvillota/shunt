@@ -551,7 +551,7 @@ impl InboundAuthConfig {
                     });
                 }
             };
-            if !file.is_empty() {
+            if std::path::Path::new(path).exists() {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
@@ -588,8 +588,7 @@ impl InboundAuthConfig {
                     });
                 }
                 let (name, token) = entries.into_iter().next().expect("one entry");
-                if let Some((_, existing)) = tokens.iter().find(|(client, _)| client == &name) {
-                    let _ = existing;
+                if tokens.iter().any(|(client, _)| client == &name) {
                     return Err(ConfigError::InvalidClientTokens {
                         env: path.clone(),
                         message: format!(
@@ -8331,6 +8330,7 @@ provider = "deepseek"
             jwt: Vec::new(),
             header: default_auth_header(),
             tokens_env: env.clone(),
+            tokens_file: None,
             clients: Default::default(),
         });
         let result = config.validate();
@@ -8426,6 +8426,7 @@ provider = "deepseek"
             jwt: Vec::new(),
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),
+            tokens_file: None,
             clients: Default::default(),
         });
         let anthropic = config.providers.get_mut("anthropic").unwrap();
@@ -8453,6 +8454,7 @@ provider = "deepseek"
             jwt: Vec::new(),
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),
+            tokens_file: None,
             clients: Default::default(),
         });
         let anthropic = config.providers.get_mut("anthropic").unwrap();
@@ -8477,6 +8479,7 @@ provider = "deepseek"
             jwt: Vec::new(),
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),
+            tokens_file: None,
             clients: Default::default(),
         });
         let anthropic = config.providers.get_mut("anthropic").unwrap();
@@ -12781,6 +12784,7 @@ routes:
         InboundAuthConfig {
             header: default_auth_header(),
             tokens_env: tokens_env.to_string(),
+            tokens_file: None,
             jwt: entries,
             clients: Default::default(),
         }
