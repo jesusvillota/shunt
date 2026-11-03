@@ -374,6 +374,14 @@ fn spawn_file_watch_task(shared: SharedState, path: std::path::PathBuf) {
     // timer and so cannot reset it — a continuously-active writer in the same
     // directory can no longer starve a real config change indefinitely.
     let watch_path = path.clone();
+    let token_path = shared.load().config.server.auth.as_ref()
+        .and_then(|auth| auth.tokens_file.as_ref())
+        .map(std::path::PathBuf::from);
+    let token_dir = token_path.as_ref().map(|file| {
+        file.parent().filter(|parent| !parent.as_os_str().is_empty())
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+    });
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<notify::Event>();
     let mut watcher = match notify::recommended_watcher(
         move |result: notify::Result<notify::Event>| match result {
@@ -382,7 +390,10 @@ fn spawn_file_watch_task(shared: SharedState, path: std::path::PathBuf) {
                 // and that read fires an access event on the watched directory —
                 // forwarding it would retrigger reload on our own read, a loop.
                 // Only forward real changes that touch the config file.
-                if !event.kind.is_access() && event_touches_path(&event, &watch_path) {
+                if !event.kind.is_access()
+                    && (event_touches_path(&event, &watch_path)
+                        || token_path.as_ref().is_some_and(|file| event_touches_path(&event, file)))
+                {
                     // A closed receiver just means the server is shutting down.
                     let _ = tx.send(event);
                 }
@@ -403,6 +414,13 @@ fn spawn_file_watch_task(shared: SharedState, path: std::path::PathBuf) {
     if let Err(error) = watcher.watch(&watch_dir, RecursiveMode::NonRecursive) {
         tracing::warn!(%error, dir = %watch_dir.display(), "failed to watch config directory; auto-reload on file change disabled (SIGHUP still works)");
         return;
+    }
+    if let Some(token_dir) = &token_dir {
+        if token_dir != &watch_dir {
+            if let Err(error) = watcher.watch(token_dir, RecursiveMode::NonRecursive) {
+                tracing::warn!(%error, dir = %token_dir.display(), "failed to watch tokens_file directory; SIGHUP still works");
+            }
+        }
     }
     tracing::info!(dir = %watch_dir.display(), "watching config directory for changes");
 
