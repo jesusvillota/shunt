@@ -405,6 +405,9 @@ pub struct InboundAuthConfig {
     /// Env var holding the `name:token` pairs.
     #[serde(default = "default_tokens_env")]
     pub tokens_env: String,
+    /// Optional owner-only file of one `client:token` pair per line.
+    #[serde(default, deserialize_with = "deserialize_optional_credentials_path")]
+    pub tokens_file: Option<String>,
     /// `[[server.auth.jwt]]` — verify-only external JWT issuers. An array from
     /// the start: one Google issuer with separate client ids for humans and
     /// services is a normal configuration, and human SSO and workload identity
@@ -527,12 +530,7 @@ impl InboundAuthConfig {
             .map(|(index, entry)| entry.resolve(index))
             .collect::<Result<Vec<_>, _>>()?;
         let raw = std::env::var(&self.tokens_env).unwrap_or_default();
-        let tokens = if raw.trim().is_empty() {
-            if jwt.is_empty() {
-                return Err(ConfigError::MissingClientTokens {
-                    env: self.tokens_env.clone(),
-                });
-            }
+        let mut tokens = if raw.trim().is_empty() {
             Vec::new()
         } else {
             crate::auth::inbound::parse_tokens(&raw).map_err(|message| {
@@ -542,6 +540,44 @@ impl InboundAuthConfig {
                 }
             })?
         };
+        if let Some(path) = &self.tokens_file {
+            let env_count = tokens.len();
+            let source = |index: usize| {
+                if index < env_count {
+                    format!("tokens_env ({})", self.tokens_env)
+                } else {
+                    format!("tokens_file ({path})")
+                }
+            };
+            for (name, token) in read_token_file(path)? {
+                let collision = tokens.iter().position(|(existing, _)| *existing == name);
+                let shared = tokens.iter().position(|(_, existing)| *existing == token);
+                let message = match (collision, shared) {
+                    (Some(index), _) => format!(
+                        "duplicate client name {name:?}: in {} and tokens_file ({path})",
+                        source(index)
+                    ),
+                    (None, Some(index)) => format!(
+                        "client {name:?} in tokens_file ({path}) reuses the token of client {:?} in {}",
+                        tokens[index].0,
+                        source(index)
+                    ),
+                    (None, None) => {
+                        tokens.push((name, token));
+                        continue;
+                    }
+                };
+                return Err(ConfigError::InvalidClientTokens {
+                    env: path.clone(),
+                    message,
+                });
+            }
+        }
+        if tokens.is_empty() && jwt.is_empty() {
+            return Err(ConfigError::MissingClientTokens {
+                env: self.tokens_env.clone(),
+            });
+        }
         Ok(crate::auth::inbound::InboundAuth::new(header, tokens).with_jwt(jwt))
     }
 }
@@ -2114,6 +2150,56 @@ pub(crate) fn identity_collisions(
     // Deterministic order for logging/tests (the source `HashMap` is unordered).
     collisions.sort();
     collisions
+}
+
+/// Reads the `client:token` lines of an inbound `tokens_file`. A missing file
+/// is an empty list, so the goal CLI can create it later; a file other users can
+/// read is an error, because it holds bearer secrets.
+fn read_token_file(path: &str) -> Result<Vec<(String, String)>, ConfigError> {
+    let invalid = |message: String| ConfigError::InvalidClientTokens {
+        env: path.to_string(),
+        message,
+    };
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(invalid(error.to_string())),
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = file
+            .metadata()
+            .map_err(|error| invalid(error.to_string()))?
+            .permissions()
+            .mode()
+            & 0o777;
+        if mode & 0o177 != 0 {
+            return Err(invalid(format!(
+                "permissions {mode:04o} are wider than 0600; run chmod 600 on the file"
+            )));
+        }
+    }
+    let mut raw = String::new();
+    std::io::Read::read_to_string(&mut file, &mut raw)
+        .map_err(|error| invalid(error.to_string()))?;
+    let mut tokens = Vec::new();
+    for (index, line) in raw
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+    {
+        let mut entries = crate::auth::inbound::parse_tokens(line)
+            .map_err(|message| invalid(format!("line {}: {message}", index + 1)))?;
+        if entries.len() != 1 {
+            return Err(invalid(format!(
+                "line {}: expected one client:token pair",
+                index + 1
+            )));
+        }
+        tokens.extend(entries.pop());
+    }
+    Ok(tokens)
 }
 
 fn deserialize_optional_credentials_path<'de, D>(
@@ -8258,6 +8344,7 @@ provider = "deepseek"
             jwt: Vec::new(),
             header: default_auth_header(),
             tokens_env: env.clone(),
+            tokens_file: None,
             clients: Default::default(),
         });
         let result = config.validate();
@@ -8353,6 +8440,7 @@ provider = "deepseek"
             jwt: Vec::new(),
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),
+            tokens_file: None,
             clients: Default::default(),
         });
         let anthropic = config.providers.get_mut("anthropic").unwrap();
@@ -8380,6 +8468,7 @@ provider = "deepseek"
             jwt: Vec::new(),
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),
+            tokens_file: None,
             clients: Default::default(),
         });
         let anthropic = config.providers.get_mut("anthropic").unwrap();
@@ -8404,6 +8493,7 @@ provider = "deepseek"
             jwt: Vec::new(),
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),
+            tokens_file: None,
             clients: Default::default(),
         });
         let anthropic = config.providers.get_mut("anthropic").unwrap();
@@ -12708,6 +12798,7 @@ routes:
         InboundAuthConfig {
             header: default_auth_header(),
             tokens_env: tokens_env.to_string(),
+            tokens_file: None,
             jwt: entries,
             clients: Default::default(),
         }

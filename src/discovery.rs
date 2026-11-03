@@ -740,6 +740,7 @@ mod tests {
         let _env_guard = OwnedEnvGuard(env.clone());
         let mut config = codex_enabled_config();
         config.server.auth = Some(InboundAuthConfig {
+            tokens_file: None,
             jwt: Vec::new(),
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),

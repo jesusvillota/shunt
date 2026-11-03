@@ -45,8 +45,11 @@ description: すべての shunt.toml キー — server、providers、routes、mo
 | :-- | :-- | :-- |
 | `header` | `x-shunt-token` | クライアントトークンを運ぶヘッダー |
 | `tokens_env` | `SHUNT_CLIENT_TOKENS` | カンマ区切りの `name:token` ペアを保持する環境変数 |
+| `tokens_file` | _(未設定)_ | 所有者のみ読める `name:token` 行のファイルのパス(`~` は展開されます)。`tokens_env` とマージされます |
 
 指定された環境変数には 1 つ以上の認証情報が必要です。例: `SHUNT_CLIENT_TOKENS="alice:<token>,bob:<token>"`。テーブルが存在するのに変数が未設定・空・不正な場合、起動はフェイルクローズします。ゲートされるルート（マッピングされた `/v1/messages` 推論と `GET /v1/models` discovery）は、設定されたヘッダー、`Authorization: Bearer`、`x-api-key` のいずれでもトークンを受け付けます — 複数のスロットに有効なトークンがある場合は専用ヘッダーが優先されます。
+
+`tokens_file` は 1 行に 1 つの `name:token` ペアを保持します。shunt は設定のリロードのたび(SIGHUP、`shunt.toml` の変更、ファイル自体の変更)にこのファイルを読み直すため、ファイルに追加したトークンは再起動なしで有効になります。ファイルが存在しない場合は空のリストとして扱います。他のユーザーが読めるファイル(モードが `0600` より広い)は `shunt check` とリロードで失敗します。クライアント名やトークンがファイルと `tokens_env` にまたがって重複した場合も失敗し、エラーは両方の出所を示します。
 
 `tokens_env` の値も、他の設定ファイル文字列と同様に `${VAR}` / `${file:...}` で書けます([Secret 参照](#secret-参照)を参照)。shunt がトークンを読み取る環境変数名を指す点は変わりません。
 

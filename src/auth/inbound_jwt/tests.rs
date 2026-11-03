@@ -158,6 +158,7 @@ fn entry(issuer: &str, jwks_url: &str) -> InboundJwtConfig {
 fn auth_with(entries: Vec<InboundJwtConfig>, tokens_env: Option<&str>) -> InboundAuth {
     let env = tokens_env.unwrap_or("SHUNT_TEST_JWT_NO_TOKENS");
     InboundAuthConfig {
+        tokens_file: None,
         header: "x-shunt-token".to_string(),
         tokens_env: env.to_string(),
         jwt: entries,
@@ -1156,6 +1157,7 @@ async fn a_gated_route_answers_401_for_a_bad_jwt_and_503_when_the_issuer_is_down
 
     let mut config = crate::config::Config::default();
     config.server.auth = Some(InboundAuthConfig {
+        tokens_file: None,
         header: "x-shunt-token".to_string(),
         tokens_env: env,
         jwt: vec![entry(&down.uri(), &format!("{}/jwks", down.uri()))],
@@ -1198,6 +1200,7 @@ async fn a_reload_swaps_the_issuer_set_but_keeps_the_key_cache() {
     let config_with = |issuer: &MockServer| {
         let mut config = crate::config::Config::default();
         config.server.auth = Some(InboundAuthConfig {
+            tokens_file: None,
             header: "x-shunt-token".to_string(),
             tokens_env: env.clone(),
             jwt: vec![entry(&issuer.uri(), &format!("{}/jwks", issuer.uri()))],

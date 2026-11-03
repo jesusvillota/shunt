@@ -374,6 +374,20 @@ fn spawn_file_watch_task(shared: SharedState, path: std::path::PathBuf) {
     // timer and so cannot reset it — a continuously-active writer in the same
     // directory can no longer starve a real config change indefinitely.
     let watch_path = path.clone();
+    let token_path = shared
+        .load()
+        .config
+        .server
+        .auth
+        .as_ref()
+        .and_then(|auth| auth.tokens_file.as_ref())
+        .map(std::path::PathBuf::from);
+    let token_dir = token_path.as_ref().map(|file| {
+        file.parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+    });
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<notify::Event>();
     let mut watcher = match notify::recommended_watcher(
         move |result: notify::Result<notify::Event>| match result {
@@ -382,7 +396,12 @@ fn spawn_file_watch_task(shared: SharedState, path: std::path::PathBuf) {
                 // and that read fires an access event on the watched directory —
                 // forwarding it would retrigger reload on our own read, a loop.
                 // Only forward real changes that touch the config file.
-                if !event.kind.is_access() && event_touches_path(&event, &watch_path) {
+                if !event.kind.is_access()
+                    && (event_touches_path(&event, &watch_path)
+                        || token_path
+                            .as_ref()
+                            .is_some_and(|file| event_touches_path(&event, file)))
+                {
                     // A closed receiver just means the server is shutting down.
                     let _ = tx.send(event);
                 }
@@ -403,6 +422,13 @@ fn spawn_file_watch_task(shared: SharedState, path: std::path::PathBuf) {
     if let Err(error) = watcher.watch(&watch_dir, RecursiveMode::NonRecursive) {
         tracing::warn!(%error, dir = %watch_dir.display(), "failed to watch config directory; auto-reload on file change disabled (SIGHUP still works)");
         return;
+    }
+    if let Some(token_dir) = &token_dir {
+        if token_dir != &watch_dir {
+            if let Err(error) = watcher.watch(token_dir, RecursiveMode::NonRecursive) {
+                tracing::warn!(%error, dir = %token_dir.display(), "failed to watch tokens_file directory; SIGHUP still works");
+            }
+        }
     }
     tracing::info!(dir = %watch_dir.display(), "watching config directory for changes");
 
@@ -569,6 +595,49 @@ mod tests {
         Arc::new(ArcSwap::from_pointee(
             RuntimeState::from_config(config).expect("valid initial config"),
         ))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reload_accepts_new_token_without_restarting_gateway() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = temp_dir("client-file");
+        let _guard = TempDirGuard(dir.clone());
+        let path = dir.join("shunt.toml");
+        let token_file = dir.join("tokens");
+        std::fs::write(&token_file, "alice:first\n").unwrap();
+        std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                "[server.auth]\ntokens_env = \"SHUNT_RELOAD_FILE_TEST_UNSET\"\ntokens_file = {:?}\n",
+                token_file.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let shared = shared_from(Config::load(Some(&path)).unwrap());
+        assert_eq!(
+            shared
+                .load()
+                .inbound_auth
+                .as_ref()
+                .unwrap()
+                .authenticate_value(b"second"),
+            None
+        );
+
+        std::fs::write(&token_file, "alice:first\nbob:second\n").unwrap();
+        reload(&shared, Some(&path)).expect("token file reload succeeds");
+        assert_eq!(
+            shared
+                .load()
+                .inbound_auth
+                .as_ref()
+                .unwrap()
+                .authenticate_value(b"second"),
+            Some("bob")
+        );
     }
 
     #[test]
@@ -1221,6 +1290,56 @@ mod tests {
         assert!(
             reloaded,
             "file watcher should have hot-reloaded the changed config"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn file_watch_task_hot_reloads_when_token_file_changes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let config_dir = temp_dir("watch-tokens-config");
+        let tokens_dir = temp_dir("watch-tokens-file");
+        let _config_guard = TempDirGuard(config_dir.clone());
+        let _tokens_guard = TempDirGuard(tokens_dir.clone());
+        let path = config_dir.join("shunt.toml");
+        let token_file = tokens_dir.join("tokens");
+        std::fs::write(&token_file, "alice:first\n").unwrap();
+        std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                "[server.auth]\ntokens_env = \"SHUNT_RELOAD_WATCH_TEST_UNSET\"\ntokens_file = {:?}\n",
+                token_file.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let shared = shared_from(Config::load(Some(&path)).unwrap());
+        spawn_reload_watchers(shared.clone(), Some(path.clone())).await;
+
+        // The config file stays untouched: only the token file changes, and it
+        // lives in another directory than the config.
+        std::fs::write(&token_file, "alice:first\nbob:second\n").unwrap();
+
+        let mut accepted = false;
+        for _ in 0..80 {
+            let state = shared.load();
+            if state
+                .inbound_auth
+                .as_ref()
+                .unwrap()
+                .authenticate_value(b"second")
+                == Some("bob")
+            {
+                accepted = true;
+                break;
+            }
+            drop(state);
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(
+            accepted,
+            "file watcher should have reloaded after the token file changed"
         );
     }
 

@@ -311,3 +311,63 @@ fn check_refuses_a_client_entry_that_cannot_select_an_account() {
         );
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn check_merges_token_file_and_env_and_rejects_collisions_and_wide_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempDir::new("client-token-file");
+    let file = dir.0.join("clients");
+    std::fs::write(&file, "bob:secret-b\n").expect("write token file");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600))
+        .expect("secure token file");
+    let config = dir.config(&format!(
+        "[server.auth]\ntokens_env = \"SHUNT_TEST_CLIENT_TOKENS\"\ntokens_file = {:?}\n",
+        file.display().to_string()
+    ));
+    let check_tokens = |value: &str| {
+        Command::new(env!("CARGO_BIN_EXE_shunt"))
+            .arg("check")
+            .arg("--config")
+            .arg(&config)
+            .env("SHUNT_TEST_CLIENT_TOKENS", value)
+            .output()
+            .expect("shunt check")
+    };
+
+    let merged = check_tokens("alice:secret-a");
+    assert!(merged.status.success(), "{}", stderr(&merged));
+
+    std::fs::write(&file, "alice:other\n").expect("duplicate name");
+    let duplicate_name = check_tokens("alice:secret-a");
+    assert!(!duplicate_name.status.success());
+    for source in ["tokens_file", "tokens_env"] {
+        assert!(
+            stderr(&duplicate_name).contains(source),
+            "{}",
+            stderr(&duplicate_name)
+        );
+    }
+
+    std::fs::write(&file, "bob:secret-a\n").expect("duplicate token");
+    let duplicate_token = check_tokens("alice:secret-a");
+    assert!(!duplicate_token.status.success());
+    for source in ["tokens_file", "tokens_env"] {
+        assert!(
+            stderr(&duplicate_token).contains(source),
+            "{}",
+            stderr(&duplicate_token)
+        );
+    }
+
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644))
+        .expect("widen permissions");
+    let wide = check_tokens("alice:secret-a");
+    assert!(!wide.status.success());
+    assert!(stderr(&wide).contains("0600"), "{}", stderr(&wide));
+
+    std::fs::remove_file(&file).expect("remove file");
+    let missing = check_tokens("alice:secret-a");
+    assert!(missing.status.success(), "{}", stderr(&missing));
+}
