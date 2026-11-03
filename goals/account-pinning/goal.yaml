@@ -16,7 +16,7 @@ policy:
   decide: human         # human | experts (a committee answers worker decision requests)
   orchestrator: {platform: claude, model: sonnet, effort: medium}
   max_parallel: 7
-  default_route: null   # {platform: codex, model: MODEL, effort: LEVEL}
+  default_route: {platform: codex, model: gpt-6.1-sol, effort: high}   # {platform: codex, model: MODEL, effort: LEVEL}
   agent: claude         # claude | codex | opencode | agy
   turn_budget: 40
   plan_commits: push    # push | commit | off
