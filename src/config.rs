@@ -405,6 +405,9 @@ pub struct InboundAuthConfig {
     /// Env var holding the `name:token` pairs.
     #[serde(default = "default_tokens_env")]
     pub tokens_env: String,
+    /// Optional owner-only file of one `client:token` pair per line.
+    #[serde(default, deserialize_with = "deserialize_optional_credentials_path")]
+    pub tokens_file: Option<String>,
     /// `[[server.auth.jwt]]` — verify-only external JWT issuers. An array from
     /// the start: one Google issuer with separate client ids for humans and
     /// services is a normal configuration, and human SSO and workload identity
@@ -527,12 +530,7 @@ impl InboundAuthConfig {
             .map(|(index, entry)| entry.resolve(index))
             .collect::<Result<Vec<_>, _>>()?;
         let raw = std::env::var(&self.tokens_env).unwrap_or_default();
-        let tokens = if raw.trim().is_empty() {
-            if jwt.is_empty() {
-                return Err(ConfigError::MissingClientTokens {
-                    env: self.tokens_env.clone(),
-                });
-            }
+        let mut tokens = if raw.trim().is_empty() {
             Vec::new()
         } else {
             crate::auth::inbound::parse_tokens(&raw).map_err(|message| {
@@ -542,6 +540,81 @@ impl InboundAuthConfig {
                 }
             })?
         };
+        if let Some(path) = &self.tokens_file {
+            let file = match std::fs::read_to_string(path) {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(error) => {
+                    return Err(ConfigError::InvalidClientTokens {
+                        env: path.clone(),
+                        message: error.to_string(),
+                    });
+                }
+            };
+            if !file.is_empty() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = std::fs::metadata(path)
+                        .map_err(|error| ConfigError::InvalidClientTokens {
+                            env: path.clone(),
+                            message: error.to_string(),
+                        })?
+                        .permissions()
+                        .mode()
+                        & 0o777;
+                    if mode & 0o177 != 0 {
+                        return Err(ConfigError::InvalidClientTokens {
+                            env: path.clone(),
+                            message: format!("tokens_file permissions {mode:04o} are wider than 0600"),
+                        });
+                    }
+                }
+            }
+            for (index, line) in file.lines().enumerate() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let entries = crate::auth::inbound::parse_tokens(line).map_err(|message| {
+                    ConfigError::InvalidClientTokens {
+                        env: path.clone(),
+                        message: format!("line {}: {message}", index + 1),
+                    }
+                })?;
+                if entries.len() != 1 {
+                    return Err(ConfigError::InvalidClientTokens {
+                        env: path.clone(),
+                        message: format!("line {}: expected one client:token pair", index + 1),
+                    });
+                }
+                let (name, token) = entries.into_iter().next().expect("one entry");
+                if let Some((_, existing)) = tokens.iter().find(|(client, _)| client == &name) {
+                    let _ = existing;
+                    return Err(ConfigError::InvalidClientTokens {
+                        env: path.clone(),
+                        message: format!(
+                            "duplicate client name {name:?} between tokens_file ({path}) and tokens_env ({}) or an earlier tokens_file line",
+                            self.tokens_env
+                        ),
+                    });
+                }
+                if tokens.iter().any(|(_, existing)| existing == &token) {
+                    return Err(ConfigError::InvalidClientTokens {
+                        env: path.clone(),
+                        message: format!(
+                            "duplicate token between tokens_file ({path}) and tokens_env ({}) or an earlier tokens_file line",
+                            self.tokens_env
+                        ),
+                    });
+                }
+                tokens.push((name, token));
+            }
+        }
+        if tokens.is_empty() && jwt.is_empty() {
+            return Err(ConfigError::MissingClientTokens {
+                env: self.tokens_env.clone(),
+            });
+        }
         Ok(crate::auth::inbound::InboundAuth::new(header, tokens).with_jwt(jwt))
     }
 }
