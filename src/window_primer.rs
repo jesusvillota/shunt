@@ -8,9 +8,9 @@
 //! as soon as it is seen: when the pool knows no future 5-hour reset for a
 //! `claude_oauth` or ChatGPT-backend `chatgpt_oauth` account, the primer asks
 //! that account's usage API, and only when it confirms the window is idle does
-//! it send that one account the smallest real request (Haiku / GPT-6 Luna, low
-//! effort, a one-word prompt) signed with that account's own credential, so it
-//! cannot land on any other account. The usage check matters because the pool
+//! it send that one account a small real request (Haiku / GPT-6 Luna, low
+//! effort) signed with that account's own credential, so it cannot land on any
+//! other account. The usage check matters because the pool
 //! can lack a reset for a running window: after a restart, or for Codex, whose
 //! usage poll does not adopt reset times. A failed check sends nothing. The
 //! response's quota headers are fed to the pool.
@@ -41,6 +41,13 @@ const WINDOW: u64 = 5 * 60 * 60;
 /// see [`running_reset`].
 const FRESH_WINDOW_SLACK: u64 = 120;
 const CLAUDE_MODEL: &str = "claude-haiku-5-5";
+/// Filler that makes the Claude primer's prompt about 3,000 tokens. Anthropic
+/// starts the 5-hour window only when a request registers above 0% usage: a
+/// one-word prompt is answered 200 with a `5h-reset` header, yet the usage API
+/// keeps `resets_at: null` and the window never starts (checked live
+/// 2026-11-07), while this size starts it. Do not shrink it without checking
+/// that the usage API then shows a reset.
+const CLAUDE_FILLER_WORDS: usize = 3_000;
 const CODEX_MODEL: &str = "gpt-6-luna";
 /// Claude subscription OAuth answers a bare 429 to a request that does not
 /// identify as Claude Code (checked live 2026-10-18), so the primer sends the
@@ -179,6 +186,13 @@ fn idle_check(
     }
 }
 
+fn claude_prompt() -> String {
+    format!(
+        "{}\nReply with the single word: ok",
+        "word ".repeat(CLAUDE_FILLER_WORDS)
+    )
+}
+
 async fn prime_claude(
     state: &AppState,
     provider: &str,
@@ -207,10 +221,9 @@ async fn prime_claude(
         .header("x-app", "cli")
         .json(&json!({
             "model": CLAUDE_MODEL,
-            "max_tokens": 1,
+            "max_tokens": 16,
             "system": [{"type": "text", "text": CLAUDE_CODE_IDENTITY}],
-            "messages": [{"role": "user", "content": "hi"}],
-            "output_config": {"effort": "low"},
+            "messages": [{"role": "user", "content": claude_prompt()}],
         }))
         .timeout(Duration::from_secs(60))
         .send()
@@ -430,7 +443,7 @@ mod tests {
             .and(path("/v1/messages"))
             .and(header("authorization", "Bearer token-c"))
             .and(body_partial_json(
-                json!({"model": CLAUDE_MODEL, "max_tokens": 1}),
+                json!({"model": CLAUDE_MODEL, "max_tokens": 16}),
             ))
             .respond_with(
                 ResponseTemplate::new(200)
@@ -628,6 +641,12 @@ mod tests {
             reset.is_some_and(|reset| (before + WINDOW..=unix_now() + WINDOW).contains(&reset)),
             "reset {reset:?} is 5 hours after the primer request"
         );
+    }
+
+    /// A prompt this small was answered 200 yet never started the window.
+    #[test]
+    fn the_claude_primer_prompt_is_large_enough_to_start_a_window() {
+        assert!(claude_prompt().len() >= 15_000);
     }
 
     #[test]
