@@ -2153,9 +2153,9 @@ pub(crate) fn identity_collisions(
 }
 
 /// Reads the `client:token` lines of an inbound `tokens_file`. A missing file
-/// is an empty list, so the goal CLI can create it later; a file other users can
+/// is an empty list, so `shunt client set` can create it later; a file other users can
 /// read is an error, because it holds bearer secrets.
-fn read_token_file(path: &str) -> Result<Vec<(String, String)>, ConfigError> {
+pub(crate) fn read_token_file(path: &str) -> Result<Vec<(String, String)>, ConfigError> {
     let invalid = |message: String| ConfigError::InvalidClientTokens {
         env: path.to_string(),
         message,
