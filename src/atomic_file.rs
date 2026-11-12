@@ -42,6 +42,22 @@ pub(crate) fn write_private_atomic_in_existing_dir(path: &Path, bytes: &[u8]) ->
     sync_parent_dir(path)
 }
 
+/// Replace the existing file at `path` atomically, keeping its permission
+/// bits. For files that are not secrets but that the user may have chmod-ed,
+/// such as `shunt.toml`.
+pub(crate) fn write_atomic_keeping_mode(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let permissions = fs::metadata(path)?.permissions();
+    let tmp = tmp_path(path);
+    let written = write_private(&tmp, bytes)
+        .and_then(|()| fs::set_permissions(&tmp, permissions))
+        .and_then(|()| fs::rename(&tmp, path));
+    if let Err(error) = written {
+        let _ = fs::remove_file(&tmp);
+        return Err(error);
+    }
+    sync_parent_dir(path)
+}
+
 /// Flush the directory entry after a rename: without it a power loss can lose
 /// the rename even though the write already returned success, silently
 /// dropping a just-granted session or credential.

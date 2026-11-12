@@ -385,7 +385,13 @@ accounts.anthropic = ["c"]
   the message names it. For a pool read from the account store (no inline `accounts` or
   `account_scope`), only `shunt check` reads the store, offline; at run time an unknown name
   gets the `503` above.
+- **Editing.** `shunt client set|clear|show` (`src/client_cli.rs`) owns this table and the
+  client's `name:token` line in `tokens_file`; other tools call it and do not edit the files.
+  `set` validates like `shunt check`, reading the account stores offline, before it writes. It
+  takes the token on standard input only, keeps `shunt.toml`'s comments, order and mode, and
+  keeps `tokens_file` at `0600`.
 
 Tests: `tests/client_account_pinning.rs` (per-client account sets, forged `x-shunt-*` headers,
 the exhausted subset, the `503`), `tests/router_judge.rs` (a judge call keeps the caller's
-subset), and `tests/check_cli.rs` (each rejected entry).
+subset), `tests/check_cli.rs` (each rejected entry), and `tests/client_cli.rs` (the
+`shunt client` edits, the refusals, and that no token is printed).

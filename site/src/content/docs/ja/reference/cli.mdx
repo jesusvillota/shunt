@@ -19,6 +19,26 @@ shunt pool --json --client goal-y
 
 `--client goal-y` は `[server.auth.clients.goal-y].accounts.<provider>` に設定されたアカウントだけを表示します。そのクライアントの設定がないプロバイダーは全アカウントを表示します。未知のクライアント名を指定した場合や `--client` を省略した場合も全アカウントを表示します。テキストと JSON の両方に適用され、JSON の構造は変わりません。
 
+## `shunt client`
+
+1 つのクライアントのアカウント固定（`shunt.toml` の `[server.auth.clients.<name>]` テーブル）を設定・削除・表示します。既定のビルドに含まれ、実行中のゲートウェイは不要です。ゲートウェイの設定リロードが変更を反映します。他のツールはファイルを直接編集せず、このコマンドを呼び出してください。
+
+```bash
+shunt client set goal-y --accounts claude=a,b --accounts codex=work
+printf '%s' "$TOKEN" | shunt client set goal-y --accounts claude=a,b --token-stdin
+shunt client show goal-y --json
+shunt client clear goal-y --provider codex
+shunt client clear goal-y
+```
+
+`set` は各 `--accounts <provider>=<a,b>` のアカウントにクライアントを固定します。指定しなかったプロバイダーの固定はそのまま残ります。未知のプロバイダー、アカウントプールのないプロバイダー、プロバイダーのプールにないアカウントは、`shunt check` と同じメッセージで拒否します。ファイルのコメント、順序、パーミッションは保持されます。`set` と `clear` は TOML のみを編集します。
+
+`--token-stdin` は標準入力からクライアントのトークンを読み取り、`[server.auth] tokens_file`（絶対パス）に `name:token` の行を追加します。このファイルはモード `0600` に保たれます。トークンは引数では受け取らず、表示もしません。同じトークンをもう一度渡しても何も変わりません。その名前に別のトークンがある場合や、他のクライアントが持つトークンの場合は拒否します。拒否された呼び出しは何も書き込みません。
+
+`clear` はクライアントのテーブルを削除し、クライアントは再び全アカウントを使います。`--provider <name>`（繰り返し指定可）を付けると、そのプロバイダーの固定だけを削除します。トークンは登録されたままです。
+
+`show` は固定内容と、`tokens_file` にそのクライアントのトークンがあるかどうかを表示します。`--json` は `{"name", "accounts", "token_registered"}` を出力します。
+
 ## `shunt models`
 
 3 つの CLI プラットフォームのモデルを ON/OFF 付きで一覧表示します。`codex`（`codex debug models`）、`opencode`（`opencode models`）、`agy`（`[[models]]` のうち `…-via-antigravity` のもの。ルートの `upstream_model` が `agy models` にないものは除きます。`agy models` が失敗したときはすべて表示します）です。一覧は呼び出しのたびにリアルタイムで読み取ります。既定のビルドに含まれ、実行中のゲートウェイは不要で、`codex` と `opencode` が `PATH` 上に必要です。

@@ -19,6 +19,26 @@ Text output has one section per provider and one line per account: name, availab
 
 `--client goal-y` lists only the accounts configured for `goal-y` in `[server.auth.clients.goal-y].accounts.<provider>`. A provider without an entry for that client lists all accounts. An unknown client, or no `--client`, lists all accounts. This applies to text and JSON output; the JSON shape stays the same.
 
+## `shunt client`
+
+Set, clear or show one client's account pins: the `[server.auth.clients.<name>]` table of `shunt.toml`. The command is in the default build and needs no running gateway; the gateway's config reload picks the edit up. Other tools should call it and not edit the file.
+
+```bash
+shunt client set goal-y --accounts claude=a,b --accounts codex=work
+printf '%s' "$TOKEN" | shunt client set goal-y --accounts claude=a,b --token-stdin
+shunt client show goal-y --json
+shunt client clear goal-y --provider codex
+shunt client clear goal-y
+```
+
+`set` pins the client to the accounts of each `--accounts <provider>=<a,b>`; providers not listed keep their pins. It refuses an unknown provider, a provider without an account pool, and an account that is not in the provider's pool, with the same messages as `shunt check`. The edit keeps the file's comments, order and permission bits. `set` and `clear` edit TOML only.
+
+`--token-stdin` reads the client's token from standard input and adds the `name:token` line to `[server.auth] tokens_file` (an absolute path), which is kept at mode `0600`. The token is never accepted as an argument and never printed. The same token again changes nothing; a different token for that name, or a token another client holds, is refused. A refused call writes nothing.
+
+`clear` removes the client's table, so the client uses every account again. With `--provider <name>` (repeatable) it removes only that provider's pin. The token stays registered.
+
+`show` prints the pins and whether `tokens_file` holds a token for the client. `--json` prints `{"name", "accounts", "token_registered"}`.
+
 ## `shunt models`
 
 List the models of three CLI platforms, each marked on or off: `codex` (from `codex debug models`), `opencode` (from `opencode models`) and `agy` (the `…-via-antigravity` entries of `[[models]]`, minus those whose route `upstream_model` is missing from `agy models`; when `agy models` fails, all of them). The lists are read live on every call. The command is in the default build, needs no running gateway, and needs `codex` and `opencode` on `PATH`.

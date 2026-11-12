@@ -173,6 +173,12 @@ enum Command {
         #[arg(long)]
         manual: bool,
     },
+    /// Pin an inbound client to a subset of each provider's accounts
+    /// (`[server.auth.clients.<name>]` in shunt.toml).
+    Client {
+        #[command(subcommand)]
+        action: ClientAction,
+    },
     /// Set up and inspect the admin usage dashboard.
     Dashboard {
         #[command(subcommand)]
@@ -184,6 +190,38 @@ enum Command {
     Gateway {
         #[command(subcommand)]
         action: GatewayAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ClientAction {
+    /// Pin the client to the listed accounts. Providers not listed keep their pins.
+    Set {
+        /// Client name.
+        name: String,
+        /// `<provider>=<account,...>`. May be repeated, once per provider.
+        #[arg(long, required = true, value_name = "PROVIDER=ACCOUNTS")]
+        accounts: Vec<String>,
+        /// Read the client's token from standard input and register it in
+        /// `[server.auth] tokens_file`.
+        #[arg(long)]
+        token_stdin: bool,
+    },
+    /// Remove the client's pins. Its token stays registered.
+    Clear {
+        /// Client name.
+        name: String,
+        /// Remove only this provider's pin. May be repeated. Default: every pin.
+        #[arg(long)]
+        provider: Vec<String>,
+    },
+    /// Print the client's pins and whether a token is registered for it.
+    Show {
+        /// Client name.
+        name: String,
+        /// Machine-readable output.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -329,6 +367,7 @@ fn main() -> anyhow::Result<()> {
             manual,
             cli.config.as_deref(),
         ),
+        Some(Command::Client { action }) => client(action, cli.config.as_deref()),
         Some(Command::Dashboard { action }) => dashboard(action, cli.config),
         Some(Command::Gateway { action }) => gateway(action, cli.config.as_deref()),
         None if cli.check => check(cli.config),
@@ -346,6 +385,32 @@ fn init(upstream: Vec<String>, root: Option<&std::path::Path>, force: bool) -> a
     if let Some(hint) = init_hint(std::io::stderr().is_terminal()) {
         eprintln!("{hint}");
     }
+    Ok(())
+}
+
+fn client(action: ClientAction, config: Option<&std::path::Path>) -> anyhow::Result<()> {
+    let output = match action {
+        ClientAction::Set {
+            name,
+            accounts,
+            token_stdin,
+        } => {
+            let token = if token_stdin {
+                let mut raw = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut raw)
+                    .context("reading the token from standard input")?;
+                Some(raw.trim_end_matches(['\r', '\n']).to_string())
+            } else {
+                None
+            };
+            shunt::client_cli::set(config, &name, &accounts, token.as_deref())?
+        }
+        ClientAction::Clear { name, provider } => {
+            shunt::client_cli::clear(config, &name, &provider)?
+        }
+        ClientAction::Show { name, json } => shunt::client_cli::show(config, &name, json)?,
+    };
+    write_cli_output(std::io::stdout().lock(), output.as_bytes())?;
     Ok(())
 }
 

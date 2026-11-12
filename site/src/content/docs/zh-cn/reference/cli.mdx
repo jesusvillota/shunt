@@ -19,6 +19,26 @@ shunt pool --json --client goal-y
 
 `--client goal-y` 仅列出 `[server.auth.clients.goal-y].accounts.<provider>` 为该客户端配置的账户。未配置该客户端账户子集的提供商仍列出全部账户。客户端未知或省略 `--client` 时列出全部账户。此筛选适用于文本和 JSON 输出，JSON 结构保持不变。
 
+## `shunt client`
+
+设置、清除或查看单个客户端的账户固定，即 `shunt.toml` 中的 `[server.auth.clients.<name>]` 表。该命令包含在默认构建中，不需要正在运行的网关；网关的配置重载会应用修改。其他工具应调用此命令，而不是直接编辑文件。
+
+```bash
+shunt client set goal-y --accounts claude=a,b --accounts codex=work
+printf '%s' "$TOKEN" | shunt client set goal-y --accounts claude=a,b --token-stdin
+shunt client show goal-y --json
+shunt client clear goal-y --provider codex
+shunt client clear goal-y
+```
+
+`set` 将客户端固定到每个 `--accounts <provider>=<a,b>` 列出的账户；未列出的提供商保留原有固定。未知的提供商、没有账户池的提供商以及不在提供商账户池中的账户都会被拒绝，错误信息与 `shunt check` 相同。修改会保留文件的注释、顺序和权限位。`set` 和 `clear` 只编辑 TOML。
+
+`--token-stdin` 从标准输入读取客户端令牌，并把 `name:token` 行加入 `[server.auth] tokens_file`（绝对路径），该文件保持 `0600` 权限。令牌不接受作为参数，也不会被输出。再次提供相同令牌不会改变任何内容；该名称已有不同令牌，或令牌已属于其他客户端时会被拒绝。被拒绝的调用不会写入任何内容。
+
+`clear` 删除客户端的表，客户端重新使用全部账户。加上 `--provider <name>`（可重复）时只删除该提供商的固定。令牌保持注册。
+
+`show` 输出固定内容以及 `tokens_file` 中是否有该客户端的令牌。`--json` 输出 `{"name", "accounts", "token_registered"}`。
+
 ## `shunt models`
 
 列出三个 CLI 平台的模型，并标明开或关：`codex`（来自 `codex debug models`）、`opencode`（来自 `opencode models`）和 `agy`（`[[models]]` 中以 `…-via-antigravity` 结尾的条目，但不包括路由 `upstream_model` 不在 `agy models` 中的条目；`agy models` 失败时全部列出）。每次调用都会实时读取列表。该命令包含在默认构建中，不需要正在运行的网关，但需要 `codex` 和 `opencode` 在 `PATH` 中。
