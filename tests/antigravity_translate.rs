@@ -44,7 +44,7 @@ fn test_antigravity_prompt_extraction() {
 }
 
 /// Issue #43: Antigravity answers a fake 429 to Claude Code's billing header
-/// and Agent SDK identity line, so both are dropped from the system prompt.
+/// and identity lines, so all of them are dropped from the system prompt.
 #[test]
 fn test_antigravity_prompt_drops_claude_code_fingerprint() {
     let req = json!({
@@ -61,9 +61,8 @@ fn test_antigravity_prompt_drops_claude_code_fingerprint() {
         .to_ascii_lowercase()
         .contains("x-anthropic-billing-header"));
     assert!(!prompt.contains("Claude Agent SDK"));
-    assert!(
-        prompt.starts_with("You are Claude Code, Anthropic's official CLI for Claude.\nKeep this.")
-    );
+    assert!(!prompt.contains("You are Claude Code"));
+    assert!(prompt.starts_with("Keep this."));
     assert!(prompt.ends_with("user: hi"));
 
     let req = json!({
