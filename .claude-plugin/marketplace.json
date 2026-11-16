@@ -18,7 +18,7 @@
     {
       "name": "shunt-codex",
       "source": "./plugins/shunt-codex",
-      "description": "Subagents on ChatGPT/Codex GPT-6 models (Sol, Luna) and GPT-5.6 models (Luna, Sol, Terra), routed through shunt at the inference layer.",
+      "description": "Subagents on the current ChatGPT/Codex models (GPT-6.1 Sol, GPT-6.1 Terra, GPT-6 Astra, GPT-6 Luna), routed through shunt at the inference layer.",
       "keywords": ["codex", "chatgpt", "gpt-6"]
     },
     {
