@@ -2,15 +2,22 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "shunt-codex",
   "displayName": "shunt · Codex models",
-  "version": "0.2.0",
-  "description": "Subagents that run on ChatGPT/Codex GPT-6 models (Sol, Luna) and GPT-5.6 models (Luna, Sol, Terra), routed through the shunt gateway at the inference layer while staying inside Claude Code's harness.",
+  "version": "0.3.0",
+  "description": "Subagents that run on the current ChatGPT/Codex models (GPT-6.1 Sol, GPT-6.1 Terra, GPT-6 Astra, GPT-6 Luna), routed through the shunt gateway at the inference layer while staying inside Claude Code's harness.",
   "author": {
     "name": "Minsu Lee",
     "email": "minsu.lee@pleaseai.dev",
     "url": "https://github.com/amondnet"
   },
-  "homepage": "https://github.com/pleaseai/shunt",
-  "repository": "https://github.com/pleaseai/shunt",
+  "homepage": "https://github.com/jesusvillota/shunt",
+  "repository": "https://github.com/jesusvillota/shunt",
   "license": "MIT OR Apache-2.0",
-  "keywords": ["shunt", "codex", "chatgpt", "gpt-6", "gpt-5.6", "subagent", "llm-gateway"]
+  "keywords": [
+    "shunt",
+    "codex",
+    "chatgpt",
+    "gpt-6",
+    "subagent",
+    "llm-gateway"
+  ]
 }
