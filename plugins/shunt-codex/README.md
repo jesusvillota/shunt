@@ -1,8 +1,9 @@
 # shunt-codex
 
-Claude Code subagents that run on ChatGPT/Codex **GPT-6** models — **Sol** and
-**Luna** — and **GPT-5.6** models — **Luna**, **Sol**, and **Terra** — routed
-through the [shunt](https://github.com/pleaseai/shunt) gateway.
+Claude Code subagents that run on the current ChatGPT/Codex models — **GPT-6.1 Sol**,
+**GPT-6.1 Terra**, **GPT-6 Astra** and **GPT-6 Luna** — routed through the
+[shunt](https://github.com/jesusvillota/shunt) gateway. The agent list matches the
+models `shunt models codex` switches on: one current model per family.
 
 Unlike a CLI hand-off (which drops persona and preloaded skills), shunt diverts
 only *token generation* at the inference layer. The session keeps running inside
@@ -11,35 +12,20 @@ Only the model that generates the tokens changes.
 
 ## Agents
 
-| Agent (`@`-mention)         | Model id (`model:`) | Native effort | Supported effort levels                     |
-| --------------------------- | ------------------- | ------------- | ------------------------------------------- |
-| `shunt-codex:gpt-6-sol`     | `gpt-6-sol`         | medium        | low · medium · high · xhigh · max · ultra   |
-| `shunt-codex:gpt-6-luna`    | `gpt-6-luna`        | medium        | low · medium · high · xhigh · max           |
-| `shunt-codex:gpt-5.6-sol`   | `gpt-5.6-sol`       | low (fast)    | low · medium · high · xhigh · max · ultra   |
-| `shunt-codex:gpt-5.6-terra` | `gpt-5.6-terra`     | medium        | low · medium · high · xhigh · max · ultra   |
-| `shunt-codex:gpt-5.6-luna`  | `gpt-5.6-luna`      | medium        | low · medium · high · xhigh · max           |
+| Agent (`@`-mention)          | Model id (`model:`) |
+| ---------------------------- | ------------------- |
+| `shunt-codex:gpt-6.1-sol`    | `gpt-6.1-sol`       |
+| `shunt-codex:gpt-6.1-terra`  | `gpt-6.1-terra`     |
+| `shunt-codex:gpt-6-astra`    | `gpt-6-astra`       |
+| `shunt-codex:gpt-6-luna`     | `gpt-6-luna`        |
 
 Each agent's `model:` frontmatter pins the request to a Codex slug, so only that
-subagent diverts — the main session stays on Claude. The three GPT-5.6 agents
-share a 372k-token context window. GPT-6-Sol is the workhorse for coding and
-everyday work; GPT-6-Luna is the fast, affordable tier for easier tasks.
-`gpt-6-sol` and `gpt-6-luna` need a Codex client of at least 0.155.0 — shunt
-advertises one for you (see [Prerequisites](#prerequisites)).
+subagent diverts — the main session stays on Claude. Set the reasoning effort per
+call with the Agent tool's `effort`. Luna's top level is `max`; Luna does not
+accept `ultra`, and sending it is rejected upstream.
 
-> **Effort levels are from openai/codex's [`models.json`](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json).**
-> Note the difference: **Luna (both `gpt-6-luna` and `gpt-5.6-luna`) does not
-> support the `ultra` level** — its top level is `max`. Sending `ultra` to Luna
-> (via shunt's `effort` config or an `effort:` override) is rejected upstream. Sol
-> and Terra accept `ultra`.
-
-> The agents' system prompts are written for **Claude Code's harness** — these
-> models run inside Claude Code's tool loop (Read/Edit/Bash, skills), not Codex's.
-> The `gpt-6-*` and `gpt-5.6-*` entries in `models.json` do carry a substantial Codex system
-> prompt (`model_messages.instructions_template`, ~16k chars, "You are Codex…"),
-> but it describes Codex's own tools, personality, and workflow — none of which
-> exist here. shunt diverts only token generation, not that prompt: Claude Code
-> supplies its own system prompt, so the Codex one is never sent and there is
-> nothing Codex-specific to reproduce in these agents.
+When a model is replaced by a newer one, add its agent file, delete the old one,
+and update this table.
 
 ## Prerequisites
 
@@ -59,23 +45,19 @@ and is configured to route the model ids above to the Codex provider:
    ```toml
    # [[routes]] is a TOML array-of-tables: one block per model slug.
    [[routes]]
-   model = "gpt-6-sol"
+   model = "gpt-6.1-sol"
+   provider = "codex"
+
+   [[routes]]
+   model = "gpt-6.1-terra"
+   provider = "codex"
+
+   [[routes]]
+   model = "gpt-6-astra"
    provider = "codex"
 
    [[routes]]
    model = "gpt-6-luna"
-   provider = "codex"
-
-   [[routes]]
-   model = "gpt-5.6-sol"
-   provider = "codex"
-
-   [[routes]]
-   model = "gpt-5.6-terra"
-   provider = "codex"
-
-   [[routes]]
-   model = "gpt-5.6-luna"
    provider = "codex"
    ```
 
@@ -85,41 +67,27 @@ and is configured to route the model ids above to the Codex provider:
    [`docs/codex-configuration.md`](https://github.com/pleaseai/shunt/blob/main/docs/codex-configuration.md)).
 
 > The ChatGPT-account backend only accepts the slugs your account is entitled to.
-> The latest are `gpt-6-astra` / `gpt-6-sol` / `gpt-6-luna` / `gpt-6.1-sol`, followed by
-> `gpt-5.6-sol` / `gpt-5.6-terra` / `gpt-5.6-luna`; older accounts may only have
-> `gpt-5.5` / `gpt-5.4`. In `models.json`, `gpt-6-sol` and `gpt-6-luna` require a
-> Codex client of at least 0.155.0, while `gpt-6-astra` and `gpt-6.1-sol` require
-> at least 0.153.0 (though `gpt-6.1-sol` was rejected with a 0.156.0 identity
-> anyway); shunt's pinned client identity (`codex_cli_rs/0.159.3`) satisfies all
-> four. This plugin ships no agent for
-> `gpt-6-astra` or `gpt-6.1-sol`, and a route alone does not make one invokable.
-> To use one, add a `[[routes]]` block like those above, then pick one way to
-> select it: `ANTHROPIC_CUSTOM_MODEL_OPTION=gpt-6.1-sol` to offer it in the
-> `/model` picker, `CLAUDE_CODE_SUBAGENT_MODEL=gpt-6.1-sol` to run every subagent
-> on it, or your own agent file — for example `.claude/agents/gpt-6.1-sol.md`,
-> copied from this plugin's [`agents/gpt-6-sol.md`](agents/gpt-6-sol.md) with
-> `name` and `model:` changed to `gpt-6.1-sol` and the GPT-6-Sol references in
-> its description and prompt updated to match. The canonical catalog is
-> openai/codex's [`models.json`](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json).
+> The canonical catalog is openai/codex's
+> [`models.json`](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json).
 
 Without a running shunt gateway mapping these ids, Claude Code will send the
-`gpt-6-*` or `gpt-5.6-*` model id straight to Anthropic and the request will fail.
+`gpt-6*` model id straight to Anthropic and the request will fail.
 
 ## Install
 
 ```
-/plugin marketplace add pleaseai/shunt
+/plugin marketplace add jesusvillota/shunt
 /plugin install shunt-codex@shunt
 ```
 
 ## Usage
 
 ```
-@shunt-codex:gpt-6-sol  refactor this module and run the tests
+@shunt-codex:gpt-6.1-sol  refactor this module and run the tests
 ```
 
 Or set every subagent to a Codex model for a session with
-`CLAUDE_CODE_SUBAGENT_MODEL=gpt-6-sol`.
+`CLAUDE_CODE_SUBAGENT_MODEL=gpt-6.1-sol`.
 
 Both require a running shunt gateway with the slug routed to the Codex provider —
 see [Prerequisites](#prerequisites). Without it the request fails against Anthropic.
