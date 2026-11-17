@@ -432,11 +432,17 @@ it adds and removes no route, and leaves the file alone when the model list is e
 has no model that is on. It runs `codex debug models`, so call it from a login shell, never from
 the gateway daemon. A schedule such as a launchd job picks up new releases. The model list is the
 catalog built into the installed `codex` (its live refresh returns nothing behind shunt), so a new
-model appears after `codex` is upgraded. shunt sends the pinned client identity of §4.4: if a new
-model needs a newer client, the backend rejects it even though the alias points at it. Bump
-`CODEX_CLIENT_VERSION` or put the alias back by hand. A versioned id
-with no route (for example `gpt-5.6-sol`) is not served, so only the newest model of each family
-is reachable through these ids.
+model appears after `codex` is upgraded, and that `codex` can be newer than the pinned client
+identity of §4.4. So before it moves an alias, the command runs the new model once through the
+gateway's inbound Codex endpoint (§17), with the same pinned identity headers the outbound path
+sends, and closes the connection as soon as the answer starts. The alias moves only if Codex
+accepts the model. If Codex refuses it (a new release that needs a newer client), or the test
+cannot run (quota used up, gateway down, no client token), the alias stays where it is, the report
+says why, and the next run tries again; for a refusal, raise `CODEX_CLIENT_VERSION`. `--dry-run`
+runs the same test and writes nothing. The test needs the gateway running with
+`[server.codex_endpoint]` enabled; it uses the `default` client token of `[server.auth]
+tokens_file` (or the first one). A versioned id with no route (for example `gpt-5.6-sol`) is not
+served, so only the newest model of each family is reachable through these ids.
 
 ### 7.4 Remap the tier aliases (`haiku`/`sonnet`/`opus` → Codex)
 

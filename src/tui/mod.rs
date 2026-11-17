@@ -430,7 +430,11 @@ fn perform(ctx: &Ctx, effect: Effect) {
                 })
                 .await;
                 match synced {
-                    Ok(Ok(report)) if report.contains(" -> ") => {
+                    Ok(Ok(report))
+                        if report.contains(" -> ")
+                            || report.contains("Codex refused")
+                            || report.contains("could not test") =>
+                    {
                         ctx.say(Notice::Info(report.trim().replace('\n', "; ")))
                     }
                     Ok(Ok(_)) => {}

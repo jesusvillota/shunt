@@ -59,7 +59,7 @@ shunt sync-routes --dry-run
 shunt sync-routes
 ```
 
-ログインシェルから実行してください（`codex debug models` を呼び出します）。`shunt tui` は codex モデルを切り替えたあとにこれを実行します。モデル一覧はインストール済み `codex` に組み込まれたカタログなので、新しいモデルは `codex` をアップグレードしたあとに現れます。shunt は固定の Codex クライアント ID を送るため、より新しいクライアントを必要とするモデルは、エイリアスがそれを指していても上流で拒否されます。[Codex 設定](https://github.com/jesusvillota/shunt/blob/main/docs/codex-configuration.md)を参照してください。
+ログインシェルから実行してください（`codex debug models` を呼び出します）。`shunt tui` は codex モデルを切り替えたあとにこれを実行します。モデル一覧はインストール済み `codex` に組み込まれたカタログなので、新しいモデルは `codex` をアップグレードしたあとに現れます。shunt は固定の Codex クライアント ID を送るため、エイリアスを移す前に、その ID で新しいモデルをゲートウェイ経由で 1 回実行し、Codex が受け付けた場合だけ移します。Codex が拒否した場合や、テストを実行できない場合（クォータ切れ、ゲートウェイ停止）は、エイリアスはそのままで、次回の実行で再試行します。テストには `[server.codex_endpoint]` の有効化とゲートウェイの起動が必要です。[Codex 設定](https://github.com/jesusvillota/shunt/blob/main/docs/codex-configuration.md)を参照してください。
 
 ## `shunt import opencodex`
 

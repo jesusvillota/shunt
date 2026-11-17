@@ -59,7 +59,7 @@ shunt sync-routes --dry-run
 shunt sync-routes
 ```
 
-Run it from a login shell: it calls `codex debug models`. `shunt tui` runs it after you switch a codex model. The model list is the catalog built into the installed `codex`, so a new model appears after `codex` is upgraded. shunt sends a pinned Codex client identity; a model that needs a newer client is rejected upstream even though the alias points at it. See [Codex configuration](https://github.com/jesusvillota/shunt/blob/main/docs/codex-configuration.md).
+Run it from a login shell: it calls `codex debug models`. `shunt tui` runs it after you switch a codex model. The model list is the catalog built into the installed `codex`, so a new model appears after `codex` is upgraded. shunt sends a pinned Codex client identity, so before it moves an alias the command runs the new model once through the gateway with that identity; the alias moves only if Codex accepts it. If Codex refuses it, or the test cannot run (quota used up, gateway down), the alias stays and the next run tries again. The test needs `[server.codex_endpoint]` enabled and the gateway running. See [Codex configuration](https://github.com/jesusvillota/shunt/blob/main/docs/codex-configuration.md).
 
 ## `shunt import opencodex`
 
