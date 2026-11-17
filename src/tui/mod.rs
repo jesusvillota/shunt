@@ -345,14 +345,25 @@ fn perform(ctx: &Ctx, effect: Effect) {
             name,
         } => {
             tokio::spawn(async move {
-                // Validate the config transform before deleting the credential.
-                // In particular, removing the last explicit account is unsafe:
-                // an empty list means "scan every stored account".
-                let (guard_provider, guard_name) = (provider.clone(), name.clone());
+                // Config first, credential last: the config edit is what can be
+                // refused (the last explicit account, a client pinned to this
+                // account alone), and a credential cannot be restored. If the
+                // credential delete then fails, the account is only missing
+                // from shunt.toml, and `d` can be retried.
+                let unpinned = Arc::new(std::sync::Mutex::new(Vec::new()));
+                let (edit_provider, edit_name, edit_unpinned) =
+                    (provider.clone(), name.clone(), unpinned.clone());
                 if let Err(e) = ctx
                     .edit_config(move |text| {
-                        config_edit::remove_account(text, &guard_provider, &guard_name)?;
-                        Ok(None)
+                        let removed =
+                            config_edit::remove_account(text, &edit_provider, &edit_name)?;
+                        let (pinned, clients) = config_edit::remove_from_client_pins(
+                            removed.as_deref().unwrap_or(text),
+                            &edit_provider,
+                            &edit_name,
+                        )?;
+                        *edit_unpinned.lock().unwrap() = clients;
+                        Ok(pinned.or(removed))
                     })
                     .await
                 {
@@ -361,23 +372,19 @@ fn perform(ctx: &Ctx, effect: Effect) {
                 }
 
                 if let Err(e) = ctx.client.delete_account(kind, &name).await {
-                    ctx.say(Notice::Error(format!("{e:#}")));
+                    ctx.say(Notice::Error(format!(
+                        "{name} was removed from shunt.toml, but its credential was not deleted: {e:#}"
+                    )));
                     ctx.refresh_soon(false);
                     return;
                 }
 
-                let (target_provider, target_name) = (provider.clone(), name.clone());
-                let config_result = ctx
-                    .edit_config(move |text| {
-                        config_edit::remove_account(text, &target_provider, &target_name)
-                    })
-                    .await;
-                ctx.say(match config_result {
-                    Ok(_) => Notice::Info(format!("deleted {name} from {provider}")),
-                    Err(e) => Notice::Error(format!(
-                        "{name} was deleted, but shunt.toml was not updated: {e:#}"
-                    )),
-                });
+                let unpinned = unpinned.lock().unwrap().join(", ");
+                ctx.say(Notice::Info(if unpinned.is_empty() {
+                    format!("deleted {name} from {provider}")
+                } else {
+                    format!("deleted {name} from {provider} and from the pins of: {unpinned}")
+                }));
                 ctx.refresh_soon(true);
             });
         }
@@ -496,7 +503,7 @@ fn perform(ctx: &Ctx, effect: Effect) {
                     .await
                 {
                     Ok(path) => Notice::Info(format!(
-                        "added {name} to {} (config: {})",
+                        "saved the login for {name} on {} (config: {})",
                         target.provider,
                         file_name(&path)
                     )),

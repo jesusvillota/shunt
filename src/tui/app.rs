@@ -587,6 +587,7 @@ impl App {
             KeyCode::Char('a') => self.open_dialog(),
             KeyCode::Char('M') => Effect::OpenModels,
             KeyCode::Char('d') => self.open_delete_confirm(),
+            KeyCode::Char('r') => self.open_relogin(),
             _ => Effect::None,
         }
     }
@@ -912,6 +913,22 @@ impl App {
             name: row.account.name.clone(),
         });
         Effect::None
+    }
+
+    fn open_relogin(&mut self) -> Effect {
+        let Some((provider, row)) = self.selected_row() else {
+            return self.need("Select an account first (r signs one in again)");
+        };
+        let Some(kind) = provider.account_kind() else {
+            return self.need("This provider's accounts cannot be signed in from the admin API");
+        };
+        let target = Target {
+            provider: provider.name.clone(),
+            kind,
+        };
+        let (flow, start) = AddFlow::relogin(target, row.account.name.clone());
+        self.dialog = Some(flow);
+        Effect::Add(start)
     }
 
     fn delete_key(&mut self, key: KeyEvent) -> Effect {
