@@ -115,6 +115,7 @@ their existing usage bars and resets.
 | `m` | Cycle **custom order → balanced → weekly reset → custom order** |
 | `Shift+↑`/`Shift+↓` (or `K`/`J`) | On an account: move it up or down a custom order; on a provider header: move the whole section |
 | `a` | Add an account |
+| `r` | Sign the selected account in again (keeps its config entry, client pins and priority) |
 | `d` | Delete the selected account (asks for `y`/`n` confirmation first) |
 | `?` | Help |
 | `q` / `Ctrl-C` | Quit |
@@ -286,20 +287,40 @@ unrelated keys do nothing while the confirmation is open. Deletion is available
 for the managed Claude, Codex and Antigravity account stores; providers without
 the corresponding admin delete endpoint are refused.
 
-Before sending the destructive API request, `shunt tui` dry-runs the matching
-`shunt.toml` cleanup. That is a second safety boundary after the `y` prompt:
-if the config cannot be updated safely, nothing is deleted. In particular, the
-last entry of an explicitly listed account pool is refused because an empty list
-does **not** mean an empty pool in shunt — it means scan every account in the
-store, which could silently activate other credentials. A provider that already
-scans the whole store needs no config change; when several accounts are listed
-explicitly, the deleted name is removed from that list after the credential is
-deleted.
+`shunt tui` edits `shunt.toml` first and deletes the credential last, because a
+credential cannot be restored and the config edit is the step that can be
+refused. If the config cannot be updated safely, nothing is deleted. In
+particular, the last entry of an explicitly listed account pool is refused
+because an empty list does **not** mean an empty pool in shunt — it means scan
+every account in the store, which could silently activate other credentials. A
+provider that already scans the whole store needs no pool edit; when several
+accounts are listed explicitly, the deleted name is removed from that list.
+
+Client pins (`[server.auth.clients.<name>] accounts.<provider>`) are edited in
+the same step, because a pin naming an account that no longer exists makes the
+gateway reject the whole config on reload and keep running the old one. The
+deleted name is removed from every pin list that has other accounts, and the
+status line names those clients. A client pinned to the deleted account **alone**
+makes `d` refuse, naming the client: an empty pin is invalid, and dropping the
+pin would silently let that client use every account. Re-pin that client to
+another account (or remove its pin on purpose) in `shunt.toml`, then delete.
+Pins are matched by name and only for the provider the account was deleted from.
+If the credential delete itself fails, the account is already out of `shunt.toml`
+and `d` can be retried.
 
 The same config-edit limitations as adding/ranking apply. A non-TOML config or a
 provider defined through `[[upstreams]]` cannot pass the safe cleanup check, so
 `d` refuses rather than deleting the credential and leaving stale pool
 configuration.
+
+## Signing an account in again
+
+When a row shows **needs re-login**, select it and press `r`. The dialog skips
+the provider and name steps and opens the authorize link straight away; paste the
+code as when adding. The gateway overwrites the stored credential of the same
+name, so the account keeps its `shunt.toml` entry, client pins and priority —
+there is no need to delete and re-add it. Pins match by name, so signing in with a
+different subscription under the same name moves the pins to that subscription.
 
 ## Config edits: what is and is not touched
 

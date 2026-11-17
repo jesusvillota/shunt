@@ -564,6 +564,31 @@ fn delete_requires_a_selected_managed_account_and_confirmation() {
 }
 
 #[test]
+fn r_signs_the_selected_account_in_again_without_asking_for_a_name() {
+    let mut app = claude(vec![acct("a", None)]);
+
+    assert_eq!(app.on_key(key('r')), Effect::None);
+    assert!(app.dialog.is_none());
+
+    app.on_key(key('j')); // provider header
+    app.on_key(key('j')); // account a
+    let target = add::Target {
+        provider: "claude".into(),
+        kind: "claude",
+    };
+    assert_eq!(
+        app.on_key(key('r')),
+        Effect::Add(add::Effect::Start {
+            target,
+            name: "a".into(),
+        })
+    );
+    let dialog = app.dialog.as_ref().unwrap();
+    assert!(dialog.relogin);
+    assert_eq!(dialog.step, add::Step::Starting);
+}
+
+#[test]
 fn delete_is_not_offered_for_provider_families_without_a_delete_endpoint() {
     let mut app = app_with(vec![provider("kimi", "kimi_oauth", vec![acct("k", None)])]);
     app.on_key(key('j'));

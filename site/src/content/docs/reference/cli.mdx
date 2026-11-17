@@ -102,7 +102,9 @@ shunt tui --config /path/to/shunt.toml
 
 Select rows with the arrow keys or `j`/`k`. Press `a` to add an account. With an account selected, press `d` to delete it: Shunt opens a confirmation dialog and deletes only after `y`; `n` or `Esc` cancels, and unrelated keys do nothing while the confirmation is open.
 
-Deletion removes the managed Claude, Codex, or Antigravity credential through the admin API and removes its explicit pool entry from `shunt.toml` when that edit is safe. Before deleting anything, the TUI dry-runs the config cleanup. It refuses the operation if the cleanup cannot be made safely—for example, deleting the last explicitly listed account would turn an empty list into "scan every stored account". The same safety check means deletion is unavailable for YAML configs or providers defined through `[[upstreams]]`.
+Deletion edits `shunt.toml` first and removes the managed Claude, Codex, or Antigravity credential through the admin API last. It refuses the operation if the config cannot be updated safely—for example, deleting the last explicitly listed account would turn an empty list into "scan every stored account", and a client pinned to that account alone (`[server.auth.clients.<name>]`) would be left with an invalid pin. In that case the message names the client; re-pin it first. Other clients lose the deleted name from their pins. Deletion is unavailable for YAML configs or providers defined through `[[upstreams]]`.
+
+When a row needs a new login, select it and press `r` to sign it in again with the same name. The account keeps its `shunt.toml` entry, client pins, and priority, so there is no need to delete and re-add it.
 
 Pause/provider switches are runtime-only. Ranking changes and explicit account membership edits are persisted to the TOML config and picked up by hot reload. Hiding a provider (`h`) and reordering sections (`Shift+↑/↓` on a header) are local display preferences stored in `~/.shunt/top.json`; they never affect routing.
 

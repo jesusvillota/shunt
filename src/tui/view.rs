@@ -389,7 +389,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         )
     } else {
         format!(
-            "p pause · h hide{unhide} · m cycle ranking · Shift+↑↓ move · a add · d delete · Esc deselect · ? help · q quit"
+            "p pause · h hide{unhide} · m cycle ranking · Shift+↑↓ move · a add · r re-login · d delete · Esc deselect · ? help · q quit"
         )
     };
     // ponytail: notice gets its own line so the hints below never hide.
@@ -512,8 +512,15 @@ fn render_dialog(frame: &mut Frame, dialog: &AddFlow) {
         Step::Starting => lines.push(Line::from("Contacting the gateway…")),
         Step::Code | Step::Submitting => {
             lines.push(Line::from(format!(
-                "Adding {} to {}",
-                dialog.name, target.provider
+                "{} {} {} {}",
+                if dialog.relogin {
+                    "Signing in"
+                } else {
+                    "Adding"
+                },
+                dialog.name,
+                if dialog.relogin { "again on" } else { "to" },
+                target.provider
             )));
             lines.push(Line::default());
             lines.push(Line::from(
@@ -592,6 +599,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         "  Shift+↑↓ / K J  on an account: move it up/down the custom order;",
         "                  on a provider header: move the whole section",
         "  a               add an account (it is added to the pool in shunt.toml)",
+        "  r               sign the selected account in again (keeps its pins, priority and config)",
         "  d               delete the selected account (asks y/n before deleting)",
         "  M               models: switch codex, opencode and agy models on or off for goal and /delegate-cli",
         "  q               quit",
@@ -606,7 +614,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         "Press any key to close.",
     ]
     .join("\n");
-    let rect = popup(area, 100, 30);
+    let rect = popup(area, 100, 31);
     frame.render_widget(Clear, rect);
     frame.render_widget(
         Paragraph::new(text).block(Block::bordered().title(" Help ")),

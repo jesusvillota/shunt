@@ -54,6 +54,8 @@ pub struct AddFlow {
     pub url: String,
     /// The last failure, shown inside the dialog so it can be retried.
     pub error: Option<String>,
+    /// Signing an existing account in again rather than adding a new one.
+    pub relogin: bool,
 }
 
 /// Account names the store accepts (`[a-z0-9-]+`).
@@ -86,7 +88,30 @@ impl AddFlow {
             code: String::new(),
             url: String::new(),
             error: None,
+            relogin: false,
         })
+    }
+
+    /// Sign the existing account `name` in again. The gateway overwrites a
+    /// stored credential of the same name, so the account keeps its place in
+    /// `shunt.toml`, its client pins and its priority. The dialog starts at the
+    /// authorize-URL request: the caller sends the returned `Start` effect.
+    pub fn relogin(target: Target, name: String) -> (Self, Effect) {
+        let effect = Effect::Start {
+            target: target.clone(),
+            name: name.clone(),
+        };
+        let flow = Self {
+            choices: vec![target],
+            chosen: 0,
+            step: Step::Starting,
+            name,
+            code: String::new(),
+            url: String::new(),
+            error: None,
+            relogin: true,
+        };
+        (flow, effect)
     }
 
     pub fn target(&self) -> &Target {

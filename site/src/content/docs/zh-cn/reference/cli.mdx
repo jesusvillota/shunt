@@ -104,6 +104,8 @@ shunt tui --config /path/to/shunt.toml
 
 删除会通过 Admin API 移除托管的 Claude、Codex 或 Antigravity 凭据，并在能够安全修改时同步删除 `shunt.toml` 中显式列出的池条目。执行任何破坏性操作之前，TUI 会先试运行配置清理。例如，删除最后一个显式账户会让空列表变成“扫描所有已存储账户”，因此这种删除会被拒绝。同一安全检查也意味着 YAML 配置或通过 `[[upstreams]]` 定义的提供商不能使用该删除操作。
 
+当账户需要重新登录时，选中该行并按 `r`，即可用相同名称重新登录。账户在 `shunt.toml` 中的条目、客户端固定（pin）和优先级都会保留，无需先删除再重新添加。删除时会先修改 `shunt.toml`，最后才删除凭据；如果某个客户端只固定在该账户上，则会指明该客户端并拒绝删除，其他客户端的固定列表会去掉被删除的名称。
+
 暂停和提供商开关只影响当前运行时。排序变化和显式账户成员变更会持久化到 TOML 配置，并通过热重载生效。隐藏提供商（`h`）和调整分节顺序（在标题行按 `Shift+↑/↓`）是本终端的显示偏好，保存在 `~/.shunt/top.json` 中，不会影响路由。
 
 按 `M` 打开 Models 对话框，为 `goal` 工具和 `/delegate-cli` 开关 codex、opencode、agy 的模型。保存 codex 模型的更改时会同时运行 `shunt sync-routes`，除此之外它不改变网关路由。在 `opencode` 选项卡中，它还会显示从本机 `~/.local/share/opencode/log/opencode.log` 读取的每个免费模型的状态：`reachable`、`rate limited`（含距离出错的时间）或 `unknown`。该状态仅本地读取，约每 10 秒刷新一次。在同一选项卡按 `r` 会用无头 agent 重新排列免费模型（`~/.shunt/models.json` 中的 `ranker` 键，默认 `claude`）；验证后的顺序保存在该文件中，并显示排名编号和 `ranked_at` 时间。
