@@ -59,7 +59,7 @@ shunt sync-routes --dry-run
 shunt sync-routes
 ```
 
-로그인 셸에서 실행하세요(`codex debug models`를 호출합니다). `shunt tui`는 codex 모델을 전환한 뒤 이 명령을 실행합니다. 모델 목록은 설치된 `codex`에 내장된 카탈로그이므로 새 모델은 `codex`를 업그레이드한 뒤에 나타납니다. shunt는 고정된 Codex 클라이언트 신원을 보내므로 더 새로운 클라이언트가 필요한 모델은 별칭이 가리키더라도 업스트림에서 거부됩니다. [Codex 설정](https://github.com/jesusvillota/shunt/blob/main/docs/codex-configuration.md)을 참고하세요.
+로그인 셸에서 실행하세요(`codex debug models`를 호출합니다). `shunt tui`는 codex 모델을 전환한 뒤 이 명령을 실행합니다. 모델 목록은 설치된 `codex`에 내장된 카탈로그이므로 새 모델은 `codex`를 업그레이드한 뒤에 나타납니다. shunt는 고정된 Codex 클라이언트 신원을 보내므로, 별칭을 옮기기 전에 그 신원으로 새 모델을 게이트웨이를 통해 한 번 실행하고 Codex가 받아들일 때만 옮깁니다. Codex가 거부하거나 테스트를 실행할 수 없으면(할당량 소진, 게이트웨이 중지) 별칭은 그대로 두고 다음 실행에서 다시 시도합니다. 테스트에는 `[server.codex_endpoint]` 활성화와 실행 중인 게이트웨이가 필요합니다. [Codex 설정](https://github.com/jesusvillota/shunt/blob/main/docs/codex-configuration.md)을 참고하세요.
 
 ## `shunt import opencodex`
 

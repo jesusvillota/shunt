@@ -59,7 +59,7 @@ shunt sync-routes --dry-run
 shunt sync-routes
 ```
 
-请在登录 shell 中运行（它会调用 `codex debug models`）。在 `shunt tui` 中切换 codex 模型后会自动运行它。模型列表是已安装 `codex` 内置的目录，因此新模型会在升级 `codex` 之后出现。shunt 发送固定的 Codex 客户端标识；需要更新客户端的模型即使别名已指向它，也会被上游拒绝。参见 [Codex 配置](https://github.com/jesusvillota/shunt/blob/main/docs/codex-configuration.md)。
+请在登录 shell 中运行（它会调用 `codex debug models`）。在 `shunt tui` 中切换 codex 模型后会自动运行它。模型列表是已安装 `codex` 内置的目录，因此新模型会在升级 `codex` 之后出现。shunt 发送固定的 Codex 客户端标识，因此在移动别名之前，命令会用该标识通过网关把新模型运行一次，只有 Codex 接受时才移动。如果 Codex 拒绝，或测试无法运行（额度用完、网关未运行），别名保持不变，下次运行时再试。该测试需要启用 `[server.codex_endpoint]` 并运行网关。参见 [Codex 配置](https://github.com/jesusvillota/shunt/blob/main/docs/codex-configuration.md)。
 
 ## `shunt import opencodex`
 
