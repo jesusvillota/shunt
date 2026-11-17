@@ -26,6 +26,13 @@ change to these files. Set the reasoning effort per call with the Agent tool's
 `effort`. Luna's top level is `max`; Luna does not accept `ultra`, and sending it
 is rejected upstream.
 
+## Upgrading from 0.3
+
+0.4 renames the agents (`gpt-6.1-sol` → `sol`, and so on) and asks for the family ids
+`codex-sol`, `codex-terra`, `codex-astra` and `codex-luna`. Add the four alias routes below to
+your `shunt.toml` before you update, or the agents get a 404. Restart open Claude Code sessions
+after updating.
+
 ## Prerequisites
 
 These agents only work when a shunt gateway is running in front of Claude Code

@@ -192,6 +192,10 @@ fn file_name(path: &std::path::Path) -> String {
     )
 }
 
+/// The Codex on/off overrides the last successful alias sync used; `None` before the first run.
+static CODEX_SYNCED: std::sync::Mutex<Option<Option<std::collections::BTreeMap<String, bool>>>> =
+    std::sync::Mutex::new(None);
+
 fn perform(ctx: &Ctx, effect: Effect) {
     let ctx = ctx.clone();
     match effect {
@@ -395,6 +399,7 @@ fn perform(ctx: &Ctx, effect: Effect) {
         }
         Effect::SaveModels(prefs) => {
             // Queue here, in key order; the blocking task writes the newest snapshot.
+            let codex = prefs.overrides.get("codex").cloned();
             crate::models_prefs::queue(prefs);
             let config = ctx.config.clone();
             tokio::spawn(async move {
@@ -405,13 +410,27 @@ fn perform(ctx: &Ctx, effect: Effect) {
                     }
                     Err(e) => return ctx.say(Notice::Error(format!("model list not saved: {e}"))),
                 }
-                // The on/off list decides which model each Codex alias points at.
+                // The Codex on/off list decides which model each Codex alias points at.
+                // The lock makes runs one at a time; each reads the newest saved list.
                 let synced = tokio::task::spawn_blocking(move || {
-                    crate::codex_aliases::sync(config.as_deref(), false)
+                    let mut last = CODEX_SYNCED.lock().unwrap_or_else(|e| e.into_inner());
+                    if last.as_ref() == Some(&codex) {
+                        return Ok(String::new());
+                    }
+                    let report = crate::codex_aliases::sync(config.as_deref(), false)?;
+                    *last = Some(codex);
+                    Ok::<_, anyhow::Error>(report)
                 })
                 .await;
-                if let Ok(Err(e)) = synced {
-                    ctx.say(Notice::Error(format!("Codex aliases not updated: {e:#}")));
+                match synced {
+                    Ok(Ok(report)) if report.contains(" -> ") => {
+                        ctx.say(Notice::Info(report.trim().replace('\n', "; ")))
+                    }
+                    Ok(Ok(_)) => {}
+                    Ok(Err(e)) => {
+                        ctx.say(Notice::Error(format!("Codex aliases not updated: {e:#}")))
+                    }
+                    Err(e) => ctx.say(Notice::Error(format!("Codex aliases not updated: {e}"))),
                 }
             });
         }

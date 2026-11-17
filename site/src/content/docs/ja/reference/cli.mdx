@@ -50,6 +50,17 @@ shunt models codex --json
 
 `--json` は `{"filter": true, "platforms": {"codex": {"models": [{"id": "gpt-6.1-sol", "active": true, "reason": "default"}], "error": null}}}` の形で出力します。ツールは `filter` が `true` の間だけ `"active": false` のモデルを隠します。一覧を読めなかったプラットフォームには `error` があり、モデルはありません。ON/OFF の状態は `shunt tui`（`M` キー）が編集する `~/.shunt/models.json` に保存され、`goal` ツールと `/delegate-cli` だけが使います。ランキングが保存されているときは `opencode` のモデルに `rank` 番号も付き、opencode の一覧はランキング順に出力されます。
 
+## `shunt sync-routes`
+
+各 Codex エイリアスを、`shunt models codex` で ON になっている最新モデルに向けます。エイリアスとは、`provider = "codex"` と `upstream_model` を持つ `[[routes]]` エントリです（例: `codex-sol` → `gpt-6.1-sol`）。変更するのは `upstream_model` の値だけで、コメントは保持され、ルートの追加や削除は行いません。ファミリーに ON のモデルがない場合、カタログがエイリアスのモデルを削除して古いモデルしか残っていない場合、新しいモデルがネイティブ `tool_search` の一覧にない場合は、警告を出してそのエイリアスを変更しません。モデル一覧が空のときは何も書き込みません。
+
+```bash
+shunt sync-routes --dry-run
+shunt sync-routes
+```
+
+ログインシェルから実行してください（`codex debug models` を呼び出します）。`shunt tui` は codex モデルを切り替えたあとにこれを実行します。モデル一覧はインストール済み `codex` に組み込まれたカタログなので、新しいモデルは `codex` をアップグレードしたあとに現れます。shunt は固定の Codex クライアント ID を送るため、より新しいクライアントを必要とするモデルは、エイリアスがそれを指していても上流で拒否されます。[Codex 設定](https://github.com/jesusvillota/shunt/blob/main/docs/codex-configuration.md)を参照してください。
+
 ## `shunt import opencodex`
 
 互換性のある認証情報をオフラインで読み、新しい非公開スナップショットに保存します。既存の設定、認証情報ファイル、OpenCodex の状態は上書きしません。まずプレビューしてください。非対話型のエクスポートには `--yes` が必要です。
@@ -95,7 +106,7 @@ shunt tui --config /path/to/shunt.toml
 
 一時停止とプロバイダーのオン/オフはランタイムのみです。ランキング変更と明示的なアカウント構成の編集は TOML 設定に保存され、ホットリロードで反映されます。プロバイダーの非表示（`h`）やセクションの並べ替え（ヘッダー上で `Shift+↑/↓`）は端末ローカルの表示設定で、`~/.shunt/top.json` に保存されます。ルーティングには影響しません。
 
-`M` を押すと Models ダイアログが開き、`goal` ツールと `/delegate-cli` が使う codex・opencode・agy のモデルを ON/OFF できます。ゲートウェイのルーティングには影響しません。`opencode` タブでは、このマシンの `~/.local/share/opencode/log/opencode.log` から読み取った各無料モデルの状態（`reachable`、`rate limited`（エラーからの経過時間付き）、`unknown`）も表示します。状態はローカル専用で、約 10 秒ごとに更新されます。同じタブで `r` を押すと、ヘッドレスエージェントで無料モデルを再ランキングします（`~/.shunt/models.json` の `ranker` キー、既定は `claude`）。検証済みの順序はそのファイルに保存され、順位番号と `ranked_at` 時刻とともに表示されます。
+`M` を押すと Models ダイアログが開き、`goal` ツールと `/delegate-cli` が使う codex・opencode・agy のモデルを ON/OFF できます。codex モデルの変更を保存すると `shunt sync-routes` も実行されます。それ以外のゲートウェイのルーティングは変わりません。`opencode` タブでは、このマシンの `~/.local/share/opencode/log/opencode.log` から読み取った各無料モデルの状態（`reachable`、`rate limited`（エラーからの経過時間付き）、`unknown`）も表示します。状態はローカル専用で、約 10 秒ごとに更新されます。同じタブで `r` を押すと、ヘッドレスエージェントで無料モデルを再ランキングします（`~/.shunt/models.json` の `ranker` キー、既定は `claude`）。検証済みの順序はそのファイルに保存され、順位番号と `ranked_at` 時刻とともに表示されます。
 
 Models ダイアログで `s` を押し、ランキングエージェントのプラットフォーム、モデル、推論の努力レベルを選びます。矢印キーで選択し、Enter で次へ進みます。最後の Enter で保存し、Esc で取り消します。`opencode` タブには `platform · model · effort` が表示されます（`default` は CLI の既定値）。モデルはカタログから取得し、Codex はモデルごとに対応する努力レベルを表示します。Claude には最新の `sonnet`、`opus`、`haiku` エイリアスを用意しています。選択は `~/.shunt/models.json` に `"ranker": {"platform": "codex", "model": "gpt-6-sol", "effort": "high"}` として保存されます。model と effort は省略できます。従来の `"ranker": "claude"` は以前と同じコマンドで動き、選択を変えるまで文字列を保持します。Claude と AGY は `--model` と `--effort`、Codex は `-m` と `-c 'model_reasoning_effort="high"'` を渡します。OpenCode は `-m` を渡しますが、インストール済み CLI に努力フラグがないため effort は無視します。AGY はモデルを指定しない場合、従来の Antigravity 既定モデルと `claude -p` を使います。`chatgptweb` は shunt がブラウザーセッションを開始できないため拒否されます。
 
