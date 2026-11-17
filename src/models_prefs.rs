@@ -6,7 +6,9 @@
 //! stored; the default is computed from the live catalog by [`default_active`]
 //! (the newest version of each model family is on). A missing or corrupt file
 //! means "defaults, filter on", never an error. Nothing here touches gateway
-//! routing, `/v1/models`, or `shunt.toml`.
+//! routing or `/v1/models`. The one exception is `shunt sync-routes`
+//! (`crate::codex_aliases`), which reads this list to point each Codex alias
+//! route in `shunt.toml` at the newest model that is on.
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},

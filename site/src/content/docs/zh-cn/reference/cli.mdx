@@ -50,6 +50,17 @@ shunt models codex --json
 
 `--json` 输出形如 `{"filter": true, "platforms": {"codex": {"models": [{"id": "gpt-6.1-sol", "active": true, "reason": "default"}], "error": null}}}`。仅当 `filter` 为 `true` 时，工具才会隐藏 `"active": false` 的模型。无法读取列表的平台带有 `error` 且没有模型。开关状态保存在 `~/.shunt/models.json`，由 `shunt tui`（按 `M`）编辑，只有 `goal` 工具和 `/delegate-cli` 使用。当存在排名时，`opencode` 模型还会带有 `rank` 编号，且 opencode 列表按排名顺序输出。
 
+## `shunt sync-routes`
+
+把每个 Codex 别名指向 `shunt models codex` 中已开启的最新模型。别名是带有 `provider = "codex"` 和 `upstream_model` 的 `[[routes]]` 条目，例如 `codex-sol` → `gpt-6.1-sol`。该命令只修改 `upstream_model` 的值，保留注释，不增删路由。当某个系列没有开启的模型、目录已删除别名对应的模型且只剩更旧的模型，或新模型不在原生 `tool_search` 列表中时，它会输出警告并保持该别名不变。模型列表为空时不写入任何内容。
+
+```bash
+shunt sync-routes --dry-run
+shunt sync-routes
+```
+
+请在登录 shell 中运行（它会调用 `codex debug models`）。在 `shunt tui` 中切换 codex 模型后会自动运行它。模型列表是已安装 `codex` 内置的目录，因此新模型会在升级 `codex` 之后出现。shunt 发送固定的 Codex 客户端标识；需要更新客户端的模型即使别名已指向它，也会被上游拒绝。参见 [Codex 配置](https://github.com/jesusvillota/shunt/blob/main/docs/codex-configuration.md)。
+
 ## `shunt import opencodex`
 
 离线读取兼容凭据并保存为新的私有快照，不覆盖现有设置、凭据文件或 OpenCodex 状态。请先预览；非交互式导出需要 `--yes`。
@@ -95,7 +106,7 @@ shunt tui --config /path/to/shunt.toml
 
 暂停和提供商开关只影响当前运行时。排序变化和显式账户成员变更会持久化到 TOML 配置，并通过热重载生效。隐藏提供商（`h`）和调整分节顺序（在标题行按 `Shift+↑/↓`）是本终端的显示偏好，保存在 `~/.shunt/top.json` 中，不会影响路由。
 
-按 `M` 打开 Models 对话框，为 `goal` 工具和 `/delegate-cli` 开关 codex、opencode、agy 的模型。它不影响网关路由。在 `opencode` 选项卡中，它还会显示从本机 `~/.local/share/opencode/log/opencode.log` 读取的每个免费模型的状态：`reachable`、`rate limited`（含距离出错的时间）或 `unknown`。该状态仅本地读取，约每 10 秒刷新一次。在同一选项卡按 `r` 会用无头 agent 重新排列免费模型（`~/.shunt/models.json` 中的 `ranker` 键，默认 `claude`）；验证后的顺序保存在该文件中，并显示排名编号和 `ranked_at` 时间。
+按 `M` 打开 Models 对话框，为 `goal` 工具和 `/delegate-cli` 开关 codex、opencode、agy 的模型。保存 codex 模型的更改时会同时运行 `shunt sync-routes`，除此之外它不改变网关路由。在 `opencode` 选项卡中，它还会显示从本机 `~/.local/share/opencode/log/opencode.log` 读取的每个免费模型的状态：`reachable`、`rate limited`（含距离出错的时间）或 `unknown`。该状态仅本地读取，约每 10 秒刷新一次。在同一选项卡按 `r` 会用无头 agent 重新排列免费模型（`~/.shunt/models.json` 中的 `ranker` 键，默认 `claude`）；验证后的顺序保存在该文件中，并显示排名编号和 `ranked_at` 时间。
 
 在 Models 对话框按 `s`，依次选择排名 agent 的平台、模型和推理强度。用方向键选择，Enter 进入下一步，最后一步按 Enter 保存，Esc 取消。`opencode` 选项卡显示 `platform · model · effort`（`default` 表示 CLI 默认值）。模型来自现有目录；Codex 显示各模型支持的推理强度。Claude 提供最新的 `sonnet`、`opus` 和 `haiku` 别名。选择以 `"ranker": {"platform": "codex", "model": "gpt-6-sol", "effort": "high"}` 保存到 `~/.shunt/models.json`。model 和 effort 均可省略。旧的 `"ranker": "claude"` 继续使用原有命令；更改排名 agent 前，字符串格式保持不变。Claude 和 AGY 传入 `--model`、`--effort`；Codex 传入 `-m` 和 `-c 'model_reasoning_effort="high"'`。OpenCode 传入 `-m`，但已安装的 CLI 没有强度参数，因此忽略 effort。AGY 未指定模型时仍通过 `claude -p` 使用原有 Antigravity 默认模型。`chatgptweb` 仍被拒绝，因为 shunt 无法启动其浏览器会话。
 

@@ -485,9 +485,20 @@ fn map_effort(effort: &str, model: &str) -> String {
 }
 
 /// Whether `model` accepts the `max` reasoning level, per codex models.json.
-/// The gpt-5.6 and gpt-6 families do; earlier slugs cap at `xhigh`.
+/// gpt-5.6 and every later `gpt-N[.M]` model do; earlier slugs cap at `xhigh`.
+/// The version is read from the name, so a new release needs no edit here.
 fn supports_max_effort(model: &str) -> bool {
-    model.contains("gpt-5.6") || model.contains("gpt-6")
+    let Some(at) = model.find("gpt-") else {
+        return false;
+    };
+    let version: Vec<u32> = model[at + 4..]
+        .split('-')
+        .next()
+        .unwrap_or_default()
+        .split('.')
+        .map_while(|part| part.parse().ok())
+        .collect();
+    version.as_slice() >= &[5, 6][..]
 }
 
 /// Claude Code sends mid-conversation `system`-role messages (e.g. SessionStart
@@ -1282,6 +1293,38 @@ mod tests {
         assert_eq!(effort(&request, &codex_route_model("gpt-6-sol")), "max");
         assert_eq!(effort(&request, &codex_route_model("gpt-6-luna")), "max");
         assert_eq!(effort(&request, &codex_route_model("gpt-6-pro")), "max");
+    }
+
+    #[test]
+    fn passes_max_effort_through_for_later_releases_and_not_for_earlier_ones() {
+        let request = json!({"output_config": {"effort": "max"}});
+        for model in [
+            "gpt-6.1-sol",
+            "gpt-6.1-terra",
+            "gpt-6.2-sol",
+            "gpt-7-sol",
+            "gpt-5.10-sol",
+        ] {
+            assert_eq!(
+                effort(&request, &codex_route_model(model)),
+                "max",
+                "{model}"
+            );
+        }
+        for model in [
+            "gpt-5.5",
+            "gpt-5.4",
+            "gpt-5.2-codex",
+            "gpt-5",
+            "gpt-4o",
+            "gpt-oss-120b",
+        ] {
+            assert_eq!(
+                effort(&request, &codex_route_model(model)),
+                "xhigh",
+                "{model}"
+            );
+        }
     }
 
     #[test]

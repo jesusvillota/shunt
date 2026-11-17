@@ -2342,7 +2342,7 @@ pub enum ResponsesFlavor {
 /// slugs (gpt-5.2 and below) fall back to the #43 progressive-reveal shim even
 /// with the provider flag on, so the native path only fires for combinations
 /// documented to accept it.
-fn model_supports_tool_search(model: &str) -> bool {
+pub(crate) fn model_supports_tool_search(model: &str) -> bool {
     // Match each documented "gpt-5.N" family as a whole minor version: the digit
     // must be followed by a non-digit (or end of string), so "gpt-5.4" matches
     // but an undocumented "gpt-5.40" does not silently borrow 5.4's flag and get

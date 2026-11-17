@@ -8,6 +8,14 @@
 //! no config edit. It changes only the `upstream_model` value, never adds or
 //! removes a route, and writes nothing when the live model list is empty.
 //!
+//! Limits, by design:
+//! - The model list is `codex debug models`, which is the catalog built into the
+//!   installed `codex` when its live refresh returns nothing (as it does behind
+//!   shunt). A model appears here when `codex` is upgraded.
+//! - shunt sends a pinned Codex client identity (`CODEX_CLIENT_VERSION`). A new
+//!   model that needs a newer client is rejected upstream even though this
+//!   module moved the alias to it; bump the pin, or put the alias back by hand.
+//!
 //! It shells out through [`crate::models_catalog::fetch`], so run it from a
 //! login shell (`shunt sync-routes`, `shunt tui`), not from the gateway daemon.
 
@@ -33,10 +41,13 @@ pub struct Change {
 /// What [`retarget`] found in a config text.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Retarget {
+    /// The edited text; empty when nothing changed.
     pub text: String,
     pub changes: Vec<Change>,
-    /// Aliases left as they are because no active model is in their family.
+    /// Aliases left as they are, with the reason.
     pub warnings: Vec<String>,
+    /// How many codex routes with an `upstream_model` the file has.
+    pub aliases: usize,
 }
 
 /// The newest id of each family among `active`, keyed by family.
@@ -56,10 +67,15 @@ fn newest_per_family(active: &[String]) -> HashMap<String, (Vec<u32>, &str)> {
     newest
 }
 
-/// Move every Codex alias in `text` to the newest model of its family in
-/// `active`. An alias whose `upstream_model` has no version, or whose family has
-/// no active model, is left alone.
-pub fn retarget(text: &str, active: &[String]) -> anyhow::Result<Retarget> {
+/// Move every Codex alias in `text` to the newest active model of its family.
+///
+/// `all` is every model the catalog lists and `active` the ones that are on. An
+/// alias whose current model is missing from `all` (the catalog dropped it) only
+/// moves forward: to a newer model, never to an older one. An alias whose
+/// current model is listed but switched off moves to the newest model that is on.
+/// An alias whose `upstream_model` has no version, or whose family has no model
+/// that is on, is left alone with a warning.
+pub fn retarget(text: &str, all: &[String], active: &[String]) -> anyhow::Result<Retarget> {
     let mut doc = text
         .parse::<DocumentMut>()
         .context("the config file is not valid TOML")?;
@@ -81,16 +97,32 @@ pub fn retarget(text: &str, active: &[String]) -> anyhow::Result<Retarget> {
             let Some(current) = upstream.as_str().map(String::from) else {
                 continue;
             };
-            let Some((family, _)) = family_and_version(&current) else {
+            out.aliases += 1;
+            let Some((family, current_version)) = family_and_version(&current) else {
+                out.warnings
+                    .push(format!("{alias}: {current} has no version; left as it is"));
                 continue;
             };
-            let Some((_, to)) = newest.get(&family) else {
-                out.warnings
-                    .push(format!("{alias}: no active model in family {family:?}"));
+            let Some((version, to)) = newest.get(&family) else {
+                out.warnings.push(format!(
+                    "{alias}: no model of family {family:?} is on; left on {current}"
+                ));
                 continue;
             };
             if *to == current {
                 continue;
+            }
+            if !all.contains(&current) && *version < current_version {
+                out.warnings.push(format!(
+                    "{alias}: {current} is not in the catalog and {to} is older; left as it is"
+                ));
+                continue;
+            }
+            if !crate::config::model_supports_tool_search(to) {
+                out.warnings.push(format!(
+                    "{alias}: {to} is not in shunt's native tool_search list \
+                     (src/config.rs); it uses the slower shim until it is added"
+                ));
             }
             let decor = upstream.decor().clone();
             let mut replacement = Value::from(*to);
@@ -109,14 +141,15 @@ pub fn retarget(text: &str, active: &[String]) -> anyhow::Result<Retarget> {
     Ok(out)
 }
 
-/// The Codex ids that are on in `shunt models codex`.
-fn active_codex_ids(config: Option<&Path>) -> anyhow::Result<Vec<String>> {
-    let ids = models_catalog::fetch("codex", config).map_err(anyhow::Error::msg)?;
-    if ids.is_empty() {
+/// Every Codex model the catalog lists, and the ones that are on in
+/// `shunt models codex`.
+fn codex_models(config: Option<&Path>) -> anyhow::Result<(Vec<String>, Vec<String>)> {
+    let all = models_catalog::fetch("codex", config).map_err(anyhow::Error::msg)?;
+    if all.is_empty() {
         bail!("`codex debug models` listed no models; leaving the config alone");
     }
     let active: Vec<String> = models_prefs::load()
-        .resolve("codex", &ids)
+        .resolve("codex", &all)
         .into_iter()
         .filter(|model| model.active)
         .map(|model| model.id)
@@ -124,7 +157,7 @@ fn active_codex_ids(config: Option<&Path>) -> anyhow::Result<Vec<String>> {
     if active.is_empty() {
         bail!("no Codex model is on in `shunt models codex`; leaving the config alone");
     }
-    Ok(active)
+    Ok((all, active))
 }
 
 /// Move the Codex aliases of the config file to the newest active models.
@@ -140,12 +173,22 @@ pub fn sync(config: Option<&Path>, dry_run: bool) -> anyhow::Result<String> {
             path.display()
         );
     }
-    let active = active_codex_ids(config)?;
+    let (all, active) = codex_models(config)?;
+    sync_file(&path, &all, &active, dry_run)
+}
+
+/// [`sync`] with the model lists given, so tests need no `codex` binary.
+fn sync_file(
+    path: &Path,
+    all: &[String],
+    active: &[String],
+    dry_run: bool,
+) -> anyhow::Result<String> {
     let text =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let found = retarget(&text, &active)?;
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let found = retarget(&text, all, active)?;
     if !dry_run && !found.changes.is_empty() {
-        crate::atomic_file::write_private_atomic(&path, found.text.as_bytes())
+        crate::atomic_file::write_private_atomic(path, found.text.as_bytes())
             .with_context(|| format!("writing {}", path.display()))?;
     }
     let mut report = String::new();
@@ -158,7 +201,13 @@ pub fn sync(config: Option<&Path>, dry_run: bool) -> anyhow::Result<String> {
     for warning in &found.warnings {
         report.push_str(&format!("warning: {warning}\n"));
     }
-    if found.changes.is_empty() {
+    if found.aliases == 0 {
+        report.push_str(&format!(
+            "warning: found no codex alias in {} (a [[routes]] table with provider = \"codex\" \
+             and an upstream_model); nothing to sync\n",
+            path.display()
+        ));
+    } else if found.changes.is_empty() {
         report.push_str("Codex aliases are up to date.\n");
     } else if dry_run {
         report.push_str("Dry run: nothing written.\n");
@@ -185,11 +234,6 @@ provider = "codex"
 upstream_model = "gpt-6-astra"
 
 [[routes]]
-model = "codex-legacy"
-provider = "codex"
-upstream_model = "gpt-4o-legacy-model"
-
-[[routes]]
 model = "gemini-alias"
 provider = "antigravity"
 upstream_model = "gpt-6.1-sol"
@@ -199,9 +243,15 @@ upstream_model = "gpt-6.1-sol"
         list.iter().map(|s| s.to_string()).collect()
     }
 
+    /// `all` and `active` the same, as for a catalog with nothing switched off.
+    fn run(text: &str, models: &[&str]) -> Retarget {
+        let models = ids(models);
+        retarget(text, &models, &models).unwrap()
+    }
+
     #[test]
     fn moves_an_alias_to_the_newest_model_of_its_family() {
-        let result = retarget(CONFIG, &ids(&["gpt-6.2-sol", "gpt-6-astra"])).unwrap();
+        let result = run(CONFIG, &["gpt-6.1-sol", "gpt-6.2-sol", "gpt-6-astra"]);
         assert_eq!(
             result.changes,
             vec![Change {
@@ -210,6 +260,7 @@ upstream_model = "gpt-6.1-sol"
                 to: "gpt-6.2-sol".into(),
             }]
         );
+        assert_eq!(result.aliases, 2);
         assert!(result
             .text
             .contains("upstream_model = \"gpt-6.2-sol\" # newest sol"));
@@ -223,32 +274,130 @@ upstream_model = "gpt-6.1-sol"
     }
 
     #[test]
-    fn an_older_active_model_does_not_win() {
-        let result =
-            retarget(CONFIG, &ids(&["gpt-6.1-sol", "gpt-5.6-sol", "gpt-6-astra"])).unwrap();
+    fn an_older_model_in_the_catalog_never_wins() {
+        let models = ["gpt-6.1-sol", "gpt-5.6-sol", "gpt-6-astra"];
+        let result = run(CONFIG, &models);
         assert!(result.changes.is_empty());
         assert!(result.text.is_empty());
     }
 
     #[test]
-    fn a_missing_family_warns_and_keeps_the_alias() {
-        let result = retarget(CONFIG, &ids(&["gpt-6.1-sol"])).unwrap();
+    fn a_model_the_catalog_dropped_is_never_replaced_by_an_older_one() {
+        // gpt-6.1-sol vanished from the catalog (a codex downgrade).
+        let result = run(CONFIG, &["gpt-6-sol", "gpt-6-astra"]);
+        assert!(result.changes.is_empty());
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("is not in the catalog and gpt-6-sol is older"));
+    }
+
+    #[test]
+    fn a_model_the_catalog_dropped_moves_forward() {
+        let text =
+            "[[routes]]\nmodel = \"a\"\nprovider = \"codex\"\nupstream_model = \"gpt-5.6-sol\"\n";
+        let result = run(text, &["gpt-6.1-sol"]);
+        assert_eq!(result.changes[0].to, "gpt-6.1-sol");
+    }
+
+    #[test]
+    fn a_model_switched_off_moves_to_the_newest_one_that_is_on() {
+        let all = ids(&["gpt-6.1-sol", "gpt-6-sol"]);
+        let active = ids(&["gpt-6-sol"]);
+        let result = retarget(CONFIG, &all, &active).unwrap();
+        assert_eq!(result.changes[0].to, "gpt-6-sol");
+    }
+
+    #[test]
+    fn a_family_with_nothing_on_warns_and_keeps_the_alias() {
+        let result = run(CONFIG, &["gpt-6.1-sol"]);
         assert!(result.changes.is_empty());
         assert_eq!(
             result.warnings,
-            vec!["codex-astra: no active model in family \"gpt-astra\"".to_string()]
+            vec![
+                "codex-astra: no model of family \"gpt-astra\" is on; left on gpt-6-astra"
+                    .to_string()
+            ]
         );
     }
 
     #[test]
-    fn a_family_name_decides_not_the_alias_name() {
+    fn a_new_model_missing_from_the_tool_search_list_warns() {
+        let result = run(CONFIG, &["gpt-6.2-sol", "gpt-6-astra"]);
+        assert_eq!(result.changes[0].to, "gpt-6.2-sol");
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.contains("gpt-6.2-sol is not in shunt's native tool_search list")));
+    }
+
+    #[test]
+    fn the_family_decides_not_the_alias_name() {
         let text = "[[routes]]\nmodel = \"anything\"\nprovider = \"codex\"\nupstream_model = \"gpt-6-luna\"\n";
-        let result = retarget(text, &ids(&["gpt-6.1-luna"])).unwrap();
+        let result = run(text, &["gpt-6.1-luna"]);
         assert_eq!(result.changes[0].to, "gpt-6.1-luna");
     }
 
     #[test]
+    fn an_inline_routes_layout_finds_no_alias() {
+        let text = "routes = [{ model = \"codex-sol\", provider = \"codex\", upstream_model = \"gpt-6.1-sol\" }]\n";
+        let result = run(text, &["gpt-6.2-sol"]);
+        assert_eq!(result.aliases, 0);
+        assert!(result.changes.is_empty());
+    }
+
+    #[test]
     fn invalid_toml_is_an_error() {
-        assert!(retarget("[[routes]\n", &ids(&["gpt-6.1-sol"])).is_err());
+        let models = ids(&["gpt-6.1-sol"]);
+        assert!(retarget("[[routes]\n", &models, &models).is_err());
+    }
+
+    /// A config file in its own temp directory, removed when dropped.
+    struct TempConfig(std::path::PathBuf);
+
+    impl TempConfig {
+        fn new(name: &str, text: &str) -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("shunt-codex-aliases-{name}-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("shunt.toml");
+            std::fs::write(&path, text).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempConfig {
+        fn drop(&mut self) {
+            if let Some(dir) = self.0.parent() {
+                let _ = std::fs::remove_dir_all(dir);
+            }
+        }
+    }
+
+    #[test]
+    fn dry_run_writes_nothing_and_a_real_run_writes_once() {
+        let config = TempConfig::new("write", CONFIG);
+        let path = &config.0;
+        let models = ids(&["gpt-6.2-sol", "gpt-6-astra"]);
+
+        let report = sync_file(path, &models, &models, true).unwrap();
+        assert!(report.contains("codex-sol: gpt-6.1-sol -> gpt-6.2-sol"));
+        assert!(report.contains("Dry run: nothing written."));
+        assert_eq!(std::fs::read_to_string(path).unwrap(), CONFIG);
+
+        let report = sync_file(path, &models, &models, false).unwrap();
+        assert!(report.contains("codex-sol: gpt-6.1-sol -> gpt-6.2-sol"));
+        assert!(std::fs::read_to_string(path)
+            .unwrap()
+            .contains("upstream_model = \"gpt-6.2-sol\" # newest sol"));
+
+        let report = sync_file(path, &models, &models, false).unwrap();
+        assert!(report.contains("Codex aliases are up to date."));
+    }
+
+    #[test]
+    fn a_file_with_no_alias_reports_it() {
+        let config = TempConfig::new("none", "[server]\nbind = \"127.0.0.1:3001\"\n");
+        let models = ids(&["gpt-6.1-sol"]);
+        let report = sync_file(&config.0, &models, &models, false).unwrap();
+        assert!(report.contains("found no codex alias"));
     }
 }

@@ -275,7 +275,7 @@ to**, and **rejects the `gpt-*-codex` slugs** (e.g. `gpt-5.2-codex`) with a `400
 
 - The authoritative catalog of Codex slugs (and the reasoning levels each accepts) is openai/codex's
   [`codex-rs/models-manager/models.json`](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json).
-- Current listed slugs: **`gpt-6-astra`**, **`gpt-6-sol`**, **`gpt-6-luna`**, **`gpt-6.1-sol`** (latest),
+- Current listed slugs: **`gpt-6-astra`**, **`gpt-6-sol`**, **`gpt-6-luna`**, **`gpt-6.1-sol`**, **`gpt-6.1-terra`** (latest),
   **`gpt-5.6-sol`**, **`gpt-5.6-terra`**, **`gpt-5.6-luna`** (frontier), and **`gpt-5.5`** /
   **`gpt-5.4`**. Older accounts may only be entitled to the
   earlier ones; a **free** account has resolved to `gpt-5.5` in testing.
@@ -430,7 +430,11 @@ upstream_model = "gpt-6.1-sol"
 `shunt tui` runs it when you switch a model on or off. It edits only the `upstream_model` value;
 it adds and removes no route, and leaves the file alone when the model list is empty or a family
 has no model that is on. It runs `codex debug models`, so call it from a login shell, never from
-the gateway daemon. A schedule such as a daily launchd job picks up new releases. A versioned id
+the gateway daemon. A schedule such as a launchd job picks up new releases. The model list is the
+catalog built into the installed `codex` (its live refresh returns nothing behind shunt), so a new
+model appears after `codex` is upgraded. shunt sends the pinned client identity of §4.4: if a new
+model needs a newer client, the backend rejects it even though the alias points at it. Bump
+`CODEX_CLIENT_VERSION` or put the alias back by hand. A versioned id
 with no route (for example `gpt-5.6-sol`) is not served, so only the newest model of each family
 is reachable through these ids.
 
