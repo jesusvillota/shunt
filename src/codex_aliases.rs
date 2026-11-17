@@ -120,8 +120,8 @@ pub fn retarget(text: &str, all: &[String], active: &[String]) -> anyhow::Result
             }
             if !crate::config::model_supports_tool_search(to) {
                 out.warnings.push(format!(
-                    "{alias}: {to} is not in shunt's native tool_search list \
-                     (src/config.rs); it uses the slower shim until it is added"
+                    "{alias}: {to} is not covered by shunt's native tool_search rule \
+                     (`is_gpt6_or_later_slug` in src/config.rs); it uses the slower shim"
                 ));
             }
             let decor = upstream.decor().clone();
@@ -320,13 +320,23 @@ upstream_model = "gpt-6.1-sol"
     }
 
     #[test]
-    fn a_new_model_missing_from_the_tool_search_list_warns() {
-        let result = run(CONFIG, &["gpt-6.2-sol", "gpt-6-astra"]);
-        assert_eq!(result.changes[0].to, "gpt-6.2-sol");
+    fn a_new_model_outside_the_tool_search_rule_warns() {
+        // gpt-5.3 is older than the gpt-5.4 line where native tool_search starts.
+        let text =
+            "[[routes]]\nmodel = \"a\"\nprovider = \"codex\"\nupstream_model = \"gpt-5.2-foo\"\n";
+        let result = run(text, &["gpt-5.3-foo"]);
+        assert_eq!(result.changes[0].to, "gpt-5.3-foo");
         assert!(result
             .warnings
             .iter()
-            .any(|w| w.contains("gpt-6.2-sol is not in shunt's native tool_search list")));
+            .any(|w| w.contains("gpt-5.3-foo is not covered by shunt's native tool_search rule")));
+    }
+
+    #[test]
+    fn a_new_gpt6_or_later_release_needs_no_tool_search_warning() {
+        let result = run(CONFIG, &["gpt-6.2-sol", "gpt-6-astra"]);
+        assert_eq!(result.changes[0].to, "gpt-6.2-sol");
+        assert!(result.warnings.is_empty());
     }
 
     #[test]

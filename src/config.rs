@@ -2337,11 +2337,12 @@ pub enum ResponsesFlavor {
 
 /// Whether `model` advertises native Responses `tool_search` support. OpenAI
 /// documents GPT-5.4 and later; codex's `models.json` flags the gpt-5.4/5.5/5.6
-/// families with `supports_search_tool: true`. Kept a boundary-guarded substring
-/// check (no table) like the effort ceiling in `responses_request.rs`. Earlier
-/// slugs (gpt-5.2 and below) fall back to the #43 progressive-reveal shim even
-/// with the provider flag on, so the native path only fires for combinations
-/// documented to accept it.
+/// families and every gpt-6 slug with `supports_search_tool: true`. The gpt-5
+/// minors are a boundary-guarded substring check; gpt-6 and later are read from
+/// the slug's shape (see [`is_gpt6_or_later_slug`]), so a new release needs no
+/// edit. Earlier slugs (gpt-5.2 and below) fall back to the #43
+/// progressive-reveal shim even with the provider flag on, so the native path
+/// only fires for combinations documented to accept it.
 pub(crate) fn model_supports_tool_search(model: &str) -> bool {
     // Match each documented "gpt-5.N" family as a whole minor version: the digit
     // must be followed by a non-digit (or end of string), so "gpt-5.4" matches
@@ -2358,12 +2359,34 @@ pub(crate) fn model_supports_tool_search(model: &str) -> bool {
     if gpt5 {
         return true;
     }
-    // Codex catalog gpt-6 slugs (`supports_search_tool: true`), matched
-    // exactly: the catalog lists no gpt-6 family, only these slugs.
-    matches!(
-        model,
-        "gpt-6-astra" | "gpt-6-sol" | "gpt-6-luna" | "gpt-6.1-sol" | "gpt-6.1-terra"
-    )
+    is_gpt6_or_later_slug(model)
+}
+
+/// A whole slug of the form `gpt-<major>[.<minor>][-<tier>]` with major 6 or
+/// more and a lowercase tier word, such as `gpt-6-astra`, `gpt-6.1-sol` or
+/// `gpt-7-luna`. It must be the whole id: a prefix (`openai/gpt-6-sol`), a
+/// suffix (`gpt-6-sol-preview`, `gpt-6-sol[1m]`) or a third version part keeps
+/// the shim, because those are not catalog slugs.
+fn is_gpt6_or_later_slug(model: &str) -> bool {
+    let Some(rest) = model.strip_prefix("gpt-") else {
+        return false;
+    };
+    let (version, tier) = rest
+        .split_once('-')
+        .map_or((rest, None), |(v, t)| (v, Some(t)));
+    if tier.is_some_and(|t| t.is_empty() || !t.bytes().all(|b| b.is_ascii_lowercase())) {
+        return false;
+    }
+    // One to three digits per part, so dates and build numbers are not versions.
+    let part = |text: &str| {
+        (!text.is_empty() && text.len() <= 3 && text.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| text.parse::<u32>().ok())
+            .flatten()
+    };
+    let mut parts = version.split('.');
+    let major = parts.next().and_then(part);
+    let minor_ok = parts.next().is_none_or(|minor| part(minor).is_some());
+    major.is_some_and(|major| major >= 6) && minor_ok && parts.next().is_none()
 }
 
 /// Whether `host` belongs to xAI (`x.ai` or any subdomain). Used both to gate
@@ -11316,12 +11339,35 @@ target = "judge-alias"
 
         // Unsupported model keeps the #43 shim (gpt-5.2 and below).
         assert!(!config.native_tool_search("codex", "gpt-5.2-codex"));
-        // Other gpt-6 slugs and close names must not borrow the listed flags.
-        assert!(!config.native_tool_search("codex", "gpt-6-pro"));
-        assert!(!config.native_tool_search("codex", "gpt-6-terra"));
-        assert!(!config.native_tool_search("codex", "gpt-6.1-astra"));
-        assert!(!config.native_tool_search("codex", "gpt-6"));
-        assert!(!config.native_tool_search("codex", "gpt-6-astral"));
+        // gpt-6 and later are read from the slug shape `gpt-N[.M][-tier]`, so a
+        // new release is native with no edit (`gpt-6.2-sol`, `gpt-7-luna`, ...).
+        for model in [
+            "gpt-6.2-sol",
+            "gpt-6.1-astra",
+            "gpt-6-terra",
+            "gpt-7-luna",
+            "gpt-6",
+            "gpt-6.10-sol",
+        ] {
+            assert!(config.native_tool_search("codex", model), "{model}");
+        }
+        // Close names that are not catalog slugs keep the shim.
+        for model in [
+            "gpt-6.1.2-sol",
+            "gpt-6x-sol",
+            "gpt-6-Sol",
+            "gpt-6-",
+            "gpt-",
+            "gpt-sol",
+            "gpt-2025-sol",
+            "gpt-6-sol-preview",
+            "gpt-6.1-sol_v2",
+            "gpt-4-sol",
+            "gpt-5.2-sol",
+            "my-gpt-6-sol",
+        ] {
+            assert!(!config.native_tool_search("codex", model), "{model}");
+        }
         // Unsupported flavor keeps the shim (xAI), even though `tool_search`
         // auto-resolves to on for a known host — the flavor gate blocks it
         // regardless.
