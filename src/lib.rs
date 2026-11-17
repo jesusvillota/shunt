@@ -11,6 +11,7 @@ pub mod auth;
 pub mod bench_support;
 pub mod blueprints;
 pub mod client_cli;
+pub mod codex_aliases;
 pub mod codex_analytics;
 pub mod codex_endpoint;
 pub(crate) mod compression;

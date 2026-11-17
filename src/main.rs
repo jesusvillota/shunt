@@ -74,6 +74,14 @@ enum Command {
         #[arg(long)]
         config: Option<PathBuf>,
     },
+    /// Move each Codex alias in shunt.toml (a codex route with an `upstream_model`) to the newest model that `shunt models codex` has on. Run it from a login shell.
+    SyncRoutes {
+        /// Show what would change; write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
     /// Print the managed account pool from a running gateway (read-tier admin token is enough).
     Pool {
         /// Show only this client's configured account subsets.
@@ -303,6 +311,13 @@ fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             }
+        }
+        Some(Command::SyncRoutes { dry_run, config }) => {
+            let report = shunt::codex_aliases::sync(config.or(cli.config).as_deref(), dry_run)?;
+            std::io::stdout()
+                .write_all(report.as_bytes())
+                .context("writing sync-routes output")?;
+            Ok(())
         }
         Some(Command::Pool {
             client,

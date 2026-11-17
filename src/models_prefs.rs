@@ -177,7 +177,7 @@ const TIERS: [&str; 3] = ["low", "medium", "high"];
 ///
 /// The key is the name without its version and without a trailing effort tier;
 /// the version is the first run of numeric tokens (`6.1`, or `4-6` = 4.6).
-fn family_and_version(id: &str) -> Option<(String, Vec<u32>)> {
+pub fn family_and_version(id: &str) -> Option<(String, Vec<u32>)> {
     let name = id.rsplit('/').next().unwrap_or(id);
     let name = name.split("-via-").next().unwrap_or(name);
     let mut tokens: Vec<&str> = name.split('-').collect();
