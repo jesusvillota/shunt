@@ -80,9 +80,24 @@ pub fn spawn_usage_poller(state: AppState) {
         interval_seconds = interval,
         "starting OAuth usage-API poller (Claude, Codex, Antigravity)"
     );
+    // The primer has its own loop: a poll can take minutes (each Antigravity
+    // account probe may run 25 seconds), and a primer that waited for it left
+    // an account without a timer for that long after its window ended. Its own
+    // usage check, not the pool's reset times, decides whether to send. The
+    // first tick waits one interval so the first poll seeds the pool.
+    let primer_state = state.clone();
+    tokio::spawn(async move {
+        let period = Duration::from_secs(interval);
+        let mut primer = crate::window_primer::WindowPrimer::default();
+        let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            primer.run(&primer_state).await;
+        }
+    });
     tokio::spawn(async move {
         let mut agy_probe = antigravity::usage_cli::UsageProbe::default();
-        let mut primer = crate::window_primer::WindowPrimer::default();
         let mut ticker = tokio::time::interval(Duration::from_secs(interval));
         // A poll that runs long (or a suspend/resume) must not make the ticker
         // fire a burst of catch-up ticks — that would hammer the usage API. Skip
@@ -93,8 +108,6 @@ pub fn spawn_usage_poller(state: AppState) {
         loop {
             ticker.tick().await;
             poll_all_with_probe(&state, &mut agy_probe).await;
-            // After the poll, so the pool's reset times are fresh.
-            primer.run(&state).await;
         }
     });
 }
