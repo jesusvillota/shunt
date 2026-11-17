@@ -1,5 +1,6 @@
-//! Window primer, opt-in via `[server.pool] prime_windows` (runs on the usage
-//! poller's tick, so it also needs `usage_refresh_seconds`).
+//! Window primer, opt-in via `[server.pool] prime_windows` (runs on its own
+//! loop at the usage poller's interval, so it also needs
+//! `usage_refresh_seconds`).
 //!
 //! A subscription account's 5-hour window only starts on its first request.
 //! A backup account that sits unused therefore starts its 5 hours only when
@@ -15,8 +16,15 @@
 //! usage poll does not adopt reset times. A failed check sends nothing. The
 //! response's quota headers are fed to the pool.
 //!
-//! Hard limit: at most one primer request per physical account per 5 hours,
-//! counted from the attempt, whether it succeeded or not.
+//! An accepted request does not prove the window started (Claude answers 200
+//! without starting it when the request registers no usage). So
+//! [`VERIFY_DELAY`] after an accepted request the primer asks the usage API
+//! again, ignoring the pool's reset (a header can report one for a window that
+//! never started), and retries while the window is still idle.
+//!
+//! Hard limit: at most [`MAX_ATTEMPTS`] primer requests per physical account
+//! per 5 hours, counted from the first attempt, and only one when the request
+//! was rejected.
 
 use std::{
     collections::HashMap,
@@ -40,6 +48,12 @@ const WINDOW: u64 = 5 * 60 * 60;
 /// A reported reset at least this close to a full window away reads as idle;
 /// see [`running_reset`].
 const FRESH_WINDOW_SLACK: u64 = 120;
+/// How long after an accepted primer request the usage API is asked whether
+/// the window really started.
+const VERIFY_DELAY: u64 = 5 * 60;
+/// Accepted requests in a row that may leave the window idle before the
+/// primer gives up for a whole window.
+const MAX_ATTEMPTS: u32 = 3;
 const CLAUDE_MODEL: &str = "claude-haiku-5-5";
 /// Filler that makes the Claude primer's prompt about 3,000 tokens. Anthropic
 /// starts the 5-hour window only when a request registers above 0% usage: a
@@ -54,19 +68,24 @@ const CODEX_MODEL: &str = "gpt-6-luna";
 /// same identity system block and headers Claude Code does.
 const CLAUDE_CODE_IDENTITY: &str = "You are Claude Code, Anthropic's official CLI for Claude.";
 
-/// Unix time before which an account is not checked again: 5 hours after a
-/// primer attempt, or the reset of a window the usage API showed running. The
-/// key carries the store family and identity, so two provider aliases of one
-/// account share one entry.
+/// The keys carry the store family and identity, so two provider aliases of
+/// one account share one entry.
 #[derive(Default)]
 pub(crate) struct WindowPrimer {
+    /// Unix time before which an account is not checked again: [`VERIFY_DELAY`]
+    /// after an accepted primer request, 5 hours after a rejected one or after
+    /// the last allowed attempt, or the reset of a window the usage API showed
+    /// running.
     next_check: HashMap<AccountKey, u64>,
+    /// Accepted primer requests whose window the usage API has not yet shown
+    /// running. An account in here is checked against the usage API alone.
+    unverified: HashMap<AccountKey, u32>,
 }
 
 /// What one account's check did.
 enum Outcome {
-    /// A primer request was sent (whatever its result).
-    Sent,
+    /// A primer request was sent; `accepted` is whether it got a 2xx answer.
+    Sent { accepted: bool },
     /// The usage API showed the window running until this reset.
     Running(u64),
     /// No credential or no usage answer; nothing sent, check again next tick.
@@ -121,20 +140,23 @@ impl WindowPrimer {
             let snapshots = state.accounts.snapshot(name, &accounts, None, Some(pool));
             let now = unix_now();
             for (account, snapshot) in accounts.iter().zip(snapshots) {
+                let key = account_key(name, account);
+                let verifying = self.unverified.contains_key(&key);
                 // A reset inside the window means it is already running (a
                 // reset a full window away reads as idle, as in
-                // [`running_reset`]). Paused or relogin-pending accounts are
-                // left alone.
-                if snapshot
-                    .reset_5h
-                    .is_some_and(|reset| is_running(reset, now))
+                // [`running_reset`]), except right after a primer request,
+                // whose own headers may have put a reset there. Paused or
+                // relogin-pending accounts are left alone.
+                if (!verifying
+                    && snapshot
+                        .reset_5h
+                        .is_some_and(|reset| is_running(reset, now)))
                     || snapshot.organization_blocked
                     || snapshot.paused
                     || snapshot.needs_relogin
                 {
                     continue;
                 }
-                let key = account_key(name, account);
                 if self.next_check.get(&key).is_some_and(|at| now < *at) {
                     continue;
                 }
@@ -143,6 +165,17 @@ impl WindowPrimer {
                     StoreFamily::Claude => prime_claude(&state, name, base_url, account).await,
                     _ => prime_codex(&state, name, base_url, account).await,
                 };
+                if verifying {
+                    match outcome {
+                        Outcome::Running(_) => {
+                            tracing::info!(provider = %name, account = %account.name, "window primer: 5-hour window confirmed running")
+                        }
+                        Outcome::Sent { .. } => {
+                            tracing::warn!(provider = %name, account = %account.name, "window primer: window still idle after an accepted request; retrying")
+                        }
+                        Outcome::Unknown => {}
+                    }
+                }
                 self.record(key, outcome, now);
             }
         }
@@ -150,10 +183,26 @@ impl WindowPrimer {
 
     fn record(&mut self, key: AccountKey, outcome: Outcome, now: u64) {
         match outcome {
-            Outcome::Sent => self.next_check.insert(key, now + WINDOW),
-            Outcome::Running(reset) => self.next_check.insert(key, reset),
-            Outcome::Unknown => None,
-        };
+            Outcome::Sent { accepted: true } => {
+                let attempts = self.unverified.get(&key).copied().unwrap_or(0) + 1;
+                if attempts < MAX_ATTEMPTS {
+                    self.unverified.insert(key.clone(), attempts);
+                    self.next_check.insert(key, now + VERIFY_DELAY);
+                } else {
+                    self.unverified.remove(&key);
+                    self.next_check.insert(key, now + WINDOW);
+                }
+            }
+            Outcome::Sent { accepted: false } => {
+                self.unverified.remove(&key);
+                self.next_check.insert(key, now + WINDOW);
+            }
+            Outcome::Running(reset) => {
+                self.unverified.remove(&key);
+                self.next_check.insert(key, reset);
+            }
+            Outcome::Unknown => {}
+        }
     }
 }
 
@@ -228,18 +277,19 @@ async fn prime_claude(
         .timeout(Duration::from_secs(60))
         .send()
         .await;
-    match response {
+    let accepted = match response {
         Ok(response) => {
             state
                 .accounts
                 .note_quota(provider, account, response.headers());
-            log_outcome(provider, account, response).await;
+            log_outcome(provider, account, response).await
         }
         Err(error) => {
-            tracing::warn!(provider, account = %account.name, %error, "window primer: request failed")
+            tracing::warn!(provider, account = %account.name, %error, "window primer: request failed");
+            false
         }
-    }
-    Outcome::Sent
+    };
+    Outcome::Sent { accepted }
 }
 
 async fn prime_codex(
@@ -288,34 +338,37 @@ async fn prime_codex(
         .timeout(Duration::from_secs(60))
         .send()
         .await;
-    match response {
+    let accepted = match response {
         Ok(response) => {
             state
                 .accounts
                 .note_codex_quota(provider, account, response.headers());
-            if log_outcome(provider, account, response).await {
+            let accepted = log_outcome(provider, account, response).await;
+            if accepted {
                 // The window starts with this request.
                 state
                     .accounts
                     .note_started_window(provider, account, sent_at + WINDOW);
             }
+            accepted
         }
         Err(error) => {
-            tracing::warn!(provider, account = %account.name, %error, "window primer: request failed")
+            tracing::warn!(provider, account = %account.name, %error, "window primer: request failed");
+            false
         }
-    }
-    Outcome::Sent
+    };
+    Outcome::Sent { accepted }
 }
 
 /// Read the body to the end (so the turn is not cancelled mid-stream) and log
-/// the result. The primer never marks an account unhealthy: a failure only
+/// the result. The primer never marks an account unhealthy: a rejection only
 /// means this window stays idle until the next attempt 5 hours later.
-/// Returns whether the request succeeded.
+/// Returns whether the request was accepted (not whether the window started).
 async fn log_outcome(provider: &str, account: &AccountConfig, response: reqwest::Response) -> bool {
     let status = response.status();
     let body = response.bytes().await.unwrap_or_default();
     if status.is_success() {
-        tracing::info!(provider, account = %account.name, "window primer: started 5-hour window");
+        tracing::info!(provider, account = %account.name, "window primer: request accepted");
     } else {
         let detail: String = String::from_utf8_lossy(&body).chars().take(200).collect();
         tracing::warn!(provider, account = %account.name, %status, %detail, "window primer: request rejected");
@@ -675,12 +728,105 @@ mod tests {
     }
 
     #[test]
-    fn a_sent_primer_blocks_the_account_for_one_window() {
+    fn a_rejected_primer_blocks_the_account_for_one_window() {
         let mut primer = WindowPrimer::default();
         let key = account_key("p", &AccountConfig::default());
-        primer.record(key.clone(), Outcome::Sent, 100);
+        primer.record(key.clone(), Outcome::Sent { accepted: false }, 100);
         assert_eq!(primer.next_check.get(&key), Some(&(100 + WINDOW)));
+        assert!(!primer.unverified.contains_key(&key));
         primer.record(key.clone(), Outcome::Unknown, 200);
         assert_eq!(primer.next_check.get(&key), Some(&(100 + WINDOW)));
+    }
+
+    #[test]
+    fn an_accepted_primer_is_verified_soon_and_retried_a_bounded_number_of_times() {
+        let mut primer = WindowPrimer::default();
+        let key = account_key("p", &AccountConfig::default());
+        for attempt in 1..MAX_ATTEMPTS {
+            primer.record(key.clone(), Outcome::Sent { accepted: true }, 100);
+            assert_eq!(primer.next_check.get(&key), Some(&(100 + VERIFY_DELAY)));
+            assert_eq!(primer.unverified.get(&key), Some(&attempt));
+        }
+        primer.record(key.clone(), Outcome::Sent { accepted: true }, 100);
+        assert_eq!(primer.next_check.get(&key), Some(&(100 + WINDOW)));
+        assert!(
+            !primer.unverified.contains_key(&key),
+            "gave up for a window"
+        );
+    }
+
+    #[test]
+    fn a_window_shown_running_ends_verification() {
+        let mut primer = WindowPrimer::default();
+        let key = account_key("p", &AccountConfig::default());
+        primer.record(key.clone(), Outcome::Sent { accepted: true }, 100);
+        primer.record(key.clone(), Outcome::Running(5_000), 200);
+        assert_eq!(primer.next_check.get(&key), Some(&5_000));
+        assert!(!primer.unverified.contains_key(&key));
+    }
+
+    /// The reply carries a reset header (so the pool believes the window
+    /// runs), yet the usage API still shows it idle: the primer asks again
+    /// after [`VERIFY_DELAY`] and sends a second request.
+    #[tokio::test]
+    async fn retries_when_an_accepted_request_left_the_window_idle() {
+        let server = MockServer::start().await;
+        mount_usage(&server, "token-i", idle_usage(), 2).await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header(
+                        "anthropic-ratelimit-unified-5h-reset",
+                        (unix_now() + 3_600).to_string(),
+                    )
+                    .set_body_json(json!({"content": []})),
+            )
+            .expect(2)
+            .mount(&server)
+            .await;
+        let file = credential_file("i", "token-i");
+        let state = state(server.uri(), vec![account("i", &file)], true);
+
+        let mut primer = WindowPrimer::default();
+        primer.run(&state).await;
+        primer.run(&state).await; // inside VERIFY_DELAY: nothing
+        primer.next_check.clear(); // VERIFY_DELAY has passed
+        primer.run(&state).await;
+        let _ = std::fs::remove_file(file);
+    }
+
+    /// After an accepted request the usage API shows the window running: it
+    /// is not primed again.
+    #[tokio::test]
+    async fn stops_retrying_once_the_usage_api_shows_the_window_running() {
+        let reset = unix_now() + 3_600;
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/oauth/usage"))
+            .respond_with(idle_usage())
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let running = ResponseTemplate::new(200).set_body_json(json!({
+            "five_hour": {"utilization": 1.0, "resets_at": crate::auth::shared::format_iso8601(UNIX_EPOCH + Duration::from_secs(reset))}
+        }));
+        mount_usage(&server, "token-v", running, 1).await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"content": []})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let file = credential_file("v", "token-v");
+        let state = state(server.uri(), vec![account("v", &file)], true);
+
+        let mut primer = WindowPrimer::default();
+        primer.run(&state).await;
+        primer.next_check.clear();
+        primer.run(&state).await;
+        assert!(primer.unverified.is_empty());
+        let _ = std::fs::remove_file(file);
     }
 }
