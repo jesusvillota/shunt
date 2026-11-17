@@ -410,10 +410,29 @@ Either way the id must resolve through a matching `[models.upstream_model]` entr
 window follows the id automatically, so one global value sizes the mapped subagent while the Claude
 main keeps its own.
 
-The **[`shunt-codex` plugin](../plugins/shunt-codex/)** ships ready-made subagents for
-`gpt-6-sol` / `-luna` and `gpt-5.6-sol` / `-terra` / `-luna` (each pins its `model:` frontmatter
-to the slug), so you can
-`@`-mention a Codex model without authoring the agent files yourself.
+The **[`shunt-codex` plugin](../plugins/shunt-codex/)** ships ready-made subagents for the
+Sol, Terra, Astra and Luna families (each pins its `model:` frontmatter to a family id such as
+`codex-sol`), so you can `@`-mention a Codex model without authoring the agent files yourself.
+
+#### Keeping the family ids current
+
+Map each family id to a model with an alias route:
+
+```toml
+[[routes]]
+model = "codex-sol"
+provider = "codex"
+upstream_model = "gpt-6.1-sol"
+```
+
+`shunt sync-routes` (add `--dry-run` to preview) moves every codex route that has an
+`upstream_model` to the newest model of that family which `shunt models codex` has on, and
+`shunt tui` runs it when you switch a model on or off. It edits only the `upstream_model` value;
+it adds and removes no route, and leaves the file alone when the model list is empty or a family
+has no model that is on. It runs `codex debug models`, so call it from a login shell, never from
+the gateway daemon. A schedule such as a daily launchd job picks up new releases. A versioned id
+with no route (for example `gpt-5.6-sol`) is not served, so only the newest model of each family
+is reachable through these ids.
 
 ### 7.4 Remap the tier aliases (`haiku`/`sonnet`/`opus` → Codex)
 

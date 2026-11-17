@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "shunt-codex",
   "displayName": "shunt · Codex models",
-  "version": "0.3.0",
-  "description": "Subagents that run on the current ChatGPT/Codex models (GPT-6.1 Sol, GPT-6.1 Terra, GPT-6 Astra, GPT-6 Luna), routed through the shunt gateway at the inference layer while staying inside Claude Code's harness.",
+  "version": "0.4.0",
+  "description": "Subagents that run on the current ChatGPT/Codex model of each family (Sol, Terra, Astra, Luna), routed through the shunt gateway at the inference layer while staying inside Claude Code's harness.",
   "author": {
     "name": "Minsu Lee",
     "email": "minsu.lee@pleaseai.dev",

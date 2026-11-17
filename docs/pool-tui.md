@@ -205,8 +205,10 @@ off, `Tab` changes platform, and `f` flips the **filter** switch. While the filt
 By default the newest version of each model family is on and every effort level of it stays on
 (`gpt-6.1-sol` on, `gpt-6-sol` off). A model with no version in its name stays on. Your changes are
 stored as overrides in `~/.shunt/models.json`, so a new model release can still move the default.
-The state affects only those two tools: gateway routing, `/v1/models` and Claude Code's `/model`
-picker are unchanged. `shunt models` prints the same list outside the TUI.
+The state decides what those two tools see. It does not route requests: `/v1/models` and Claude
+Code's `/model` picker are unchanged. The one routing effect is `shunt sync-routes`, which points
+each Codex alias route at the newest model that is on (see `docs/codex-configuration.md`); the TUI
+runs it after you switch a model. `shunt models` prints the same list outside the TUI.
 
 On the `opencode` tab the dialog also shows each free model's **status**, read from this machine's
 `~/.local/share/opencode/log/opencode.log`:

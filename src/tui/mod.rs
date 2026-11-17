@@ -396,11 +396,22 @@ fn perform(ctx: &Ctx, effect: Effect) {
         Effect::SaveModels(prefs) => {
             // Queue here, in key order; the blocking task writes the newest snapshot.
             crate::models_prefs::queue(prefs);
+            let config = ctx.config.clone();
             tokio::spawn(async move {
                 match tokio::task::spawn_blocking(crate::models_prefs::flush).await {
                     Ok(Ok(())) => {}
-                    Ok(Err(e)) => ctx.say(Notice::Error(format!("model list not saved: {e:#}"))),
-                    Err(e) => ctx.say(Notice::Error(format!("model list not saved: {e}"))),
+                    Ok(Err(e)) => {
+                        return ctx.say(Notice::Error(format!("model list not saved: {e:#}")))
+                    }
+                    Err(e) => return ctx.say(Notice::Error(format!("model list not saved: {e}"))),
+                }
+                // The on/off list decides which model each Codex alias points at.
+                let synced = tokio::task::spawn_blocking(move || {
+                    crate::codex_aliases::sync(config.as_deref(), false)
+                })
+                .await;
+                if let Ok(Err(e)) = synced {
+                    ctx.say(Notice::Error(format!("Codex aliases not updated: {e:#}")));
                 }
             });
         }
