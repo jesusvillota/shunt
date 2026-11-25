@@ -299,11 +299,12 @@ accounts are listed explicitly, the deleted name is removed from that list.
 Client pins (`[server.auth.clients.<name>] accounts.<provider>`) are edited in
 the same step, because a pin naming an account that no longer exists makes the
 gateway reject the whole config on reload and keep running the old one. The
-deleted name is removed from every pin list that has other accounts, and the
-status line names those clients. A client pinned to the deleted account **alone**
-makes `d` refuse, naming the client: an empty pin is invalid, and dropping the
-pin would silently let that client use every account. Re-pin that client to
-another account (or remove its pin on purpose) in `shunt.toml`, then delete.
+deleted name is removed from every pin list that has other accounts. A client
+pinned to the deleted account **alone** cannot keep an empty pin (it is invalid),
+so its pin for that provider is removed and it may use every account of the
+provider. The status line names both groups of clients, and says that the second
+group now uses every account. To keep such a client on one account, re-pin it
+(`shunt client`) after the delete.
 Pins are matched by name and only for the provider the account was deleted from.
 If the credential delete itself fails, the account is already out of `shunt.toml`
 and `d` can be retried.

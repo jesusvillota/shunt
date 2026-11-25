@@ -346,23 +346,23 @@ fn perform(ctx: &Ctx, effect: Effect) {
         } => {
             tokio::spawn(async move {
                 // Config first, credential last: the config edit is what can be
-                // refused (the last explicit account, a client pinned to this
-                // account alone), and a credential cannot be restored. If the
+                // refused (the last explicit account), and a credential cannot
+                // be restored. If the
                 // credential delete then fails, the account is only missing
                 // from shunt.toml, and `d` can be retried.
-                let unpinned = Arc::new(std::sync::Mutex::new(Vec::new()));
-                let (edit_provider, edit_name, edit_unpinned) =
-                    (provider.clone(), name.clone(), unpinned.clone());
+                let pin_changes = Arc::new(std::sync::Mutex::new((Vec::new(), Vec::new())));
+                let (edit_provider, edit_name, edit_pins) =
+                    (provider.clone(), name.clone(), pin_changes.clone());
                 if let Err(e) = ctx
                     .edit_config(move |text| {
                         let removed =
                             config_edit::remove_account(text, &edit_provider, &edit_name)?;
-                        let (pinned, clients) = config_edit::remove_from_client_pins(
+                        let (pinned, narrowed, released) = config_edit::remove_from_client_pins(
                             removed.as_deref().unwrap_or(text),
                             &edit_provider,
                             &edit_name,
                         )?;
-                        *edit_unpinned.lock().unwrap() = clients;
+                        *edit_pins.lock().unwrap() = (narrowed, released);
                         Ok(pinned.or(removed))
                     })
                     .await
@@ -379,12 +379,18 @@ fn perform(ctx: &Ctx, effect: Effect) {
                     return;
                 }
 
-                let unpinned = unpinned.lock().unwrap().join(", ");
-                ctx.say(Notice::Info(if unpinned.is_empty() {
-                    format!("deleted {name} from {provider}")
-                } else {
-                    format!("deleted {name} from {provider} and from the pins of: {unpinned}")
-                }));
+                let (narrowed, released) = pin_changes.lock().unwrap().clone();
+                let mut message = format!("deleted {name} from {provider}");
+                if !narrowed.is_empty() {
+                    message += &format!(" and from the pins of: {}", narrowed.join(", "));
+                }
+                if !released.is_empty() {
+                    message += &format!(
+                        "; {} had no other account pinned, so now use every {provider} account",
+                        released.join(", ")
+                    );
+                }
+                ctx.say(Notice::Info(message));
                 ctx.refresh_soon(true);
             });
         }
