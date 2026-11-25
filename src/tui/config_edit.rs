@@ -248,18 +248,19 @@ pub fn remove_account(text: &str, provider: &str, name: &str) -> anyhow::Result<
 
 /// Drop `name` from every `[server.auth.clients.<client>] accounts.<provider>`
 /// pin, so a deleted account does not leave a pin the gateway rejects (it fails
-/// the whole config reload and keeps the old one). Returns the edited text and
-/// the clients that were changed.
+/// the whole config reload and keeps the old one). Returns the edited text, the
+/// clients whose pin was narrowed, and the clients released from it.
 ///
-/// A client pinned to `name` alone is refused, naming the client: an empty pin
-/// is invalid, and removing the pin instead would silently open the client to
-/// every account. Pins are matched by name, so this reads only the pin tables,
-/// not the account stores; it does not check pins that name other providers.
+/// A client pinned to `name` alone cannot keep an empty pin (it is invalid), so
+/// its pin for this provider is removed and it may then use every account of
+/// the provider. The caller reports those clients so the widening is visible.
+/// Pins are matched by name, so this reads only the pin tables, not the
+/// account stores; it does not check pins that name other providers.
 pub fn remove_from_client_pins(
     text: &str,
     provider: &str,
     name: &str,
-) -> anyhow::Result<(Option<String>, Vec<String>)> {
+) -> anyhow::Result<(Option<String>, Vec<String>, Vec<String>)> {
     let mut doc = parse(text)?;
     let Some(clients) = doc
         .get_mut("server")
@@ -267,9 +268,9 @@ pub fn remove_from_client_pins(
         .and_then(|item| item.get_mut("clients"))
         .and_then(Item::as_table_like_mut)
     else {
-        return Ok((None, Vec::new()));
+        return Ok((None, Vec::new(), Vec::new()));
     };
-    let (mut changed, mut sole) = (Vec::new(), Vec::new());
+    let (mut narrowed, mut released) = (Vec::new(), Vec::new());
     for (client, policy) in clients.iter_mut() {
         let Some(pins) = policy
             .get_mut("accounts")
@@ -283,23 +284,27 @@ pub fn remove_from_client_pins(
             continue;
         }
         if matching == pins.len() {
-            sole.push(client.get().to_string());
+            released.push(client.get().to_string());
         } else {
             pins.retain(|pin| pin.as_str() != Some(name));
             pins.fmt();
-            changed.push(client.get().to_string());
+            narrowed.push(client.get().to_string());
         }
     }
-    if !sole.is_empty() {
-        bail!(
-            "client(s) {} are pinned to {name:?} alone on provider {provider:?}; deleting it \
-             would leave an invalid pin. Pin them to another account in shunt.toml first, or \
-             remove their pin if they should use every account",
-            sole.join(", ")
-        );
+    for client in &released {
+        let Some(policy) = clients.get_mut(client).and_then(Item::as_table_like_mut) else {
+            continue;
+        };
+        let Some(accounts) = policy.get_mut("accounts").and_then(Item::as_table_like_mut) else {
+            continue;
+        };
+        accounts.remove(provider);
+        if accounts.is_empty() {
+            policy.remove("accounts");
+        }
     }
     let updated = doc.to_string();
-    Ok(((updated != text).then_some(updated), changed))
+    Ok(((updated != text).then_some(updated), narrowed, released))
 }
 
 /// Give every account in `ranks` the matching `priority`. If the provider
@@ -585,9 +590,10 @@ accounts.anthropic = ["a"]
             "[server.auth.clients.solo]\naccounts.anthropic = [\"a\"]\n",
             "",
         );
-        let (out, changed) = remove_from_client_pins(&text, "anthropic", "a").unwrap();
+        let (out, changed, released) = remove_from_client_pins(&text, "anthropic", "a").unwrap();
         let out = out.unwrap();
         assert_eq!(changed, ["multi"]);
+        assert!(released.is_empty());
         assert!(out.contains("accounts.anthropic = [\"b\"]"), "{out}");
         assert!(
             out.contains("accounts.antigravity = [\"a\"]"),
@@ -597,23 +603,29 @@ accounts.anthropic = ["a"]
     }
 
     #[test]
-    fn a_pin_to_the_deleted_account_alone_is_refused_by_client_name() {
-        let error = remove_from_client_pins(PINS, "anthropic", "a")
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("solo"), "{error}");
-        assert!(!error.contains("multi"), "{error}");
+    fn a_pin_to_the_deleted_account_alone_is_removed_and_reported() {
+        let (out, narrowed, released) = remove_from_client_pins(PINS, "anthropic", "a").unwrap();
+        let out = out.unwrap();
+        assert_eq!(narrowed, ["multi"]);
+        assert_eq!(released, ["solo"]);
+        assert!(
+            !out.contains("[server.auth.clients.solo]\naccounts"),
+            "{out}"
+        );
+        assert!(out.contains("[server.auth.clients.solo]"), "{out}");
+        assert!(out.contains("accounts.anthropic = [\"b\"]"), "{out}");
+        assert!(out.contains("accounts.antigravity = [\"a\"]"), "{out}");
     }
 
     #[test]
     fn no_pins_to_the_name_is_a_no_op() {
         assert_eq!(
             remove_from_client_pins(PINS, "anthropic", "zzz").unwrap(),
-            (None, Vec::new())
+            (None, Vec::new(), Vec::new())
         );
         assert_eq!(
             remove_from_client_pins("[providers.x]\n", "anthropic", "a").unwrap(),
-            (None, Vec::new())
+            (None, Vec::new(), Vec::new())
         );
     }
 }
